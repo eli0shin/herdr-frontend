@@ -10,12 +10,14 @@
 //! - [`mode`]: who has the keyboard: normal, a prefix sequence, a popup, copy mode.
 //! - [`geometry`]: where panes sit, and which pane lies in a direction.
 //! - [`effect`]: what a step asks the app to do.
+//! - [`control`]: the `ls | do | status` surface Eli's tools drive (`docs/cli.md`).
 //!
 //! [`Model::step`] is the one transition: `step(now, Event | Action) -> Effects`. User actions
 //! become layout [`herdr_shared::Intent`]s and core calls; replies come back as events.
 
 pub mod action;
 mod actions;
+pub mod control;
 pub mod effect;
 pub mod geometry;
 pub mod keys;
@@ -27,6 +29,7 @@ pub mod world;
 pub use action::{
     Action, AppCommand, CopyAction, Direction, Edge, Popup, PopupAction, Split, TerminalAction,
 };
+pub use control::{Call, CallId};
 pub use effect::{Effect, Effects, Focus, Level, Pick, Request, TerminalCommand, Toast, Token};
 pub use geometry::{Geometry, Rect};
 pub use keys::{Chord, Context, Key, Keymap, Lookup, Mods};

@@ -535,8 +535,11 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   `Reply { token }`, `StreamClosed`), input (`Key { chord, terminal }`), and `Tick` when a
   `WakeAt` comes due.
   `Effects` lists what to do (`Call` with a `Token`, `Doc` rounds, `Terminal` commands, `App`,
-  `Focus`, `Toast`, `Alert`, `Pick`, `NotYet`, `WakeAt`, `SaveView`), plus `handled`: whether a
-  key was used, so it must not reach the terminal.
+  `Focus`, `Toast`, `Alert`, `Pick`, `NotYet`, `WakeAt`, `SaveView`, `Answer`), plus `handled`:
+  whether a key was used, so it must not reach the terminal.
+- **Control calls.** A `do` from the control socket is a third input, `Call { id, name, args }`,
+  answered by exactly one `Effect::Answer { id, reply }`, in the same step or once a launch
+  returns. `Model::ls` and `Model::status` are read-only (`docs/cli.md`).
 - **World and view.** `World` holds one `Mirror` per machine (this one first, then by name;
   temporary machines left out) and the terminal records. `View` holds this screen's choices by
   id and falls back to the first space, tab or pane. `View::reconcile` forgets ids a read layout

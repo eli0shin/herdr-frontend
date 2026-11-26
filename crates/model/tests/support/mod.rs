@@ -168,10 +168,21 @@ impl Core {
 /// Steps `input`, then answers every round and call it asks for until none is left. Returns
 /// every other effect, in order.
 pub fn drive(m: &mut Model, core: &mut Core, input: impl Into<Input>) -> Vec<Effect> {
-    let mut queue: VecDeque<Input> = VecDeque::from([input.into()]);
+    let effects = m.step(core.now, input).list;
+    run_effects(m, core, effects)
+}
+
+/// Answers the rounds and calls among `effects` (from a step made elsewhere), and every one
+/// those answers ask for, until none is left. Returns every other effect, in order.
+pub fn run_effects(m: &mut Model, core: &mut Core, effects: Vec<Effect>) -> Vec<Effect> {
+    let mut queue: VecDeque<Input> = VecDeque::new();
     let mut out = Vec::new();
-    while let Some(input) = queue.pop_front() {
-        for effect in m.step(core.now, input) {
+    let mut next = Some(effects);
+    while let Some(effects) = next.take().or_else(|| {
+        let input = queue.pop_front()?;
+        Some(m.step(core.now, input).list)
+    }) {
+        for effect in effects {
             match effect {
                 Effect::Doc { machine, round } => {
                     let down = core.down.contains(&machine);
