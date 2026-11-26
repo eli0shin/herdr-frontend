@@ -331,7 +331,8 @@ enum StreamNews {
 }
 
 /// The thread that reads every attach stream: it moves each terminal's output into its terminal
-/// worker and credits it there (rule 2), so the UI only hears when a stream starts or ends.
+/// worker, which returns the credit once it parsed the bytes (rule 2), so the UI only hears when a
+/// stream starts or ends, and a worker that falls behind holds its stream to the credit window.
 struct Streams {
     signal: Arc<Signal>,
     commands: Sender<Command>,
@@ -461,8 +462,11 @@ fn read_streams(
                     Some(StreamItem::Data(bytes)) => {
                         moved += bytes.len();
                         let n = bytes.len();
-                        r.writer.write(bytes);
-                        r.stream.credit(n);
+                        // Credit once the worker parsed them, not when they're queued: a parser
+                        // that falls behind then holds the core to its credit window.
+                        let control = r.stream.control();
+                        r.writer
+                            .write_then(bytes, Box::new(move || control.credit(n)));
                     }
                     // Only observers hear RESIZE; this client follows `size` events.
                     Some(StreamItem::Resize { .. }) => {}

@@ -4,7 +4,8 @@
 //! [`Live`] is the real core, through herdr-client's supervisor (connect, subscribe, reconnect),
 //! its machine watcher, and calls answered through `Pending::try_take`. Attach streams are read
 //! on one thread of their own, which writes a terminal's output straight into its terminal
-//! worker and returns the credit, so a hidden terminal's output never wakes the UI.
+//! worker; the worker returns the credit once it parsed the bytes. A hidden terminal's output
+//! never wakes the UI, and a backlog never outgrows the core's credit window.
 //!
 //! [`Fake`] is an in-process core for headless scenes and tests: it answers document rounds
 //! under compare-and-set and terminal calls, shows each terminal's recorded screen on attach,

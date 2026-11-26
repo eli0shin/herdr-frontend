@@ -173,3 +173,86 @@ fn the_app_draws_and_types_into_live_core_terminals_and_leaves_the_layout_alone(
 
     drop(rt);
 }
+
+/// A program that floods its terminal, with the app's parser held up: the core stops at the
+/// credit window, so what waits unparsed never outgrows it (rule 2). Once the parser runs again,
+/// the output flows on.
+#[test]
+fn a_parser_behind_the_output_holds_the_core_to_the_credit_window() {
+    let Some(core) = IsolatedCore::new() else {
+        return;
+    };
+    let conn = Connection::open(&core.transport(), &ConnectOptions::default()).expect("connect");
+    let flood = run(&conn, &core, "exec yes flood-line", None);
+    let doc = json!({"spaces": [{
+        "id": "sp-1", "name": "isolated", "folder": core.folder().display().to_string(),
+        "tabs": [tab("tb-1", "flood", split("tb-1", "row", vec![pane("pn-1", &flood)]))],
+    }]});
+    let read = conn
+        .call(DocGet {
+            name: "herdr-app".into(),
+            ..Default::default()
+        })
+        .wait()
+        .expect("doc.get");
+    conn.call(DocSet {
+        name: "herdr-app".into(),
+        value: doc,
+        version: read.version,
+        ..Default::default()
+    })
+    .wait()
+    .expect("doc.set");
+
+    let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
+    rt.state.connect(Box::new(Live::new(core.transport())));
+    until(&mut rt, "the flood to show", |rt| {
+        text_of(rt, &flood).contains("flood-line")
+    });
+
+    // Hold the terminal's worker inside a parsed callback: it parses nothing more.
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let (entered, inside) = std::sync::mpsc::channel::<()>();
+    rt.state.viewers[&flood].terminal.writer().write_then(
+        Vec::new(),
+        Box::new(move || {
+            let _ = entered.send(());
+            let _ = held.recv();
+        }),
+    );
+    // The stall waits behind whatever output was queued already.
+    inside
+        .recv_timeout(WAIT)
+        .expect("the worker took the stall");
+
+    // The program goes on writing; the core may send only what the credit window allows.
+    let window = herdr_proto::frame::WINDOW;
+    let mut most = 0;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        most = most.max(rt.state.viewers[&flood].terminal.pending_bytes());
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(most > 0, "the flood stopped on its own");
+    assert!(
+        most <= window,
+        "{most} bytes wait unparsed, past the {window}-byte credit window"
+    );
+
+    // Running again, the worker parses the backlog, credits it, and the core sends more.
+    let generation = |rt: &Runtime<State>| {
+        rt.state.viewers[&flood]
+            .pane
+            .as_ref()
+            .map_or(0, |p| p.snapshot.generation)
+    };
+    drop(release);
+    until(&mut rt, "the backlog to drain", |rt| {
+        rt.state.viewers[&flood].terminal.pending_bytes() < window
+    });
+    let before = generation(&rt);
+    until(&mut rt, "the flood to go on", |rt| {
+        generation(rt) > before + 2
+    });
+    drop(rt);
+}

@@ -575,8 +575,9 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   `AppSpec::poll`. `Live` runs herdr-client's `Supervisor` and `MachineWatcher`, makes calls and
   document rounds whose `Pending`s it `try_take`s, and reads every attach stream on one thread
   (`hc-streams`), which writes a terminal's output straight into its terminal worker through a
-  `terminal::Writer` and returns the credit. The UI hears only when a stream starts or ends, so
-  a hidden terminal's output never wakes it. `Fake` is an in-process core for scenes and tests:
+  `terminal::Writer`. The worker returns the credit once it parsed the bytes (`write_then`), so
+  a parser that falls behind holds the stream to the core's 256 KiB window. The UI hears only
+  when a stream starts or ends, so a hidden terminal's output never wakes it. `Fake` is an in-process core for scenes and tests:
   it answers on the next poll, paints each terminal's recorded screen on attach, and keeps
   every frame sent.
 - **`State::pump`.** Link news goes through `Model::step`; effects become link calls, focus

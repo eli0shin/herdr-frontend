@@ -268,3 +268,64 @@ fn a_snapshot_now_has_everything_sent_before_it_and_empties_the_handoff() {
     let s = terminal.snapshot_now(PATIENCE).expect("a snapshot");
     assert_eq!(s.text(), "");
 }
+
+/// Holds the worker inside a parsed callback until the returned sender is dropped or sent on.
+fn stall(terminal: &Terminal) -> mpsc::Sender<()> {
+    let (release, held) = mpsc::channel::<()>();
+    let (entered, inside) = mpsc::channel::<()>();
+    terminal.writer().write_then(
+        Vec::new(),
+        Box::new(move || {
+            let _ = entered.send(());
+            let _ = held.recv();
+        }),
+    );
+    inside
+        .recv_timeout(PATIENCE)
+        .expect("the worker took the stall");
+    release
+}
+
+#[test]
+fn a_write_reports_parsed_only_after_the_worker_parsed_it() {
+    let (terminal, wakes) = spawn(config());
+    let release = stall(&terminal);
+    let (parsed, heard) = mpsc::channel();
+    terminal.writer().write_then(
+        b"after the stall".to_vec(),
+        Box::new(move || parsed.send(()).unwrap()),
+    );
+    // Queued behind a busy worker: counted, not parsed, not reported.
+    assert_eq!(terminal.pending_bytes(), b"after the stall".len());
+    assert!(heard.recv_timeout(Duration::from_millis(100)).is_err());
+
+    drop(release);
+    heard.recv_timeout(PATIENCE).expect("reported once parsed");
+    assert_eq!(terminal.pending_bytes(), 0);
+    snapshot_where(&terminal, &wakes, |s| s.line(0) == "after the stall");
+}
+
+#[test]
+fn dropping_a_terminal_doesnt_parse_its_backlog_first() {
+    let (terminal, _wakes) = spawn(config());
+    let release = stall(&terminal);
+    let parsed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let writer = terminal.writer();
+    for _ in 0..1000 {
+        let parsed = parsed.clone();
+        writer.write_then(
+            vec![b'x'; 64 * 1024],
+            Box::new(move || {
+                parsed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }),
+        );
+    }
+    assert_eq!(terminal.pending_bytes(), 1000 * 64 * 1024);
+    // Let the stall go once the drop has asked the worker to stop.
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        drop(release);
+    });
+    drop(terminal);
+    assert_eq!(parsed.load(std::sync::atomic::Ordering::SeqCst), 0);
+}

@@ -29,6 +29,7 @@ mod input;
 mod snapshot;
 mod vt;
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -70,8 +71,12 @@ pub enum Output {
 /// The most the worker parses before it offers a frame, so a flood of output still shows.
 const BATCH_BYTES: usize = 1 << 20;
 
+/// Called on the worker thread once a write's bytes are parsed: where a viewer returns the
+/// core's credit for them (`herdr-core-protocol.md` rule 2).
+pub type Parsed = Box<dyn FnOnce() + Send>;
+
 enum Request {
-    Write(Vec<u8>),
+    Write(Vec<u8>, Option<Parsed>),
     Resize {
         cols: u16,
         rows: u16,
@@ -107,6 +112,10 @@ struct Handoff {
 /// A terminal on its own worker thread. Dropping it stops the thread.
 pub struct Terminal {
     requests: Sender<Request>,
+    /// Bytes written and not parsed yet.
+    pending: Arc<AtomicUsize>,
+    /// Set on drop: the worker stops at its next request, however many are queued.
+    stopping: Arc<AtomicBool>,
     handoff: Arc<Mutex<Handoff>>,
     output: Receiver<Output>,
     worker: Option<JoinHandle<()>>,
@@ -119,6 +128,9 @@ impl Terminal {
         let (outbox, output) = mpsc::channel();
         let handoff = Arc::new(Mutex::new(Handoff::default()));
         let shared = handoff.clone();
+        let pending = Arc::new(AtomicUsize::new(0));
+        let stopping = Arc::new(AtomicBool::new(false));
+        let (worker_pending, worker_stopping) = (pending.clone(), stopping.clone());
         let worker = thread::Builder::new()
             .name("terminal".into())
             .spawn(move || {
@@ -130,12 +142,16 @@ impl Terminal {
                     handoff: shared,
                     waker,
                     changed: true,
+                    pending: worker_pending,
+                    stopping: worker_stopping,
                 }
                 .run()
             })
             .expect("spawn the terminal worker");
         Terminal {
             requests,
+            pending,
+            stopping,
             handoff,
             output,
             worker: Some(worker),
@@ -153,7 +169,13 @@ impl Terminal {
     pub fn writer(&self) -> Writer {
         Writer {
             requests: self.requests.clone(),
+            pending: self.pending.clone(),
         }
+    }
+
+    /// Bytes written and not parsed yet: the worker's backlog.
+    pub fn pending_bytes(&self) -> usize {
+        self.pending.load(Ordering::Acquire)
     }
 
     /// Resizes the grid; the cell is in whole device pixels. A program with mode 2048 on gets
@@ -240,6 +262,7 @@ impl Terminal {
 #[derive(Clone)]
 pub struct Writer {
     requests: Sender<Request>,
+    pending: Arc<AtomicUsize>,
 }
 
 impl Writer {
@@ -247,7 +270,21 @@ impl Writer {
     pub fn write(&self, bytes: impl Into<Vec<u8>>) {
         let bytes = bytes.into();
         if !bytes.is_empty() {
-            let _ = self.requests.send(Request::Write(bytes));
+            self.send(bytes, None);
+        }
+    }
+
+    /// The program's output, and `parsed` to run on the worker once it's parsed (even when
+    /// `bytes` is empty). A dropped terminal runs it never.
+    pub fn write_then(&self, bytes: impl Into<Vec<u8>>, parsed: Parsed) {
+        self.send(bytes.into(), Some(parsed));
+    }
+
+    fn send(&self, bytes: Vec<u8>, parsed: Option<Parsed>) {
+        let n = bytes.len();
+        self.pending.fetch_add(n, Ordering::AcqRel);
+        if self.requests.send(Request::Write(bytes, parsed)).is_err() {
+            self.pending.fetch_sub(n, Ordering::AcqRel);
         }
     }
 
@@ -259,8 +296,9 @@ impl Writer {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        // A `Writer` may still hold the channel open, so say stop; closing it ends the loop
-        // too, for a worker that never reads the request.
+        // A `Writer` may still hold the channel open, so say stop, ahead of whatever output is
+        // queued; closing the channel ends the loop too.
+        self.stopping.store(true, Ordering::Release);
         self.send(Request::Stop);
         let (closed, _) = mpsc::channel();
         drop(std::mem::replace(&mut self.requests, closed));
@@ -278,6 +316,8 @@ struct Worker {
     waker: Waker,
     /// Something changed since the last published snapshot.
     changed: bool,
+    pending: Arc<AtomicUsize>,
+    stopping: Arc<AtomicBool>,
 }
 
 impl Worker {
@@ -306,8 +346,11 @@ impl Worker {
             let mut parsed = 0;
             let mut next = first;
             while let Some(request) = next {
+                if self.stopping.load(Ordering::Acquire) {
+                    return;
+                }
                 match &request {
-                    Request::Write(bytes) => parsed += bytes.len(),
+                    Request::Write(bytes, _) => parsed += bytes.len(),
                     Request::Stop => return,
                     _ => {}
                 }
@@ -328,9 +371,13 @@ impl Worker {
 
     fn handle(&mut self, request: Request) {
         let changed = match request {
-            Request::Write(bytes) => {
+            Request::Write(bytes, parsed) => {
                 self.vt.write(&bytes);
-                true
+                self.pending.fetch_sub(bytes.len(), Ordering::AcqRel);
+                if let Some(parsed) = parsed {
+                    parsed();
+                }
+                !bytes.is_empty()
             }
             Request::Resize {
                 cols,
