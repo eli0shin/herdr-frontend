@@ -28,6 +28,12 @@ jobs:
           rustup toolchain install
           rustup show
       - uses: Swatinem/rust-cache@v2
+      - name: libghostty-vt cache
+        # The pinned xcframework zip that crates/ghostty-vt-sys/build.rs downloads and verifies.
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/ghostty-vt-sys
+          key: ghostty-vt-${{ hashFiles('crates/ghostty-vt-sys/build.rs') }}
       - name: rune pins
         run: scripts/check-rune-pins
       - name: fmt
@@ -36,3 +42,9 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: test
         run: cargo test --locked
+      - name: ghostty-vt bindings
+        # Lints the feature-gated bindgen binary, then regenerates src/bindings.rs from the pinned
+        # headers and fails on a diff.
+        run: |
+          cargo clippy --locked -p ghostty-vt-sys --all-targets --features bindgen -- -D warnings
+          cargo run --locked -p ghostty-vt-sys --features bindgen --bin ghostty-vt-bindgen -- --check
