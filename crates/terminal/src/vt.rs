@@ -31,9 +31,11 @@ pub struct Config {
     pub theme: Theme,
     /// What `CSI ? 996 n` answers. `None` leaves the query unanswered.
     pub color_scheme: Option<ColorScheme>,
-    /// Let programs write the clipboard (OSC 52 and the like), up to `clipboard_max_bytes`.
-    /// Programs can never read it.
+    /// Let programs write the clipboard (OSC 52 and kitty's OSC 5522). Programs can never read
+    /// it.
     pub clipboard_write: bool,
+    /// The largest clipboard write, in bytes of decoded text. A larger one is refused with no
+    /// event, over OSC 52 and OSC 5522 alike.
     pub clipboard_max_bytes: usize,
     pub option_as_alt: OptionAsAlt,
     /// How long a program may hold its frame (synchronized output) before it shows anyway.
@@ -168,6 +170,8 @@ struct Effects {
     size: GhosttySizeReportSize,
     color_scheme: Option<ColorScheme>,
     clipboard_write: bool,
+    /// The largest clipboard write let through, in bytes of text.
+    clipboard_max_bytes: usize,
     /// The render state, so a hold can capture the frame the moment it begins.
     state: GhosttyRenderState,
     /// What the terminal said when `state` was last updated.
@@ -281,6 +285,7 @@ impl Vt {
                 },
                 color_scheme: config.color_scheme,
                 clipboard_write: config.clipboard_write,
+                clipboard_max_bytes: config.clipboard_max_bytes,
                 state,
                 meta: Meta::default(),
                 hold: None,
@@ -303,6 +308,8 @@ impl Vt {
                 GHOSTTY_TERMINAL_OPT_MODE_DEFAULT,
                 (&raw const grapheme).cast(),
             );
+            // This bounds kitty's OSC 5522 transactions; OSC 52 is checked in
+            // `on_clipboard_write`, since the library bounds it only by sequence length.
             let clipboard_max = config.clipboard_max_bytes;
             set(
                 term,
@@ -1368,18 +1375,22 @@ unsafe extern "C" fn on_clipboard_write(
             } else {
                 std::slice::from_raw_parts(write.contents, write.contents_len)
             };
-            let text = contents
+            let content = contents
                 .iter()
                 .find(|c| string(c.mime).starts_with("text/plain"))
                 .or_else(|| {
                     contents
                         .iter()
                         .find(|c| string(c.mime).starts_with("text/"))
-                })
-                .map(|c| string(c.data));
-            if write.contents_len > 0 && text.is_none() {
+                });
+            if write.contents_len > 0 && content.is_none() {
                 GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED
+            } else if content.is_some_and(|c| c.data.len > effects.clipboard_max_bytes) {
+                // The library bounds only kitty's OSC 5522 by size, so OSC 52 is capped here,
+                // on the decoded bytes, before they're copied.
+                GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED
             } else {
+                let text = content.map(|c| string(c.data));
                 effects.events.push(Event::Clipboard {
                     location: match write.location {
                         GHOSTTY_CLIPBOARD_LOCATION_SELECTION => ClipboardLocation::Selection,

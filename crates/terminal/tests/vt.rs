@@ -133,6 +133,60 @@ fn clipboard_writes_can_be_denied() {
     assert_eq!(vt.take_events(), []);
 }
 
+/// Standard base64 with padding, for OSC 52 payloads.
+fn base64(data: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let bits = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |acc, (i, &b)| acc | u32::from(b) << (16 - 8 * i));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ALPHABET[(bits >> (18 - 6 * i) & 0x3f) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn clipboard_writes_are_capped() {
+    // Herdr app's limit: exactly 1 MiB of text goes through, one byte more is refused whole.
+    let limit = Config::default().clipboard_max_bytes;
+    assert_eq!(limit, 1 << 20);
+    let mut vt = Vt::new(&config());
+    let osc52 = |text: &[u8]| format!("\x1b]52;c;{}\x07", base64(text)).into_bytes();
+
+    vt.write(&osc52(&vec![b'x'; limit]));
+    match vt.take_events().as_slice() {
+        [
+            Event::Clipboard {
+                text: Some(text), ..
+            },
+        ] => assert_eq!(text.len(), limit),
+        other => panic!("expected one clipboard write, got {} events", other.len()),
+    }
+
+    vt.write(&osc52(&vec![b'x'; limit + 1]));
+    vt.write(&osc52(&vec![b'x'; 4 << 20]));
+    assert_eq!(vt.take_events(), []);
+    assert_eq!(replies(&mut vt), "");
+
+    // Writes under the limit still go through afterwards.
+    vt.write(&osc52(b"ok"));
+    assert_eq!(
+        vt.take_events(),
+        [Event::Clipboard {
+            location: ClipboardLocation::Standard,
+            text: Some("ok".into()),
+        }]
+    );
+}
+
 #[test]
 fn a_render_hold_shows_the_frame_from_when_it_began() {
     let mut vt = Vt::new(&config());
