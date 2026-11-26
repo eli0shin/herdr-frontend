@@ -682,6 +682,27 @@ pub struct Mirror { machine: MachineKey, doc: Option<RawDocument>, version: u64,
 pub enum Intent { NewSpace{..}, NewTab{..}, Split{..}, ClosePane{..}, MoveSpace{..}, Rename{..}, Resize{..}, /* … */ }
 ```
 
+### herdr-proto as built
+
+`crates/herdr-proto` follows the sketch, with these specifics:
+
+- `Frame` constructors and readers for each kind (`credit`, `resize`, `focus`, `facts`, …;
+  `credit_bytes`, `resize_grid`, `close_reason`). `Decoder::next_frame` errors on a payload above
+  16 MiB. `LineSplitter::into_rest` hands the bytes after the plain-mode `hello` line to the
+  `Decoder`.
+- One params struct per method, named after it (`TerminalAttach`, `DocSet`, …), each a `Call` with
+  its `METHOD` and `Result`. Optional params left at their default aren't sent. `server.stop`,
+  `server.restart` and `terminal.put_begin/chunk/finish/abort` have no types on purpose.
+- Records mirror the core's serialization: a recorded record decodes and encodes back to the same
+  JSON. Unknown words (`ErrorKind`, `Reason`, `StatusState`, `EventKind`, …) decode as `Other`.
+- `Notification` is `Event`, `Heartbeat`, `Missed(Snapshot)` or `Other`; `Event.data` is typed per
+  event type. `TerminalSet::apply` returns `Changes`: `resynced`, `updated`, `removed`,
+  `restarted`, `turns`, the per-batch `seen` highs, and the highest version per document.
+  `apply_into` coalesces a batch. Heartbeats change nothing.
+- Tests replay messages recorded from an isolated core by `scripts/record_proto_fixtures.py`
+  (`crates/herdr-proto/tests/fixtures`), including the check that applying the recorded events to
+  the subscribe snapshot gives the core's final `terminal.list`.
+
 ### Threading
 
 - Each connection runs a reader thread (decode frames, route replies to a oneshot per id, route

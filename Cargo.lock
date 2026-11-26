@@ -1225,6 +1225,11 @@ dependencies = [
 [[package]]
 name = "herdr-proto"
 version = "0.0.1"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "herdr-shared"
