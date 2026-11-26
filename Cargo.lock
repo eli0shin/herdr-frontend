@@ -1992,6 +1992,7 @@ checksum = "0cde0dfb48d25d2b4862161a4d5fcc0e3c24367869ad306b0c9ec0073bfed92d"
 dependencies = [
  "bitflags 2.13.2",
  "objc2-core-foundation",
+ "objc2-core-graphics",
 ]
 
 [[package]]
@@ -3486,6 +3487,11 @@ dependencies = [
 [[package]]
 name = "terminal"
 version = "0.0.1"
+dependencies = [
+ "objc2-core-foundation",
+ "objc2-core-text",
+ "skrifa",
+]
 
 [[package]]
 name = "thiserror"
