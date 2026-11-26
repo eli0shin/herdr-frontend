@@ -10,11 +10,13 @@ default:
 build:
     cargo build
 
-# Run the pin check, fmt, clippy and the tests, as CI does.
+# Run the pin check, fmt, clippy, the tests and the bindings check, as CI does.
 test: check-pins
     cargo fmt --all -- --check
     cargo clippy --all-targets --locked -- -D warnings
     cargo test --locked
+    cargo clippy --locked -p ghostty-vt-sys --all-targets --features bindgen -- -D warnings
+    just bindings --check
 
 # Open the app window.
 run *args:
@@ -32,3 +34,7 @@ snap scene="hello" *args: build
 # Check the Rune pin against Rune's own patch list at the pinned rev.
 check-pins:
     scripts/check-rune-pins
+
+# Regenerate crates/ghostty-vt-sys/src/bindings.rs from the pinned headers (`--check` fails on a diff).
+bindings *args:
+    cargo run --locked -p ghostty-vt-sys --features bindgen --bin ghostty-vt-bindgen -- {{args}}

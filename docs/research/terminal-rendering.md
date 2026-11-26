@@ -204,6 +204,10 @@ the header version (`stability.md` "Checking the Version").
 **Pin:** libghostty-vt `vt-1.0.2` (`573c4a21e0`), from the release's checksummed xcframework,
 not a git submodule. Move to later 1.x releases on purpose. They only add API.
 
+`crates/ghostty-vt-sys` implements this: `build.rs` holds the pin (version, URL, SHA-256), caches
+the zip outside `target/`, and links the macOS slice thinned to the target architecture. To bump,
+change the constants in `build.rs`, run `just bindings`, and commit both.
+
 Don't copy either reference pin:
 
 - herdr-app builds a submodule at `291fd050` (pre-1.0, `minimum_zig_version = "0.16.0"`). Its

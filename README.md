@@ -15,9 +15,15 @@ macOS only for now. Needs [rustup](https://rustup.rs) (the toolchain comes from
 
 ```sh
 just run          # open the window
-just test         # pin check, fmt, clippy and tests, as CI runs them
+just test         # pin check, fmt, clippy, tests and bindings check, as CI runs them
 just snap [scene] # render a scene headless to target/snap/<scene>.png
 just check-pins   # check the Rune pin against Rune's patch list at that rev
+just bindings     # regenerate the libghostty-vt bindings (`--check` fails on a diff)
 ```
+
+The first build downloads the pinned libghostty-vt xcframework (16 MB), checks its SHA-256 and
+caches it in `~/Library/Caches/ghostty-vt-sys` (set `GHOSTTY_VT_CACHE_DIR` to move it). It needs
+`curl`, `unzip` and `lipo` from the Xcode Command Line Tools, but no Zig. The bindings in
+`crates/ghostty-vt-sys/src/bindings.rs` are committed, so only `just bindings` needs libclang.
 
 Rune is pinned to one `dev` rev in `Cargo.toml`; bump it as `docs/research/rune.md` §1 describes.
