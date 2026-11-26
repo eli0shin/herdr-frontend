@@ -1,0 +1,70 @@
+[?1049h[22;0;0t[?1h=[H[2J[?2004h[?69$p[?2026$p[?2027$p[?2031$p[?2048$p[0m[4:3mP$qm\[?u[c]11;?[5n[?25h]11;?[5n[?25l[>4;2m(B[m[H                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                [1 q[?1002h[?1006h[H[?25hP+q5463;524742;73657472676266;73657472676262\[0m[48;2;1;2;3mP$qm\[c[?25l(B[m# A sample file for the replay tests[K
+[K
+fn main() {[K
+    let greeting = "hello, terminal";[K
+    println!("{greeting}");[K
+}[K
+[K
+Wide: 日本語 and an emoji   🎉[8;29H sit in two cells each.[K
+Box: ┌[9;7H─[9;8H─[9;9H┐[9;10H │[9;12Hok│[9;15H └[9;17H─[9;18H─[9;19H┘[9;20H[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+(B[0;7msample.txt                                                    1,1            All(B[m
+[J[2 q[2 q[H# A sample file for the replay tests[K
+[K
+fn main() {[K
+    let greeting = "hello, terminal";[K
+    println!("{greeting}");[K
+}[K
+[K
+Wide: 日本語 and an emoji   🎉[8;29H sit in two cells each.[K
+Box: ┌[9;7H─[9;8H─[9;9H┐[9;10H │[9;12Hok│[9;15H └[9;17H─[9;18H─[9;19H┘[9;20H[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+~[K
+(B[0;7msample.txt                                                    1,1            All(B[m
+[J[H[?25hP+q4D73\[?25l[?1004h[?25h[?25l[23;63H(B[0;7m2,0-1[5D3,1  [24;70H(B[mj[21A[?25h[?25l[24;70H [23;63H(B[0;7m4[19A[?25h[?25l[20B(B[m[92m-- INSERT --[4;39H(B[m// edited[23;12H(B[0;7m[+]                                                4,48[6 q[4;48H[?25h[?25l(B[m[20B[12X[23;66H(B[0;7m7[2 q[4;47H[?25h[?25l[20B(B[m:q![2 q[?1002l[?1006l[24;1H[?25h[?25l[2 q[?1002h[?1006h[?25h[?25l[2 q[?1002l[?1006l(B[m[?25h[0 q[?1l>[<u[?2004l[?1004l[c[?25h[?25l[?1049l[23;0;0t[?25h

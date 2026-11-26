@@ -3493,6 +3493,7 @@ dependencies = [
 name = "terminal"
 version = "0.0.1"
 dependencies = [
+ "ghostty-vt-sys",
  "objc2-core-foundation",
  "objc2-core-text",
  "skrifa",

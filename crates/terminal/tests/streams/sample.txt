@@ -1,0 +1,9 @@
+# A sample file for the replay tests
+
+fn main() {
+    let greeting = "hello, terminal";
+    println!("{greeting}");
+}
+
+Wide: 日本語 and an emoji 🎉 sit in two cells each.
+Box: ┌──┐ │ok│ └──┘
