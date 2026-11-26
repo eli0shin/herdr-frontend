@@ -7,7 +7,9 @@
 //!   changes;
 //! - a fill for each run of cells with the same non-default background, selection included;
 //! - pinned cells for what mustn't move the columns after it: wide characters, clusters of
-//!   several code points, and characters the regular face has no glyph for;
+//!   several code points, and characters the regular face has no glyph for. Those the glyph atlas
+//!   draws ([`glyph`]) come out as images over the grid, and their pinned text is drawn
+//!   transparent so the row still reads;
 //! - Ghostty's sprites in the vector layer, at whole device pixels: underlines of every style,
 //!   strikethrough, overline, and the characters Ghostty draws itself (box drawing, blocks,
 //!   braille, Powerline, [`sprite`] has the list). A sprite character also stays in the text,
@@ -21,6 +23,7 @@ use rune::{Color, GridRow, Shape, Span, TextStyle};
 use terminal::{CellFlags, Colors, Rgb, Row, RowId, Underline, Width};
 
 use super::font::Face;
+use super::glyph::{self, AtlasCell, GlyphImage};
 use super::look::{Look, color};
 use super::sprite::{self, AlphaBox, Kind};
 
@@ -40,6 +43,8 @@ pub struct BuiltRow {
     /// Sprites over the text, in device pixels from the row's top left, each box in its color
     /// at its coverage.
     pub boxes: Vec<(AlphaBox, Color)>,
+    /// Cells the glyph atlas draws, over the grid.
+    pub atlas: Vec<AtlasCell>,
     pub wraps: bool,
 }
 
@@ -111,8 +116,10 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
         fills: Vec::new(),
         cells: Vec::new(),
         boxes: Vec::new(),
+        atlas: Vec::new(),
         wraps: row.wrapped,
     };
+    let cps = code_points(row);
     let mut fill: Option<(u16, u16, Rgb)> = None;
     let mut ink: Option<(usize, Ink)> = None;
 
@@ -187,6 +194,23 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
         let italic = cell.flags.contains(CellFlags::ITALIC);
         let on_line =
             drawn && cell.width == Width::Narrow && single.is_some_and(|c| face.covers(c));
+        if drawn
+            && !on_line
+            && ink_fg != Color::TRANSPARENT
+            && let Some(g) = atlas_glyph(row, &cps, x, face)
+        {
+            let alpha = if cell.flags.contains(CellFlags::FAINT) {
+                look.faint_opacity
+            } else {
+                1.0
+            };
+            built.atlas.push(AtlasCell {
+                col,
+                pixels: g.pixels(resolved.fg, alpha),
+                glyph: g,
+            });
+            ink_fg = Color::TRANSPARENT;
+        }
         if drawn && !on_line {
             let mut cell_style = style;
             cell_style.weight = weight;
@@ -239,6 +263,40 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
     }
     built.spans.retain(|s| s.end > s.start);
     built
+}
+
+/// Each cell's code point, 0 for an empty one, as `constraintWidth` reads its neighbors.
+fn code_points(row: &Row) -> Vec<u32> {
+    row.cells
+        .iter()
+        .map(|c| c.text.as_str().chars().next().map_or(0, |c| c as u32))
+        .collect()
+}
+
+/// The atlas glyph for column `x` of `row`, if the atlas draws that cell.
+pub(super) fn atlas_glyph(
+    row: &Row,
+    cps: &[u32],
+    x: usize,
+    face: &Face,
+) -> Option<std::rc::Rc<GlyphImage>> {
+    let cell = row.cells.get(x)?;
+    let text = cell.text.as_str();
+    let mut chars = text.chars();
+    // A narrow character the terminal font has draws on the row's line, and a sprite as itself.
+    if let (Some(c), None) = (chars.next(), chars.next())
+        && ((cell.width == Width::Narrow && face.covers(c)) || sprite::drawn(c))
+    {
+        return None;
+    }
+    let wide = cell.width == Width::Wide;
+    let width = glyph::constraint::constraint_width(cps, wide, x);
+    glyph::render(face, text, wide, width)
+}
+
+/// [`atlas_glyph`] for a cell, its row's neighbors read from `row`.
+pub(super) fn atlas_glyph_at(row: &Row, x: usize, face: &Face) -> Option<std::rc::Rc<GlyphImage>> {
+    atlas_glyph(row, &code_points(row), x, face)
 }
 
 fn span(start: usize, end: usize, ink: Ink, style: &TextStyle) -> Span {
@@ -325,10 +383,15 @@ impl BuiltRow {
 pub struct RowCache {
     /// What every cached row was built with: the face, the look and the default colors.
     key: Option<CacheKey>,
-    rows: HashMap<RowId, (Arc<Row>, Rc<GridRow>)>,
+    rows: HashMap<RowId, CachedRow>,
     /// Rows built (not reused) by the last [`RowCache::rows`] call.
     pub built: usize,
+    /// The atlas cells of the last [`RowCache::rows`] call's rows, by row.
+    pub atlas: Vec<(u16, AtlasCell)>,
 }
+
+/// A built row: the snapshot row it was built from, what Rune draws, and its atlas cells.
+type CachedRow = (Arc<Row>, Rc<GridRow>, Rc<[AtlasCell]>);
 
 #[derive(Clone, PartialEq)]
 struct CacheKey {
@@ -359,17 +422,23 @@ impl RowCache {
         }
         let mut kept = HashMap::with_capacity(screen.len());
         self.built = 0;
+        self.atlas.clear();
         let rows = screen
             .iter()
-            .map(|row| {
-                let grid_row = match self.rows.remove(&row.id) {
-                    Some((was, grid_row)) if Arc::ptr_eq(&was, row) => grid_row,
+            .enumerate()
+            .map(|(y, row)| {
+                let (grid_row, atlas) = match self.rows.remove(&row.id) {
+                    Some((was, grid_row, atlas)) if Arc::ptr_eq(&was, row) => (grid_row, atlas),
                     _ => {
                         self.built += 1;
-                        Rc::new(build(row, colors, face, look).grid_row(face))
+                        let built = build(row, colors, face, look);
+                        let atlas: Rc<[AtlasCell]> = built.atlas.clone().into();
+                        (Rc::new(built.grid_row(face)), atlas)
                     }
                 };
-                kept.insert(row.id, (row.clone(), grid_row.clone()));
+                self.atlas
+                    .extend(atlas.iter().map(|cell| (y as u16, cell.clone())));
+                kept.insert(row.id, (row.clone(), grid_row.clone(), atlas));
                 grid_row
             })
             .collect();

@@ -1,7 +1,7 @@
 //! Named states for `--snap --scene NAME` (`--list-scenes` lists them).
 
 use crate::State;
-use crate::fixtures::{self, BOXES, COLORS, Fixture, NVIM_SPLITS};
+use crate::fixtures::{self, BOXES, COLORS, Fixture, NVIM_CHECKLIST, NVIM_SPLITS};
 use crate::link::{Fake, Offline};
 use crate::state::Status;
 use crate::view::terminal::TerminalPane;
@@ -14,6 +14,7 @@ pub(crate) const SCENES: &[Scene] = &[
     ("terminal-colors", |s| one(s, &COLORS)),
     ("terminal-boxes", |s| one(s, &BOXES)),
     ("terminal-nvim", |s| one(s, &NVIM_SPLITS)),
+    ("terminal-nvim-checklist", |s| one(s, &NVIM_CHECKLIST)),
     ("terminal-selection", selection),
     ("terminal-panes", panes),
     ("screen-file", screen_file),

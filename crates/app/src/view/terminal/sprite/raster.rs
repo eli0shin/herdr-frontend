@@ -295,6 +295,8 @@ impl Knots {
 
 /// `arc_max_angle_for_tolerance_normalized`: the widest arc one cubic draws within `tolerance`
 /// (in radii).
+// z2d's table, digit for digit.
+#[allow(clippy::excessive_precision)]
 fn max_arc_angle(tolerance: f64) -> f64 {
     use std::f64::consts::PI;
     const TABLE: [(f64, f64); 11] = [
@@ -443,8 +445,8 @@ impl Polygon {
                     polygon.miter(p0, p1, p2, half);
                 }
             };
-            for i in 1..n - 1 {
-                joint(i - 1, i, i + 1, curve_joins[i]);
+            for (i, &round) in curve_joins.iter().enumerate().take(n - 1).skip(1) {
+                joint(i - 1, i, i + 1, round);
             }
             if closed && n >= 3 {
                 joint(n - 2, n - 1, 0, false);
@@ -556,7 +558,7 @@ impl Polygon {
                     }
                 };
                 let mut x_min = 0;
-                for pair in crossings.chunks_exact(2) {
+                for pair in crossings.as_chunks::<2>().0 {
                     let s = x_min.max(pair[0] - start_x_scaled);
                     if s >= draw_w_scaled {
                         break;
@@ -635,7 +637,7 @@ fn pen(radius: f64) -> Vec<Point> {
             let n = (2.0 * std::f64::consts::PI / delta).ceil() as usize;
             if n < 4 {
                 4
-            } else if n % 2 != 0 {
+            } else if !n.is_multiple_of(2) {
                 n + 1
             } else {
                 n

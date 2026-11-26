@@ -33,6 +33,19 @@ Program output the renderer's scenes, headless tests and Ghostty pixel diff draw
   sleep 1
   ```
 
+- `nvim-checklist.bin`: Neovim 0.12.6 with `nvim-checklist.lua`: splits, a float with a rounded
+  border, undercurled and underdotted diagnostics in their colors, a statusline with Nerd Font
+  icons and Powerline separators, CJK and emoji, and `:%s/nam/name` typed into the cmdline.
+  Neovim sends undercurls only to a terminal whose terminfo has them, so it runs with Ghostty's:
+
+  ```sh
+  cd crates/terminal/tests/streams
+  printf 'sleep 2\nsend ":%%s/nam/name"\nsleep 1\n' >steps
+  python3 -I record.py ../../../app/fixtures/nvim-checklist.bin 80 30 -- /usr/bin/env \
+      TERM=xterm-ghostty TERMINFO=/Applications/Ghostty.app/Contents/Resources/terminfo \
+      nvim -n -i NONE -u "$PWD/../../../app/fixtures/nvim-checklist.lua" < steps
+  ```
+
 `scripts/ghostty-diff` doesn't replay these files into Ghostty: Ghostty's window is whatever size
 the window manager gives it, so it runs the same programs live at Ghostty's grid and records what
 they write, and the renderer draws that recording at the same grid.

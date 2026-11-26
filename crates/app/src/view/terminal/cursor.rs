@@ -177,6 +177,16 @@ fn under_block(snapshot: &Snapshot, place: &CursorPlace, face: &Face, look: &Loo
                 .size(w, cell_h),
         );
     }
+    if let Some(g) = super::rows::atlas_glyph_at(row, usize::from(place.col), face) {
+        let s = face.scale;
+        let ink = look.cursor_text.unwrap_or(colors.background);
+        return Some(
+            el().key("cursor-text")
+                .absolute(g.x as f32 / s, g.top as f32 / s)
+                .size(g.width as f32 / s, g.height as f32 / s)
+                .pixels(&g.pixels(ink, 1.0)),
+        );
+    }
     let mut style = face.style();
     style.tracking = 0.0;
     if cell.flags.contains(terminal::CellFlags::BOLD) {

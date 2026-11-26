@@ -2,7 +2,7 @@
 //! sits at the terminal's own size at the pane's top left, every row reads as the terminal's text,
 //! the cursor lands on its cell, and unchanged rows aren't built again.
 
-use herdr_frontend::fixtures::{self, BOXES, COLORS, NVIM_SPLITS};
+use herdr_frontend::fixtures::{self, BOXES, COLORS, NVIM_CHECKLIST, NVIM_SPLITS};
 use herdr_frontend::{State, app, spec};
 use rune::{ElementInfo, Env, Runtime};
 
@@ -45,6 +45,7 @@ fn each_fixture_draws_at_its_real_grid_pinned_top_left() {
         ("terminal-colors", &COLORS),
         ("terminal-boxes", &BOXES),
         ("terminal-nvim", &NVIM_SPLITS),
+        ("terminal-nvim-checklist", &NVIM_CHECKLIST),
     ] {
         // A pane bigger than the grid: the grid keeps the terminal's size, at the top left.
         let rt = runtime(scene, (900.0, 700.0));
@@ -100,6 +101,58 @@ fn neovim_splits_read_as_neovim_drew_them() {
         "{:?}",
         lines[29]
     );
+}
+
+#[test]
+fn the_neovim_checklist_draws_as_ghostty_does() {
+    use herdr_frontend::view::terminal::{font::Font, look, rows};
+
+    let (theme, look) = look::arctic();
+    let snapshot = NVIM_CHECKLIST.snapshot(&theme);
+    let face = Font::jetbrains_mono(herdr_frontend::TERMINAL_POINTS)
+        .at(2.0)
+        .unwrap();
+    let row_with = |needle: &str| {
+        let y = (0..snapshot.screen.len())
+            .find(|&y| snapshot.line(y).contains(needle))
+            .unwrap_or_else(|| panic!("no row with {needle:?}"));
+        (
+            y,
+            rows::build(&snapshot.screen[y], &snapshot.colors, &face, &look),
+        )
+    };
+
+    // The float's rounded corners are Ghostty's antialiased arcs.
+    let (_, border) = row_with("╭");
+    assert!(border.boxes.iter().any(|(_, c)| c.a < 1.0 && c.a > 0.0));
+
+    // The warning's undercurl is a curl, in its own color. (The error's is hidden by the
+    // cmdline's live preview of the substitution.)
+    let (_, warning) = row_with("local unused");
+    let yellow = look::color(terminal::Rgb::new(0xfc, 0xe0, 0x94));
+    let curl: Vec<_> = warning
+        .boxes
+        .iter()
+        .filter(|(_, c)| (c.r - yellow.r).abs() < 1e-4 && (c.g - yellow.g).abs() < 1e-4)
+        .collect();
+    assert!(curl.len() > 3, "{:?}", warning.boxes);
+    assert!(curl.iter().any(|(_, c)| c.a < 1.0), "antialiased");
+
+    // The statusline: Powerline separators are sprites, the icons come from the Symbols Nerd
+    // Font through the atlas (on macOS).
+    let (_, status) = row_with("main");
+    assert!(!status.boxes.is_empty(), "Powerline separators");
+    if cfg!(target_os = "macos") {
+        assert!(status.atlas.len() >= 3, "{:?}", status.atlas);
+        // The row still reads as Neovim's text.
+        assert!(status.cells.iter().any(|c| c.text == "\u{f15c}"));
+    }
+
+    // The cursor is in the cmdline, after what's typed.
+    let rt = runtime("terminal-nvim-checklist", (680.0, 555.0));
+    let cursor = element(&rt, "pane-1/#0/cursor");
+    assert_eq!(cursor.rect[1], 29.0 * CELL.1);
+    assert_eq!(cursor.rect[0], 12.0 * CELL.0, "after \":%s/nam/name\"");
 }
 
 #[test]

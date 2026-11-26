@@ -81,6 +81,7 @@ impl Font {
             scale,
             metrics,
             advance_px: face.cell_width,
+            face_metrics: face,
             latin,
             regular: self.regular.clone(),
         })
@@ -117,6 +118,8 @@ pub struct Face {
     pub metrics: Metrics,
     /// The face's own advance (its widest ASCII advance), in device pixels.
     pub advance_px: f64,
+    /// The regular face's metrics at this size, which fallback faces are scaled to match.
+    pub face_metrics: FaceMetrics,
     latin: [bool; 256],
     regular: Arc<[u8]>,
 }
@@ -151,6 +154,16 @@ impl Face {
                 .map(|font| font.charmap().map(c).is_some())
                 .unwrap_or(false),
         }
+    }
+
+    /// The regular face's font file.
+    pub fn regular_data(&self) -> &Arc<[u8]> {
+        &self.regular
+    }
+
+    /// The face's size in device pixels (Ghostty's `points × dpi / 72`).
+    pub fn pixels(&self) -> f64 {
+        f64::from(DesiredSize::new(self.points, self.scale).pixels())
     }
 
     /// What identifies this face's layouts in a row cache: rows built for another face, size

@@ -9,6 +9,7 @@
 
 pub mod cursor;
 pub mod font;
+pub mod glyph;
 pub mod look;
 pub mod rows;
 pub mod sprite;
@@ -60,10 +61,11 @@ impl TerminalPane {
     pub fn view(&self, face: &Face, look: &Look) -> El {
         let snapshot = &self.snapshot;
         let (cell_w, cell_h) = face.cell_pt();
-        let rows = self
-            .rows
-            .borrow_mut()
-            .rows(&snapshot.screen, &snapshot.colors, face, look);
+        let (rows, atlas) = {
+            let mut cache = self.rows.borrow_mut();
+            let rows = cache.rows(&snapshot.screen, &snapshot.colors, face, look);
+            (rows, std::mem::take(&mut cache.atlas))
+        };
         let (grid_w, grid_h) = (
             f32::from(snapshot.cols) * cell_w,
             f32::from(snapshot.rows) * cell_h,
@@ -89,6 +91,7 @@ impl TerminalPane {
                 el().absolute(self.padding.left as f32 / s, self.padding.top as f32 / s)
                     .size(grid_w, grid_h)
                     .child(screen)
+                    .children(atlas.iter().map(|(row, cell)| cell.view(*row, face)))
                     .children(cursor::overlay(snapshot, self.focused, face, look)),
             )
     }

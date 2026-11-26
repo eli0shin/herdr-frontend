@@ -192,7 +192,13 @@ fn kinds(
                 Kind::Pinned
             };
             spill = if cell.width == Width::Wide { 1 } else { 0 };
-            kinds.push((kind, sprite_char));
+            // Sprites and pinned cells are each listed by their character too.
+            let listed = match kind {
+                Kind::Sprite | Kind::FontSprite => sprite_char,
+                Kind::Pinned if !text.is_empty() => text.chars().next(),
+                _ => None,
+            };
+            kinds.push((kind, listed));
         }
     }
     kinds
@@ -332,14 +338,18 @@ fn run(args: &[String]) -> Result<(), String> {
     }
     if !by_char.is_empty() {
         println!();
-        println!("sprites, by character (the cells holding each):");
+        println!("sprites and pinned cells, by character (the cells holding each):");
         println!();
         println!(
             "| char | cells | identical | pixels differing | > 16 | > 64 | mean abs diff (0-255) |"
         );
         println!("| --- | --- | --- | --- | --- | --- | --- |");
         for (c, t) in &by_char {
-            let drawn = if sprite::drawn(*c) { "" } else { " (font)" };
+            let drawn = if sprite::drawn(*c) || !sprite::ghostty_draws(*c) {
+                ""
+            } else {
+                " (font)"
+            };
             println!("{}", t.line(&format!("`{c}` U+{:04X}{drawn}", *c as u32)));
         }
     }

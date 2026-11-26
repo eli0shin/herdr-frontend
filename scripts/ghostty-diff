@@ -5,7 +5,7 @@
 # (`pixel-diff`). Results go to target/ghostty/<screen>/: ghostty.png, ours.png, diff.png and
 # report.md.
 #
-#   scripts/ghostty-diff [SCREEN...]     screens: colors boxes nvim (default: all)
+#   scripts/ghostty-diff [SCREEN...]     screens: colors boxes nvim nvim-checklist (default: all)
 #
 # Opens a Ghostty window for a few seconds per screen. macOS on a 2x display, JetBrains Mono 14 pt
 # (a 17 x 37 px cell).
@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 screens=("$@")
-[ ${#screens[@]} -gt 0 ] || screens=(colors boxes nvim)
+[ ${#screens[@]} -gt 0 ] || screens=(colors boxes nvim nvim-checklist)
 
 cargo build --quiet -p herdr-frontend --bins
 bin=target/debug
@@ -36,6 +36,16 @@ for screen in "${screens[@]}"; do
             scripts/ghostty-capture "$out" --keep 3 -- /usr/bin/env -i HOME="$scratch" \
                 TERM=xterm-256color PATH=/opt/homebrew/bin:/usr/bin:/bin LANG=en_US.UTF-8 \
                 /bin/sh -c "cd '$scratch' && exec nvim --clean --cmd 'set termguicolors' -s keys meters.py"
+            ;;
+        nvim-checklist)
+            # fixtures/nvim-checklist.lua with Ghostty's own terminfo, so Neovim sends undercurls,
+            # with the cmdline typed as in fixtures/nvim-checklist.bin.
+            scratch=$(mktemp -d)
+            printf ':%%s/nam/name' >"$scratch/keys"
+            scripts/ghostty-capture "$out" --keep 3 -- /usr/bin/env -i HOME="$scratch" \
+                TERM=xterm-ghostty TERMINFO=/Applications/Ghostty.app/Contents/Resources/terminfo \
+                PATH=/opt/homebrew/bin:/usr/bin:/bin LANG=en_US.UTF-8 \
+                /bin/sh -c "cd '$scratch' && exec nvim -n -i NONE -u '$fixtures/nvim-checklist.lua' -s keys"
             ;;
         *)
             echo "ghostty-diff: no screen named $screen" >&2
