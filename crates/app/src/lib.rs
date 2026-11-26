@@ -2,6 +2,7 @@
 //!
 //! `main.rs` only runs [`app`], so headless tests drive exactly what the window shows.
 
+pub mod control;
 pub mod fixtures;
 mod scenes;
 pub mod view;

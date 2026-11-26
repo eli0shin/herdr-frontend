@@ -186,11 +186,14 @@ impl Model {
         let Some(space) = self.active_space() else {
             let launch = Launch::Space {
                 space: fresh_id_on("sp", None),
+                name: String::new(),
                 folder: folder.clone(),
                 tab: fresh_id_on("tb", None),
+                tab_name: String::new(),
                 pane: fresh_id_on("p", None),
+                focus: true,
             };
-            self.launch(None, &folder, launch, fx);
+            self.launch(None, &folder, launch, None, fx);
             return;
         };
         let machine = machine_of(&space.id).map(str::to_owned);
@@ -204,7 +207,7 @@ impl Model {
                 .selected_tab(&self.world, space)
                 .map(|t| t.id.clone()),
         };
-        self.launch(machine, &folder, launch, fx);
+        self.launch(machine, &folder, launch, None, fx);
     }
 
     /// A split of the focused pane; the new terminal stays on that pane's machine.
@@ -225,7 +228,7 @@ impl Model {
             pane: fresh_id_on("p", m),
             container: fresh_id_on("s", m),
         };
-        self.launch(machine, &folder, launch, fx);
+        self.launch(machine, &folder, launch, None, fx);
     }
 
     /// `pane.close`: the focused pane and its terminal. A tab's last pane closes the tab.
@@ -289,7 +292,7 @@ impl Model {
         }));
     }
 
-    fn close_space(&mut self, id: &str, fx: &mut Effects) {
+    pub(crate) fn close_space(&mut self, id: &str, fx: &mut Effects) {
         let Some(space) = self.world.space(id) else {
             return;
         };
@@ -353,7 +356,7 @@ impl Model {
     }
 
     /// Focuses an agent's pane. One without a pane (a sub-agent) is shown in a peek instead.
-    fn focus_agent(&mut self, address: &str, fx: &mut Effects) {
+    pub(crate) fn focus_agent(&mut self, address: &str, fx: &mut Effects) {
         match self.world.pane_of(address) {
             Some(pane) => {
                 self.view.focus_pane(&self.world, &pane);

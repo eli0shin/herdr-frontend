@@ -1226,8 +1226,12 @@ name = "herdr-frontend"
 version = "0.0.1"
 dependencies = [
  "ghostty-vt-sys",
+ "herdr-proto",
+ "herdr-shared",
+ "model",
  "png 0.18.1",
  "rune",
+ "serde_json",
  "skrifa",
  "terminal",
 ]

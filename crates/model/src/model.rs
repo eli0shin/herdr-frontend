@@ -20,6 +20,7 @@ use herdr_shared::{
 };
 
 use crate::action::{Action, AppCommand};
+use crate::control::{Call, CallId, answer_call};
 use crate::effect::{Effect, Effects, Focus, Level, Request, TerminalCommand, Toast, Token};
 use crate::geometry::{self, Geometry, Rect};
 use crate::keys::{Chord, Key, Keymap, Lookup, Mods};
@@ -40,6 +41,9 @@ pub const RETRY: f64 = 2.0;
 pub enum Input {
     Event(Event),
     Action(Action),
+    /// A `do` command from the control socket (`docs/cli.md`), answered with
+    /// [`Effect::Answer`].
+    Control(Call),
 }
 
 impl From<Event> for Input {
@@ -51,6 +55,12 @@ impl From<Event> for Input {
 impl From<Action> for Input {
     fn from(action: Action) -> Self {
         Input::Action(action)
+    }
+}
+
+impl From<Call> for Input {
+    fn from(call: Call) -> Self {
+        Input::Control(call)
     }
 }
 
@@ -151,9 +161,13 @@ pub enum Event {
 pub(crate) enum Launch {
     Space {
         space: String,
+        name: String,
         folder: String,
         tab: String,
+        tab_name: String,
         pane: String,
+        /// Show it once placed (`space.new {focus: false}` leaves the shown space shown).
+        focus: bool,
     },
     Tab {
         space: String,
@@ -175,6 +189,8 @@ pub(crate) enum Pending {
     Launch {
         machine: Option<String>,
         launch: Launch,
+        /// The control call waiting for it.
+        answer: Option<CallId>,
     },
     Adopt(Orphan),
     CheckClosed {
@@ -428,6 +444,7 @@ impl Model {
         match input.into() {
             Input::Event(event) => self.event(event, &mut fx),
             Input::Action(action) => self.run(action, &mut fx),
+            Input::Control(call) => self.control(call, &mut fx),
         }
         self.settle(&before, &mut fx);
         fx
@@ -516,14 +533,19 @@ impl Model {
     }
 
     /// Starts a terminal for a pane on `machine`, in `folder`, labeled for its space and tab.
+    /// `answer`: the control call to answer once the pane is placed (or the launch failed).
     pub(crate) fn launch(
         &mut self,
         machine: Option<String>,
         folder: &str,
         launch: Launch,
+        answer: Option<CallId>,
         fx: &mut Effects,
     ) {
         if !self.layout_ready(machine.as_deref(), fx) {
+            if let Some(id) = answer {
+                answer_call(fx, id, Err("the layout can't take a new pane now".into()));
+            }
             return;
         }
         let (space, tab) = match &launch {
@@ -559,8 +581,24 @@ impl Model {
         self.call(
             fx,
             Request::Run(Box::new(run)),
-            Some(Pending::Launch { machine, launch }),
+            Some(Pending::Launch {
+                machine,
+                launch,
+                answer,
+            }),
         );
+    }
+
+    /// The connection dropped or came back: launches under way may never be answered, so their
+    /// control calls get an error now.
+    fn drop_answers(&mut self, fx: &mut Effects) {
+        for pending in self.pending.values_mut() {
+            if let Pending::Launch { answer, .. } = pending
+                && let Some(id) = answer.take()
+            {
+                answer_call(fx, id, Err("the connection to herdr-core dropped".into()));
+            }
+        }
     }
 
     fn event(&mut self, event: Event, fx: &mut Effects) {
@@ -572,6 +610,7 @@ impl Model {
                 self.connected = true;
                 self.listed = false;
                 self.retry_at.clear();
+                self.drop_answers(fx);
                 self.pending.clear();
                 self.busy.clear();
                 for (_, m) in self.world.machines_mut() {
@@ -582,6 +621,7 @@ impl Model {
             Event::Lost => {
                 self.connected = false;
                 self.listed = false;
+                self.drop_answers(fx);
             }
             Event::Terminals(update) => self.terminals(update, fx),
             Event::Machines(list) => {
@@ -729,13 +769,22 @@ impl Model {
             return;
         };
         match pending {
-            Pending::Launch { machine, launch } => match result {
-                Ok(record) => self.launched(machine, launch, *record, fx),
-                Err(error) => fx.push(Effect::Toast(Toast::new(
-                    Level::Error,
-                    "Couldn't start a terminal",
-                    error.message,
-                ))),
+            Pending::Launch {
+                machine,
+                launch,
+                answer,
+            } => match result {
+                Ok(record) => self.launched(machine, launch, *record, answer, fx),
+                Err(error) => {
+                    if let Some(id) = answer {
+                        answer_call(fx, id, Err(error.message.clone()));
+                    }
+                    fx.push(Effect::Toast(Toast::new(
+                        Level::Error,
+                        "Couldn't start a terminal",
+                        error.message,
+                    )));
+                }
             },
             Pending::Adopt(orphan) => {
                 self.busy.remove(&orphan.terminal);
@@ -776,6 +825,7 @@ impl Model {
         machine: Option<String>,
         launch: Launch,
         record: Terminal,
+        answer: Option<CallId>,
         fx: &mut Effects,
     ) {
         let address = match machine.as_deref() {
@@ -787,23 +837,31 @@ impl Model {
         match launch {
             Launch::Space {
                 space,
+                name,
                 folder,
                 tab,
+                tab_name,
                 pane,
+                focus,
             } => {
                 let intent = Intent::NewSpace {
-                    space,
-                    name: String::new(),
+                    space: space.clone(),
+                    name,
                     folder,
                     tab: tab.clone(),
-                    tab_name: String::new(),
+                    tab_name,
                     pane: pane.clone(),
                     content,
                 };
-                if self.edit(intent, fx) {
-                    self.view.select_tab(&self.world, &tab);
+                let placed = self.edit(intent, fx);
+                if placed {
+                    // Unfocused, it waits behind the shown space (or shows, with none shown).
+                    if focus {
+                        self.view.select_tab(&self.world, &tab);
+                    }
                     self.view.focus(&tab, &pane);
                 }
+                self.launched_space(&space, &tab, &address, placed, answer, fx);
             }
             Launch::Tab {
                 space,

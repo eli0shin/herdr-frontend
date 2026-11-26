@@ -6,6 +6,7 @@ use herdr_proto::methods::{TerminalGet, TerminalKeep, TerminalKill, TerminalLabe
 use herdr_shared::{Raise, Round};
 
 use crate::action::{Action, AppCommand, CopyAction, Popup, TerminalAction};
+use crate::control::CallId;
 use crate::mode::Visual;
 
 /// Matches a call's reply to the request that made it ([`crate::Event::Reply`]).
@@ -128,6 +129,12 @@ pub enum Effect {
     WakeAt(f64),
     /// The per-screen view changed: write [`crate::Model::saved_view`] to herdr-frontend's home.
     SaveView,
+    /// The answer to a control call ([`crate::Call`]): its result, or `{"error": …}`. Every
+    /// call gets exactly one.
+    Answer {
+        id: CallId,
+        reply: serde_json::Value,
+    },
 }
 
 /// The effects of one step, in order, and whether its key was used.
