@@ -67,7 +67,8 @@ pub(super) struct CellColors {
 }
 
 /// A cell's colors as Ghostty resolves them in `rebuildRow`: inverse swaps foreground and
-/// background (defaults included), and selection replaces the background or swaps again.
+/// background (defaults included). A selected cell takes the selection colors, or with no
+/// selection background the terminal's default foreground behind its default background.
 pub(super) fn cell_colors(
     cell: &terminal::Cell,
     selected: bool,
@@ -88,9 +89,8 @@ pub(super) fn cell_colors(
                 fg = look.selection_foreground.unwrap_or(fg);
             }
             None => {
-                let swapped = bg.unwrap_or(colors.background);
-                bg = Some(fg);
-                fg = look.selection_foreground.unwrap_or(swapped);
+                bg = Some(colors.foreground);
+                fg = look.selection_foreground.unwrap_or(colors.background);
             }
         }
     }
@@ -115,9 +115,16 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
 
     for (x, cell) in row.cells.iter().enumerate() {
         let col = x as u16;
+        // A wide character's spacer is selected with it: the render state can end a selection
+        // on the character's first cell (Ghostty's renderer compares spacers one to the left).
+        let at = if cell.width == Width::SpacerTail {
+            col.saturating_sub(1)
+        } else {
+            col
+        };
         let selected = row
             .selection
-            .is_some_and(|(start, end)| (start..=end).contains(&col));
+            .is_some_and(|(start, end)| (start..=end).contains(&at));
         let resolved = cell_colors(cell, selected, colors, look);
 
         // Background runs, merged while the color holds.
@@ -142,7 +149,10 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
         let x0 = u32::from(col) * cell_w;
         let x1 = x0 + span_cols * cell_w;
         // A wide character's lines span both its cells; its spacer draws none of its own.
-        if matches!(cell.width, Width::Narrow | Width::Wide) {
+        // Invisible text draws no lines either, as in xterm and Ghostty.
+        if matches!(cell.width, Width::Narrow | Width::Wide)
+            && !cell.flags.contains(CellFlags::INVISIBLE)
+        {
             decorations(cell, fg, x0, x1, face, &mut built.boxes);
         }
 
@@ -475,15 +485,31 @@ mod tests {
         assert_eq!(row.fills, [(1, 4, rgb(0x04395e))]);
         assert_eq!(row.spans.len(), 1, "the ink didn't change");
 
-        // With no selection background, selected cells swap their colors, as Ghostty does.
+        // With no selection background, Ghostty draws the default background on the default
+        // foreground, whatever the cell's own colors.
         let row = build(
             &snapshot.screen[0],
             &snapshot.colors,
             &face(),
             &Look::default(),
         );
-        assert_eq!(row.fills, [(1, 4, rgb(0xf44747))]);
+        assert_eq!(row.fills, [(1, 4, rgb(FG))]);
         assert_eq!(row.spans[1].color, Some(rgb(BG)));
+    }
+
+    #[test]
+    fn a_selection_ending_on_a_wide_character_covers_all_of_it() {
+        let mut snapshot = screen("a日b");
+        fixtures::select(&mut snapshot, 0..=0, 0, 1);
+        let row = build(&snapshot.screen[0], &snapshot.colors, &face(), &arctic().1);
+        assert_eq!(row.fills, [(0, 3, rgb(0x04395e))]);
+    }
+
+    #[test]
+    fn invisible_text_draws_no_lines() {
+        let row = built("\x1b[8;4;9;53mhidden\x1b[0m");
+        assert!(row.text.is_empty());
+        assert!(row.boxes.is_empty(), "{:?}", row.boxes);
     }
 
     #[test]

@@ -153,7 +153,8 @@ fn under_block(snapshot: &Snapshot, place: &CursorPlace, face: &Face, look: &Loo
     let row = snapshot.screen.get(usize::from(place.row))?;
     let cell = row.cells.get(usize::from(place.col))?;
     let text_str = cell.text.as_str();
-    if text_str.is_empty() || text_str == " " {
+    if text_str.is_empty() || text_str == " " || cell.flags.contains(terminal::CellFlags::INVISIBLE)
+    {
         return None;
     }
     let colors = &snapshot.colors;
@@ -219,6 +220,17 @@ mod tests {
         let tail = screen("a日\x1b[3G");
         let place = place(&tail, true).unwrap();
         assert_eq!((place.col, place.width), (1, 2), "from the spacer half too");
+    }
+
+    #[test]
+    fn a_block_shows_the_character_under_it_unless_its_invisible() {
+        let face = Font::jetbrains_mono(14.0).at(2.0).unwrap();
+        let look = arctic().1;
+        let shown = screen("ab\x1b[1G");
+        let place = place(&shown, true).unwrap();
+        assert!(under_block(&shown, &place, &face, &look).is_some());
+        let hidden = screen("\x1b[8mab\x1b[1G");
+        assert!(under_block(&hidden, &place, &face, &look).is_none());
     }
 
     #[test]

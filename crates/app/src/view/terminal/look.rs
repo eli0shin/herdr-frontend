@@ -8,10 +8,11 @@ use terminal::{Rgb, Theme};
 /// How a view colors what the program doesn't: the defaults are Ghostty's.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Look {
-    /// The selection's background. `None` swaps each selected cell's colors, as Ghostty does
-    /// with no `selection-background`.
+    /// The selection's background. `None` draws selected cells in the terminal's default
+    /// background on its default foreground, as Ghostty does with no `selection-background`.
     pub selection_background: Option<Rgb>,
-    /// The selected text. `None` keeps each cell's own foreground when the background is set.
+    /// The selected text. `None` keeps each cell's own foreground when the background is set,
+    /// and is the default background when it isn't.
     pub selection_foreground: Option<Rgb>,
     /// The cursor, unless the program set one (OSC 12). `None` is the foreground.
     pub cursor: Option<Rgb>,

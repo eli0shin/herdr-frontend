@@ -43,8 +43,10 @@ The renderer lives in `crates/app/src/view/terminal/`:
   `calt` and `liga` off. It also says which characters the regular face has glyphs for.
 - `rows.rs`: the `GridRow` builder, a port of Ghostty's `rebuildRow` color rules onto the grid.
   - Inverse swaps foreground and background, defaults included.
-  - Selection takes `selection-background`, or swaps colors when that isn't set, as Ghostty does.
-  - Faint text gets `faint-opacity` (0.5), and invisible text isn't drawn or read.
+  - Selection takes `selection-background`. When that isn't set, it's the default background on
+    the default foreground, as in Ghostty. A wide character's spacer is selected with it.
+  - Faint text gets `faint-opacity` (0.5). Invisible text isn't drawn, read or decorated, even
+    under a block cursor.
   - The narrow cells the regular face covers go into the row's line, with a span wherever color,
     weight or slant changes.
   - Backgrounds merge into fills.
