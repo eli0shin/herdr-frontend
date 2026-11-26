@@ -359,8 +359,9 @@ emoji in Display P3 and didn't yet reuse loaded fallback faces):
 - The emoji had Ghostty's size and place (no pixel over 64) but not its colors, which the sRGB
   fix addresses.
 
-**Not measured yet:** those two fixes, and the Neovim checklist screen, need a Ghostty capture,
-and the screen was locked. `scripts/ghostty-diff colors nvim-checklist` measures them.
+**Not measured yet:** those two fixes, and the Neovim checklist screen, need a Ghostty capture.
+That's ticket `037-ghostty-diffs-for-the-neovim-checklist-and-glyph-atlas`
+(`scripts/ghostty-diff colors nvim-checklist`).
 
 What it doesn't take yet:
 
@@ -379,10 +380,10 @@ What it doesn't take yet:
 | splits | `│` separators as sprites; the `nvim` screen | lines ≤ 3.1% of pixels, none over 16 |
 | floats | rounded border: `╭╮╯╰` arcs and `─│` lines as sprites | arcs ≤ 5%, none over 16 |
 | undercurl | per-cell curl sprites in the SGR 58 color; dotted and dashed too | identical |
-| statusline icons | Nerd Font glyphs through the atlas with Ghostty's constraints; Powerline separators as sprites | separators within 16; icons not measured yet |
-| cmdline | text on the line, the cursor in it | not measured yet |
+| statusline icons | Nerd Font glyphs through the atlas with Ghostty's constraints; Powerline separators as sprites | separators within 16; icons not measured yet (ticket 037) |
+| cmdline | text on the line, the cursor in it | not measured yet (ticket 037) |
 | cursor | the cell's whole-pixel box, the glyph under a block redrawn | identical on every screen measured |
-| CJK and emoji | the atlas | see [Glyph atlas](#glyph-atlas) |
+| CJK and emoji | the atlas | see [Glyph atlas](#glyph-atlas); the last fixes not measured yet (ticket 037) |
 | ligatures off | `calt` and `liga` off, as Ghostty's `-calt`, `-liga` | `-> => != fi fl` measure as text |
 
 ## Font smoothing

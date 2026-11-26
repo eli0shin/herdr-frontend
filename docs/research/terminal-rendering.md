@@ -888,9 +888,11 @@ Each stage ends with tests in `cargo test` plus a fixture or screenshot check.
    here whether to move to the `Compositor` pass.
 5. **Fidelity:** port the sprites (`sprite/draw/*.zig`), underline styles and colors, Nerd Font
    icon constraints, the color emoji atlas, and fallback, with ligatures off. Neovim checklist:
-   splits, floats, undercurl, statusline icons, CJK. Done in ticket 018, except Symbols for
+   splits, floats, undercurl, statusline icons, CJK. Built in ticket 018, except Symbols for
    Legacy Computing and branch drawing, and clusters of several code points, which Rune still
-   shapes (`renderer-gates.md` "Fidelity").
+   shapes (`renderer-gates.md` "Fidelity"). Still open: the Ghostty diffs of the Neovim
+   checklist screen and of the glyph atlas after its last fixes, in ticket
+   `037-ghostty-diffs-for-the-neovim-checklist-and-glyph-atlas`.
 6. **Input:** keys (kitty, consumed mods, releases), IME preedit, mouse, paste, focus.
 7. **Scrollback:** viewport and scrollbar, smooth scroll with overscan, search, OSC 8 and links.
 8. **Copy/visual mode** (§6).
