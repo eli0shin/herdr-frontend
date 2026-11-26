@@ -12,7 +12,8 @@ pub struct Look {
     /// background on its default foreground, as Ghostty does with no `selection-background`.
     pub selection_background: Option<Rgb>,
     /// The selected text. `None` keeps each cell's own foreground when the background is set,
-    /// and is the default background when it isn't.
+    /// as Herdr app does (`herdr-app:src/vt.rs:1647`), and is the default background when it
+    /// isn't, as in Ghostty.
     pub selection_foreground: Option<Rgb>,
     /// The cursor, unless the program set one (OSC 12). `None` is the foreground.
     pub cursor: Option<Rgb>,

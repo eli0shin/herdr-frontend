@@ -1,6 +1,6 @@
 //! The herdr-frontend app: its `AppSpec`, state, views and scenes.
 //!
-//! `main.rs` only runs [`spec`], so headless tests drive exactly what the window shows.
+//! `main.rs` only runs [`app`], so headless tests drive exactly what the window shows.
 
 pub mod fixtures;
 mod scenes;

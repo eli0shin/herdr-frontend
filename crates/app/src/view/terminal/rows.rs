@@ -66,9 +66,10 @@ pub(super) struct CellColors {
     pub bg: Option<Rgb>,
 }
 
-/// A cell's colors as Ghostty resolves them in `rebuildRow`: inverse swaps foreground and
-/// background (defaults included). A selected cell takes the selection colors, or with no
-/// selection background the terminal's default foreground behind its default background.
+/// A cell's colors. Inverse swaps foreground and background, defaults included, as Ghostty's
+/// `rebuildRow` does. A selected cell takes the selection background; with no selection
+/// foreground it keeps its own ink, as Herdr app does (`herdr-app:src/vt.rs:1647`). With no
+/// selection background it's Ghostty's: the default background on the default foreground.
 pub(super) fn cell_colors(
     cell: &terminal::Cell,
     selected: bool,
