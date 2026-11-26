@@ -1,0 +1,9 @@
+[package]
+name = "ghostty-vt-sys"
+description = "libghostty-vt bindings and the link of the pinned xcframework"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]

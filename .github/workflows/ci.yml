@@ -22,10 +22,17 @@ jobs:
           submodules: true
       - name: docs
         run: test -f README.md && test -f AGENTS.md
-      - name: rust
-        if: hashFiles('Cargo.toml') != ''
+      - name: toolchain
+        # Installs the channel and components rust-toolchain.toml pins.
         run: |
+          rustup toolchain install
           rustup show
-          cargo fmt --all -- --check
-          cargo clippy --all-targets -- -D warnings
-          cargo test
+      - uses: Swatinem/rust-cache@v2
+      - name: rune pins
+        run: scripts/check-rune-pins
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: test
+        run: cargo test --locked
