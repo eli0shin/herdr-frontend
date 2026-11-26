@@ -379,6 +379,11 @@ fallback would do what Ghostty does: one atlas pair per (font configuration, dev
 shared by all panes and keyed by (face, glyph id, render options), with sprites rasterized into
 the grayscale atlas once per (codepoint, cell size).
 
+**Implemented** for the cells grid's line can't place as Ghostty does (ticket 018,
+`crates/app/src/view/terminal/glyph/`). Wide, fallback, emoji and Nerd Font cells are resolved in
+Ghostty's fallback order and rasterized with Ghostty's CoreText calls and constraints, once per
+glyph. They're drawn as images over the grid at device pixels (`renderer-gates.md` "Fidelity").
+
 ### Font fallback and shaping
 
 - Ghostty's `Collection` holds regular, bold, italic and bold-italic faces plus fallbacks.
@@ -503,6 +508,13 @@ with edges on whole device pixels, as opencode-rune does
 raster pixels, rasterize each sprite once per (codepoint, cell metrics) with tiny-skia, which is
 already in Rune's tree. Ghostty's canvas is a plain path rasterizer. Then draw the result as an
 image cell, or in the custom pass's grayscale atlas.
+
+**Implemented** in `crates/app/src/view/terminal/sprite/` (ticket 018): box drawing, blocks,
+braille, Ghostty's geometric shapes and Powerline, and the five underline styles, strikethrough and
+overline. It ports Ghostty's canvas and the z2d rasterizer it pins, so antialiased edges match
+too. Each canvas becomes boxes of one alpha, which go into the row's vector layer at whole device
+pixels. Against Ghostty they measure identical or within 16 of 255 (`renderer-gates.md` "Gate 2").
+Symbols for Legacy Computing and branch drawing still come from the font.
 
 ### Cursor
 
@@ -876,7 +888,9 @@ Each stage ends with tests in `cargo test` plus a fixture or screenshot check.
    here whether to move to the `Compositor` pass.
 5. **Fidelity:** port the sprites (`sprite/draw/*.zig`), underline styles and colors, Nerd Font
    icon constraints, the color emoji atlas, and fallback, with ligatures off. Neovim checklist:
-   splits, floats, undercurl, statusline icons, CJK.
+   splits, floats, undercurl, statusline icons, CJK. Done in ticket 018, except Symbols for
+   Legacy Computing and branch drawing, and clusters of several code points, which Rune still
+   shapes (`renderer-gates.md` "Fidelity").
 6. **Input:** keys (kitty, consumed mods, releases), IME preedit, mouse, paste, focus.
 7. **Scrollback:** viewport and scrollbar, smooth scroll with overscan, search, OSC 8 and links.
 8. **Copy/visual mode** (§6).
