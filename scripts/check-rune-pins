@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Check that every Rune line in Cargo.toml and Cargo.lock agrees with Rune's own patch list at the
+# pinned rev (docs/research/rune.md §1). Fetches Rune's root Cargo.toml at that rev from GitHub.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+rev=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["dependencies"]["rune"]["rev"])')
+manifest=$(mktemp)
+trap 'rm -f "$manifest"' EXIT
+curl -fsSL "https://raw.githubusercontent.com/anomalyco/rune/$rev/Cargo.toml" -o "$manifest"
+python3 scripts/check_rune_pins.py --rune-manifest "$manifest"
