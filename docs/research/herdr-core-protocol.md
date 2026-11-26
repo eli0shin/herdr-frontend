@@ -11,7 +11,7 @@ Everything below was read from these sources. Paths are cited as `core:<path>` a
 | Source | Version |
 |---|---|
 | herdr-core, github.com/herdrdev/herdr-core (`core:`) | tag `v0.1.22` (`6e29846`), the version installed here. `master` was 7 commits ahead (`329cb66`) with no schema, framing or event changes. |
-| herdr-app, `~/code/herdr-app` (`app:`) | `b721ded` (app 0.1.14, minimum core `0.1.11`) |
+| herdr-app (`app:`) | Tag `v0.1.18`, the version installed here, read from a sparse clone of github.com/herdrdev/herdr-app. Minimum core is `0.1.11`. The local `~/code/herdr-app` checkout is at 0.1.14 (`b721ded`), 128 commits behind; behavior that changed since then is called out below. `master` was 5 commits past `v0.1.18`, none of them affecting the protocol, document or sizing code cited here. |
 | `hc --help`, `hc connect --help`, `hc schema` | hc 0.1.22. `hc schema` prints the same JSON as `core:schema/hc.openrpc.json` at the tag, compact instead of pretty-printed. |
 | Read-only queries against the live core | `hello`, `terminal.list`, `doc.get herdr-app`, `machine ls` |
 | A throwaway probe against an isolated core | See [Probe](#probe). It is not committed. |
@@ -34,7 +34,8 @@ These are the rules implementation tickets must not break. Each one is explained
    schema. Write it only with `doc.set` at the version you read. On `conflict`, read it again and
    replay your edit on the new copy. Never write back a document you only read.
 5. Never write a document herdr-app cannot decode. Never drop fields you don't understand.
-   herdr-app drops fields *it* doesn't know, so data private to herdr-frontend can't live in that
+   herdr-app keeps unknown space and tab fields but drops unknown fields everywhere else, so
+   data private to herdr-frontend can't live in that
    document.
 6. Focus, zoom, active tab, settled tabs and recent spaces are this screen's alone. Keep them in
    herdr-frontend's own state, never in the shared document.
@@ -57,7 +58,7 @@ These are the rules implementation tickets must not break. Each one is explained
 
 | Transport | How | Notes |
 |---|---|---|
-| `hc connect` child process | stdin and stdout carry the same protocol as the socket (`core:schema/README.md` "Connecting"). | **herdr-app's choice** (`app:src/hc.rs:297`). It starts the core when none is running (`core:crates/herdr-core/src/client.rs` `connect_or_start`). It also applies the session, `HC_SOCKET` and config `socket` rules, and on macOS it repairs a core left from an earlier GUI login (below). `--session <name>` selects a session, like `HC_SESSION`. If startup fails, stderr carries one JSON object `{"error":{"kind","message","hint"}}`, which herdr-app parses (`app:src/hc.rs` `connect_error`). |
+| `hc connect` child process | stdin and stdout carry the same protocol as the socket (`core:schema/README.md` "Connecting"). | **herdr-app's choice** (`app:src/hc.rs:329`). It starts the core when none is running (`core:crates/herdr-core/src/client.rs` `connect_or_start`). It also applies the session, `HC_SOCKET` and config `socket` rules, and on macOS it repairs a core left from an earlier GUI login (below). `--session <name>` selects a session, like `HC_SESSION`. If startup fails, stderr carries one JSON object `{"error":{"kind","message","hint"}}`, which herdr-app parses (`app:src/hc.rs` `connect_error`). |
 | Unix socket directly | `HC_SOCKET`, else config `socket`, else `$XDG_RUNTIME_DIR/herdr-core/<session>.sock`, else `/run/user/<uid>/herdr-core/`, else the session's state directory. Windows uses a named pipe. (`core:docs/security.md` "State and endpoints") | Lower overhead, but there's no autostart and no login repair, and the path rules must be reimplemented. Use it only behind the same transport trait. |
 | Remote core through ssh | `ssh box hc connect`. The protocol is identical. | Possible, but herdr-app never connects to a remote core directly. It adds machines to the local core (§1.7). Do the same. |
 
@@ -136,7 +137,7 @@ Errors are JSON-RPC errors with a stable `data.kind` and a `data.hint`:
   The client returns CREDIT for the bytes it has **consumed**: written into the VT for an attach
   stream, or parsed for the events stream. herdr-app credits after `vt.write`
   (`app:src/terminal.rs` `ingest`). For the events stream it grants an extra 1 MiB at subscribe
-  and then credits as it parses (`app:src/hc.rs:462`, `app:src/window.rs` event loop).
+  and then credits as it parses (`app:src/hc.rs:494`, `app:src/window.rs` event loop).
 - A viewer more than 4 MiB behind (`MAX_PENDING`) gets a fresh repaint instead of the backlog. An
   events subscriber that falls behind gets `missed` with a fresh snapshot (§2.4). A stalled
   stream never blocks channel 0 or other streams.
@@ -150,7 +151,7 @@ Errors are JSON-RPC errors with a stable `data.kind` and a `data.hint`:
 ### Reconnect
 
 Losing the connection doesn't end the programs: the core restarts or updates and its holders keep
-them alive. herdr-app's behavior is the baseline (`app:src/window.rs:713`, `reconnected`):
+them alive. herdr-app's behavior is the baseline (`app:src/window.rs:819`, `reconnected`):
 
 1. When the connection drops, fail every pending call at once, and give every stream a `Lost`
    (not `Closed`) so its pane stays and waits.
@@ -185,7 +186,7 @@ client (`core:docs/machines.md`):
 - Machine line state comes from **polling `machine.list`**, not from events: each machine is
   `connecting`, `connected`, `needs_login`, `needs_update` or `unreachable`, with `since_ms` and
   `why`. herdr-app polls every 2.5 s, and also whenever the terminal list changes
-  (`app:src/window.rs:652`). A machine that needs a login retries after 2 minutes, then 5, then
+  (`app:src/window.rs:755`). A machine that needs a login retries after 2 minutes, then 5, then
   every 10, and `machine.connect` dials it at once. Calls through a machine that is down fail with
   `unavailable`, `needs_login` or `needs_update`. herdr-app treats `needs_*` as blocked rather
   than retrying on a timer. It reads again on the next `doc` event, `missed`, or reconnect
@@ -199,13 +200,13 @@ client (`core:docs/machines.md`):
 
 Parameters marked `?` are optional. The full schemas are in `hc schema`. herdr-app's minimum set
 is `terminal.run, terminal.list, terminal.kill, terminal.label, terminal.attach, terminal.keep,
-doc.get, doc.set, events.subscribe` (`app:src/hc.rs:181` `USES`).
+doc.get, doc.set, events.subscribe` (`app:src/hc.rs:209` `USES`).
 
 | Area | Method | What a desktop client uses it for |
 |---|---|---|
 | Session | `hello` | The handshake and capabilities (§1.2, §6). |
 | | `server.status` | Version, `installed_by` (which updater owns hc), and holders. herdr-app reads it for its updater (`app:src/window.rs` `note_core`). **Never** call `server.stop` or `server.restart` on the user's core. |
-| Terminals | `terminal.run {argv?, line?, cwd?, env?, labels?, name?, on?, keep?, size?, display?, parent?, no_parent?, no_notify?, outlive_parent?, rm?, wait?, timeout?, caller?}` | Starting a pane's program. herdr-app sends `env {TERM: xterm-256color, COLORTERM: truecolor, TERM_PROGRAM: herdr}`, `keep: true`, labels `herdr.space`, `herdr.tab` and `herdr.seen=0`, plus `size` (the pane's grid) and `display` (`app:src/hc.rs:439`, `app:src/window.rs:2375`). It returns a `RunResult`, which is the Terminal record plus `output` and `wait` (both only with `wait: true`). When `argv[0]` names a template, the core starts the template's command and sends its body plus the task once the agent is ready. |
+| Terminals | `terminal.run {argv?, line?, cwd?, env?, labels?, name?, on?, keep?, size?, display?, parent?, no_parent?, no_notify?, outlive_parent?, rm?, wait?, timeout?, caller?}` | Starting a pane's program. herdr-app sends `env {TERM: xterm-256color, COLORTERM: truecolor, TERM_PROGRAM: herdr}`, `keep: true`, labels `herdr.space`, `herdr.tab` and `herdr.seen=0`, plus `size` (the pane's grid) and `display` (`app:src/hc.rs:471`, `app:src/window.rs:2669`). It returns a `RunResult`, which is the Terminal record plus `output` and `wait` (both only with `wait: true`). When `argv[0]` names a template, the core starts the template's command and sends its body plus the task once the agent is ready. |
 | | `templates.list` | Templates (name, description, command) for a "new agent" menu. |
 | | `terminal.list {all?, labels?}` | A one-shot list. It is not needed once subscribed, because the snapshot replaces it. Its result also carries `machines` (MachineView). |
 | | `terminal.get {terminal, caller?}` | One record, live or finished. herdr-app uses it before adopting a terminal and before deciding a pane's terminal is gone (§3.5). Don't pass `caller` from a UI: it marks a child's news as seen by that parent. |
@@ -295,7 +296,7 @@ is dropped (`core:crates/herdr-core/src/server.rs` `plain_events`). Framed mode 
 |---|---|---|
 | Terminals, their programs, status, turn, title, size, foreground | The core's registry | All clients |
 | Labels | The core, on each terminal; they end with it | All clients (§3.4) |
-| Spaces → tabs → split trees | Document `herdr-app` **on each machine's core** (`app:src/mirror.rs` `Document`, `app:src/mirror_sync.rs:76`) | All clients on any core that can reach that machine |
+| Spaces → tabs → split trees | Document `herdr-app` **on each machine's core** (`app:src/mirror.rs` `Document`, `app:src/mirror_sync.rs:77`) | All clients on any core that can reach that machine |
 | Active space, each space's selected tab, each tab's focused pane, focus history (`before`), zoomed pane, `settled` (put away), recently closed spaces, the local seen fallback (`attention`) | herdr-app's `~/.config/herdr-app/view.json` (`app:src/mirror.rs` `View`) | **Private to this screen** (test `focus_zoom_and_settle_are_private`) |
 | Window chrome layout, theme, keys, mods, settings, window position | herdr-app home (`layouts/*.json` plus `.state`, `settings.json`, `window.json`, `mods/`) | Private to herdr-app. herdr-frontend has its own. |
 
@@ -350,8 +351,8 @@ schema is herdr-app's serde types (`app:src/mirror.rs`, `app:src/layout.rs`):
   `document "x" is at version N, not M`. Writing `null` deletes the value but keeps the version.
   An unwritten name reads as `{value: null, version: 0}`. Writes persist atomically and emit a
   `doc` event (`core:crates/herdr-core/src/api/doc.rs`).
-- How herdr-app uses it (`app:src/mirror_sync.rs`, `app:src/window.rs:1829` `flush_documents`,
-  `:1906` `documents_updated`):
+- How herdr-app uses it (`app:src/mirror_sync.rs`, `app:src/window.rs:2067` `flush_documents`,
+  `:2144` `documents_updated`):
   - It keeps one slot per machine and at most one request in flight per machine. There is no
     queue of operations: each round sends the latest projection of the model.
   - It writes only when the projection differs from the last document it read or wrote. It
@@ -373,11 +374,19 @@ schema is herdr-app's serde types (`app:src/mirror.rs`, `app:src/layout.rs`):
   5. **Never write in reaction to a read.** Write only for an edit someone made. If
      herdr-frontend normalized documents differently from herdr-app (field order, defaults,
      floats, ids), "fixing" them on read would ping-pong writes between the two clients forever.
-- **Preserve what you don't understand.** herdr-app decodes into typed structs and drops unknown
-  fields when it writes. herdr-frontend should keep the reverse promise: carry unknown fields and
-  unknown node or content kinds through untouched (keep the raw JSON beside the typed view), so
-  that a newer herdr-app's additions survive herdr-frontend's writes. Draw mod blocks as
-  placeholders, but never remove them.
+- **Preserve what you don't understand.** herdr-app decodes into typed structs. Since 0.1.15 it
+  keeps unknown fields on a *space* or *tab* (`rest`, flattened) and writes them back, so a newer
+  build's additions survive an older build's write (`app:src/mirror.rs` `SharedSpace`/`SharedTab`,
+  test `unknown_space_and_tab_fields_survive_a_read_and_write`). It still drops unknown fields on
+  the document root and on every `Node`, and it can't decode unknown node `type`s or `content`s.
+  So:
+  - herdr-frontend should carry everything it doesn't understand through untouched (keep the raw
+    JSON beside the typed view), at every level, so a newer herdr-app's additions survive
+    herdr-frontend's writes.
+  - A field herdr-frontend adds survives herdr-app (0.1.15 and later) only on a space or a tab.
+    Builds before 0.1.15 drop it there too. Put any such addition there, and only one both apps
+    agree on.
+  - Draw mod blocks as placeholders, but never remove them.
 
 ### Labels
 
@@ -390,13 +399,13 @@ in `docs/labels.md`. On the live core, 31 of 33 terminals had `herdr.space`/`her
 | Label | Meaning | Writer |
 |---|---|---|
 | `herdr.seen=<turn>` | The last turn a person looked at, on any client. | See the rules below. Every new terminal a client starts gets `0`. |
-| `herdr.pinned=1` | Pinned; pinned agents sort first. Unpin with `herdr.pinned=`. | A person's action (`app:src/window.rs:3111`). |
-| `herdr.space=<id>` | The space it belongs to (an unqualified id on its machine). Terminals started elsewhere (agents, scripts) opt into the window with it (`app:src/SKILL.md`). | `terminal.run`; set again on "keep in a pane"; cleared (with `keep=false`) on "park" (`app:src/window.rs:2580` `start_terminal_change`). |
+| `herdr.pinned=1` | Pinned; pinned agents sort first. Unpin with `herdr.pinned=`. | A person's action (`app:src/window.rs:3457`). |
+| `herdr.space=<id>` | The space it belongs to (an unqualified id on its machine). Terminals started elsewhere (agents, scripts) opt into the window with it (`app:src/SKILL.md`). | `terminal.run`; set again on "keep in a pane"; cleared (with `keep=false`) on "park" (`app:src/window.rs:2898` `start_terminal_change`). |
 | `herdr.tab=<id>` | Its tab within that space. Without it, herdr-app creates a new tab. | As above. |
-| `where=<space name> / <tab name>` | A human label shown by `hc ls` and hc's picker. Sub-agents inherit their nearest placed ancestor's. | herdr-app, whenever the value changes (`app:src/window.rs:1780` `write_where`). |
-| `herdr.right-click=program` | Right-click goes to the program instead of the pane menu. | A person's action (`app:src/window.rs:3095`). |
+| `where=<space name> / <tab name>` | A human label shown by `hc ls` and hc's picker. Sub-agents inherit their nearest placed ancestor's. | herdr-app, whenever the value changes (`app:src/window.rs:2018` `write_where`). |
+| `herdr.right-click=program` | Right-click goes to the program instead of the pane menu. | A person's action (`app:src/window.rs:3441`). |
 
-`herdr.seen` rules (`app:docs/labels.md`; `app:src/window.rs:1520` `share_seen`;
+`herdr.seen` rules (`app:docs/labels.md`; `app:src/window.rs:1717` `share_seen`;
 `app:src/model.rs` `status`):
 
 - Shown state: `blocked` or `error` means **needs you**; `working` means working. Any other word
@@ -420,7 +429,7 @@ These rules run inside herdr-app and act on whatever herdr-frontend writes.
   `terminal.get` confirms the terminal is still live with the same labels. If it isn't kept,
   herdr-app sets `keep=true`. It goes into the labeled tab (a split right of its last pane), else
   a new tab in the space, else a new space under the labeled id. Then herdr-app writes the
-  document (`app:src/window.rs:2126` `reconcile`, `start_adoption`, `adopt`, `adoptable`).
+  document (`app:src/window.rs:2420` `reconcile`, `start_adoption`, `adopt`, `adoptable`).
   Consequences for herdr-frontend:
   - When it starts a terminal for a pane, it must label it and also put it into the document,
     exactly as herdr-app does. Otherwise herdr-app places it elsewhere.
@@ -431,14 +440,24 @@ These rules run inside herdr-app and act on whatever herdr-frontend writes.
 - **Closed panes.** herdr-app removes a pane when its attach stream ends with reason `exited`,
   `killed` or `finished`. It also removes a pane whose terminal is missing from the live list once
   `terminal.get` reports `reason` `exited` or `killed`, or `not_found`. Terminals that this herdr-app
-  started less than 5 s ago are spared (terminals other clients start get no such grace) (`app:src/window.rs` `terminal_ended`, `:2509` `check_closed`, `just_born`). Both
+  started less than 5 s ago are spared (terminals other clients start get no such grace) (`app:src/window.rs` `terminal_ended`, `:2813` `check_closed`, `:2828` `checked_closed`, `just_born`). Both
   clients may remove the same pane; under CAS that converges. Never put an address into the
   document before `terminal.run` has returned it.
-- **Close vs park.** Closing a pane kills its terminal and, recursively, its children, except
-  children that carry their own `herdr.space` (`app:src/window.rs:2653` `kill`). Parking takes the
-  pane out of the layout but keeps the program running: herdr-app clears `herdr.space` and
-  `herdr.tab` and sets `keep=false`. herdr-frontend should implement both with the same label
-  effects.
+- **Close vs park.** Closing a pane or tab kills its terminals.
+  - On cores 0.1.13 and later, herdr-app kills only those terminals. The core then ends every live
+    child with `die_with_parent` (set at start as `parent && !outlive_parent`, never changed)
+    when its parent finishes, **including children shown in their own pane or labeled
+    `herdr.space`** (`core:crates/herdr-core/src/notes.rs` `Job::Orphaned`,
+    `core:crates/herdr-core/src/api/run.rs`). Only `outlive_parent` children survive.
+  - On older cores, herdr-app walks down the tree and kills the children itself. That walk, and
+    the explicit kill command's walk on any core, spares children shown in a pane or labeled
+    `herdr.space` (`app:src/window.rs` `close_terminals`, `kill_tree`, `kill_targets`;
+    `app:src/hc.rs` `legacy_child_lifetime`). On a new core the sparing doesn't protect them,
+    because the core still ends `die_with_parent` children.
+  - Parking takes the pane out of the layout but keeps the program running: herdr-app clears
+    `herdr.space` and `herdr.tab` and sets `keep=false`.
+  - herdr-frontend should implement both with the same label effects. To keep a placed
+    sub-agent alive past its parent, it has to have been started with `outlive_parent`.
 - **`where`.** herdr-app computes the space name from the space's name, or from the first
   terminal's git checkout top or folder, plus the tab's name or index. If herdr-frontend computes
   it differently, the two clients overwrite each other's label forever. Version 1 should leave
@@ -476,7 +495,7 @@ with the probe:
   are not ordered with its stream bytes.
 - Programs learn the size through SIGWINCH (via the holder). Mode-2048 programs wait for an
   in-band report that the viewer's VT produces after the resize: herdr-app sends
-  `vt.take_replies()` as AUTOMATIC_INPUT right after RESIZE (`app:src/terminal.rs:190` `fit`).
+  `vt.take_replies()` as AUTOMATIC_INPUT right after RESIZE (`app:src/terminal.rs:262` `fit`).
 
 ### Recommended viewer policy for herdr-frontend
 
@@ -497,28 +516,31 @@ reattaching. "Take size" is simply sending RESIZE with the pane's grid.
 
 herdr-app never uses `observe`, `resumed` or `resize_notifications`, and it never follows `size`
 events for its own views: its only read of `cols`/`rows` is the size hint used before the first
-attach (`app:src/window.rs:1411`). With both clients on one terminal:
+attach (`app:src/window.rs:1597`). With both clients on one terminal:
 
 1. **It attaches every pane's terminal, in every tab, as an active viewer, as soon as the pane
    appears in the document**, including panes herdr-frontend adds (`app:src/window.rs` `sync`:
    "Every tab's terminals stay attached"). Panes in herdr-app's shown tab attach at herdr-app's
    pane grid, which changes the size. Panes in hidden tabs attach at the record's current
-   `cols`/`rows` (`app:src/window.rs:1411`), so the size doesn't change, but herdr-app becomes the
+   `cols`/`rows` (`app:src/window.rs:1597`), so the size doesn't change, but herdr-app becomes the
    leader.
 2. **It resizes hidden tabs once per window geometry.** When its window or cell size has settled
    (the same for two ticks), `fit_hidden_tabs` sends RESIZE for terminals in tabs it isn't
-   showing, but only where herdr-app's own grid for them differs (`app:src/window/pane_size.rs:169`,
-   the `HiddenFit::Done` guard; `app:src/terminal.rs:190` `fit`). So about a second after
+   showing, but only where herdr-app's own grid for them differs (`app:src/window/pane_size.rs:202`,
+   the `HiddenFit::Done` guard; `app:src/terminal.rs:262` `fit`). So about a second after
    herdr-app starts, and again after each of its window or zoom changes, every hidden terminal
    moves to herdr-app's geometry, though nobody is looking at it there.
-3. **It reattaches without `resumed`** after a reconnect (`app:src/window.rs:805` `reconnected`
+3. **It reattaches without `resumed`** after a reconnect (`app:src/window.rs:911` `reconnected`
    → `TerminalView::reattach`). Every core restart or update moves every terminal to herdr-app's
    pane sizes.
 4. **It draws at its own pane size when it isn't the leader.** Its VT stays at the pane's grid
    while the PTY runs at the leader's, so its picture of a terminal that herdr-frontend leads
    wraps wrong, until herdr-app types, focuses or resizes and takes the size back.
 5. FOCUS(1) whenever a herdr-app terminal gains keyboard focus, including window activation,
-   takes the size. That one is correct behavior.
+   takes the size. Since 0.1.15, a mouse-down in a herdr-app terminal also re-sends RESIZE with
+   its grid ("reclaim terminal size when returning to a pane", `0ac92e4`). Panes that leave the
+   screen send FOCUS(0) (`TerminalView::blur`). All of this is correct behavior, and it is the
+   same "take size on real use" rule that §4.2 recommends.
 
 The upshot: with both apps open, a terminal's size flips to whichever client touched it last.
 herdr-frontend can't prevent herdr-app's takeovers (items 1–3). It can avoid causing takeovers
@@ -553,6 +575,13 @@ are worth raising upstream for herdr-app: use `resumed` for hidden and reattache
     AUTOMATIC_INPUT. Otherwise either drafts are missed or replies count as typing.
   - A UI can show teams with `events.subscribe {children_of}`, or by grouping on `parent` from
     the main stream. herdr-app gives sub-agents the `where` of their nearest placed ancestor.
+  - `parent` on a remote or cross-machine record may name its machine by that core's **host name
+    or core id** (`host-alpha/t4`, `alpha-id/t4`) instead of this core's name for it, or name
+    this machine itself. Since 0.1.15, herdr-app normalizes `parent` before using it. A prefix
+    that is this core's `hello.core.id` or `core.name` means a local `tN`. Otherwise it maps
+    through `machine.list` by `name`, then `id`, then a unique `host` (`app:src/hc.rs`
+    `EventLines::live_for`, test `parent_addresses_match_the_viewing_cores_terminal_addresses`).
+    herdr-frontend must do the same before matching parents to terminals.
 - **Waiting and messaging.** `terminal.wait {children: any|all}`, `terminal.send {wait}`,
   `terminal.keys` and `terminal.interrupt` are agent tools. A UI needs only `interrupt` (stop) and
   perhaps `send` (a "message this agent" box). A UI waits by watching events, never with
@@ -580,7 +609,7 @@ are worth raising upstream for herdr-app: use `resumed` for hidden and reattache
   - `resize_notifications` needs both the feature *and* `attach.resize_notifications == true`;
     otherwise follow `size` events.
   - If a relay loses a feature on reconnect, the stream closes; attach again to negotiate.
-- **The check herdr-app makes** (`app:src/hc.rs:224` `check`): if `generation` is above 1, the app
+- **The check herdr-app makes** (`app:src/hc.rs:256` `check`): if `generation` is above 1, the app
   needs an update. If it is below 1, or `version` is below the minimum (`distribution/core-version`,
   currently `0.1.11`, compared as numeric semver), the core needs an update. If any method in
   `USES` is missing from `hello.methods`, the core needs an update.
@@ -597,7 +626,10 @@ are worth raising upstream for herdr-app: use `resumed` for hidden and reattache
 
 ## 7. Recommended Rust client design
 
-This keeps the client independent of the UI toolkit. Rune's runtime and threading model is ticket
+herdr-frontend is a native desktop app on Rune (anomalyco/rune, a GPU-rendered Rust UI framework
+built on wgpu, Taffy and Parley). Its sidebar, tabs, popups, palette and toasts are native Rune
+elements, and each terminal pane is a GPU-rendered view inside the window, as in Herdr app.
+The client crates below stay independent of the UI toolkit. Rune's runtime and threading model is ticket
 004, so the client exposes channels and a wake hook and doesn't assume an executor. It follows
 herdr-app's proven shape (two threads per connection, routes behind a mutex, no async runtime in
 the client), but with typed messages and the fixes above.
