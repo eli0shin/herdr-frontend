@@ -27,8 +27,10 @@ Terminal emulation (`libghostty-vt`) belongs to
   worker publishes at most one snapshot per drawn frame and wakes the UI through `rune::Waker`.
   Run the herdr-core client on a thread too. It sends events over a channel, and `AppSpec::poll`
   drains that channel.
-- **Keyboard.** App keybindings and modes (a tmux-style prefix) go in a root `El::on_key_preview`,
-  which sees every key before the focused terminal (**verified**). The terminal grid is
+- **Keyboard.** App keybindings and modes (a tmux-style prefix) go in one keymap function, called
+  from a root `El::on_key_preview` and from `AppSpec::on_key`. The preview sees every key before the
+  focused terminal (**verified**) but runs only while something has focus; `AppSpec::on_key`
+  covers the case where nothing does. The terminal grid is
   `focusable` and takes everything else in `El::on_key`, Tab and Ctrl chords included, ahead of
   Rune's focus navigation (**verified**). `tx.physical_key()`, `tx.key_base()`,
   `tx.key_repeat()` and `on_key_up` supply what a key encoder needs. Rune has no multi-key
@@ -43,7 +45,7 @@ Terminal emulation (`libghostty-vt`) belongs to
 - **Biggest gaps.** In-app drag and drop has no payloads (dragging a tab onto a pane is hand-rolled,
   rune#357). A panic in a view kills the process (rune#1003). Linux has no native pop-up menus
   (use the in-window fallback hook), and on GNOME Wayland `App::titlebar` shows two title bars
-  (rune#591). Rune lands about fifty commits a day, so pin a rev and bump deliberately.
+  (rune#591). Rune lands hundreds of commits a day on `dev`, so pin a rev and bump deliberately.
 
 ## 1. Pinning, dependencies, toolchain, build times
 
@@ -112,10 +114,14 @@ Open and Save panels.
 
 | Build | Wall time |
 | --- | --- |
-| Cold `cargo build`, dev profile, `rune` + `rune-kit`, git fetch included | 2 m 05 s |
+| Cold `cargo build`, dev profile (overrides below), `rune` + `rune-kit`, git fetch included | 2 m 05 s |
 | Incremental rebuild after editing the app crate | 0.8–2.7 s |
 | `cargo test` of the app crate, warm | 1.9 s |
 | Cold `cargo build --release` (deps already fetched) | 1 m 43 s |
+
+The dev builds above used `[profile.dev.package."*"] opt-level = 1, debug = false` with
+`opt-level = 3` for `rune` and `rune-text`. That is close to opencode-rune's profile below, not
+Cargo's default dev profile. The release build used Cargo's default release profile.
 
 The release binary was 31 MB unstripped, with default features and `rune-kit`. Rune itself reports
 10.9 MB (9.3 MB stripped) for its settings example ([`crates/rune/README.md`][rune-crate-readme]
@@ -311,10 +317,18 @@ reaches `on_key_preview` ([`crates/rune/src/runtime/input/physical.rs`][rune-phy
 
 ### Recommended wiring for herdr-frontend
 
-- **App keymap and modes go in a root `on_key_preview`.** It sees every key before the focused
-  terminal. A prefix chord such as `ctrl+b` enters a mode, and the next key runs a command
-  (**verified**: a root `on_key_preview` caught `ctrl+b` and then `%` while a focused grid's
-  `on_key` was installed). Rune has no multi-stroke chords (`Chord` and `Keybind` match one chord;
+- **App keymap and modes: one function, called from two places.** Call it from a root
+  `on_key_preview`, which sees every key before the focused terminal. A prefix chord such as
+  `ctrl+b` enters a mode, and the next key runs a command (**verified**: a root `on_key_preview`
+  caught `ctrl+b` and then `%` while a focused grid's `on_key` was installed). Preview handlers
+  run only on the focused element's ancestors, though. With nothing focused they never run
+  ([`crates/rune/src/runtime/input/keys.rs`][rune-input-keys] `element_key_preview`;
+  **verified**: with nothing focused, `ctrl+b` skipped the root preview and `AppSpec::on_key`
+  heard Escape), and focus is
+  easy to lose: a click on plain content blurs, as do startup before a pane takes focus and closing
+  the last pane. Call the same keymap from `AppSpec::on_key`, where step 5 delivers keys while
+  `tx.focused()` is `None`. Preview handlers also stop at an active modal, so an open palette or
+  dialog owns its keys. Rune has no multi-stroke chords (`Chord` and `Keybind` match one chord;
   [`crates/rune/src/input/chord.rs`][rune-chord]). Model the modes, including any Vim-like
   normal/insert modes, as a `rune::machine` with a timeout event.
 - **Bind with `Chord` and `Keybind`, not raw `Mods`.** `Mods::cmd` is ⌘ on macOS and Ctrl elsewhere,
@@ -329,9 +343,10 @@ reaches `on_key_preview` ([`crates/rune/src/runtime/input/physical.rs`][rune-phy
   the app owns, such as ⌘-chords on macOS, so they reach `AppSpec::on_key`. opencode-rune leaves F6
   as an escape hatch so the keyboard is never trapped in the shell.
 - **Raw key data for the encoder.** `KeyEvent { key: Key, mods: Mods { shift, cmd, alt, ctrl,
-  logo } }`. `Key` covers `Text`, `Enter`, `Tab`, `Escape`, arrows, `Home`/`End`/`PageUp`/`PageDown`,
-  `Insert`, `Delete`, `Function(1..=24)`, `Pause`, `PrintScreen`, `ScrollLock`, `ContextMenu`, and
-  `Command(char)` ([`crates/rune-edit/src/keys.rs`][rune-keys]). Off macOS a Ctrl chord arrives as
+  logo } }`. `Key` is `Text`, `Enter`, `Backspace`, `Delete`, arrows,
+  `Home`/`End`/`PageUp`/`PageDown`, `Insert`, `PrintScreen`, `ScrollLock`, `Pause`, `Escape`, `Tab`,
+  `Command(char)`, `Function(1..=24)`, `ContextMenu`, `Modifier { .. }` (opt-in) and `Media(_)`
+  (opt-in) ([`crates/rune-edit/src/keys.rs`][rune-keys]). Off macOS a Ctrl chord arrives as
   `Key::Command(c)`. In a handler, `tx.physical_key()`, `tx.key_base()` and `tx.key_repeat()` give
   the physical key, the unmodified character and auto-repeat
   ([`crates/rune/src/el/tx/keys.rs`][rune-tx-keys]); `El::on_key_up` delivers releases. Together
@@ -347,9 +362,14 @@ reaches `on_key_preview` ([`crates/rune/src/runtime/input/physical.rs`][rune-phy
   at password prompts ([`grid/mod.rs`][ocr-grid]).
 - **Focus.** Use `.focusable(true)`, `.tab_index(n)`, `tx.focus(key, ring)`, `tx.blur()`,
   `.on_focus_change` and `.focus_group()` (arrow-key roving for the sidebar list and tab strips),
-  and `.modal(click_outside, dismiss)`, which traps Tab, handles Escape and restores the opener. Use
-  `tx.focused()` in `on_key` to tell which pane has the keyboard. opencode-rune gives a pane the
-  keys only while `tx.focused()` is its grid's key ([`side_ops.rs`][ocr-side-ops]).
+  and `.modal(click_outside, dismiss)`, which traps Tab, handles Escape and restores the opener.
+  `tx.focused()` returns only the focused element's own key, not its key path
+  ([`crates/rune/src/el/tx/keys.rs`][rune-tx-keys]). So if every pane's grid is keyed `screen`
+  under a `pane-<id>` parent, `tx.focused()` reads `"screen"` for all of them. To find the pane
+  that has the keyboard, use `tx.focus_within("pane-<id>")` (it takes keys and `/`-separated key
+  paths), or track the focused pane in `S` through `.on_focus_change`. opencode-rune compares
+  `tx.focused()` against a single constant, which tells its one grid from other controls
+  ([`side_ops.rs`][ocr-side-ops]). `/` separates key paths, so don't use it inside a single key.
 - **Global (system-wide) shortcuts** come from `App::global_shortcut("cmd+shift+space", ..)` or
   `handle.register_shortcut`. The backends are Carbon on macOS, `RegisterHotKey` on Windows, X11
   grabs, and the xdg-desktop-portal on Wayland ([`crates/rune/src/shortcuts/README.md`][rune-shortcuts]).
@@ -406,7 +426,7 @@ $B --list-scenes ; $B --window KEY ...          # pick a window of a multi-windo
   rt.frame(0.0);
   let (x, y) = rt.find("pane-1/screen").unwrap();
   rt.pointer_down(x, y); rt.pointer_up(x, y); rt.frame(0.0);
-  assert_eq!(rt.presented_focus_key(), Some("screen")); // the focused element's own key
+  assert_eq!(rt.presented_focus_key(), Some("screen")); // the focused element's own key, not "pane-1/screen"
   rt.key(KeyEvent { key: Key::Tab, mods: Mods::default() }); rt.frame(0.0); // reaches the grid's on_key
   let status = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("status"));
   ```
@@ -462,7 +482,8 @@ crates/
     src/main.rs            # build App, init from args, run_windows
     src/state.rs           # S: model + channels + terminal handles + UI-only state (Tracked fields)
     src/poll.rs            # drain core events -> model::step; read terminal snapshots; timers
-    src/keys.rs            # root on_key_preview keymap + mode machine; AppSpec::on_key fallback
+    src/keys.rs            # one keymap + mode machine, called from the root on_key_preview and from
+                           # AppSpec::on_key (nothing focused); the focused pane via tx.focus_within
     src/view/{shell,sidebar,tabs,panes,terminal,palette,toasts,titlebar}.rs
     src/scenes.rs          # named states for --snap
     tests/                 # headless_runtime tests
@@ -486,7 +507,7 @@ Keep `model` free of Rune types where practical, so core logic tests run without
  view(&S, cx) ─► rune-kit shell (titlebar · sidebar · tab strip · pane tree)
         │          └─ terminal pane: grid(cols, cw, ch, cached Rc<GridRow>) + cursor/IME/find overlays
         │
- input ─► root on_key_preview (keymap + prefix-mode machine) ─► model::step
+ input ─► root on_key_preview / AppSpec::on_key (one keymap + prefix-mode machine) ─► model::step
         └► focused grid on_key / on_key_up / IME ─► terminal worker (encode → core)
 ```
 
@@ -499,7 +520,8 @@ Keep `model` free of Rune types where practical, so core logic tests run without
 - **Only visible terminals cost frames.** Read a terminal's snapshot only when its pane is shown,
   as opencode-rune does with `snapshot()` against `peek()`. Hidden terminals keep parsing output on
   their worker but build no rows and never wake the UI.
-- **Keys are stable herdr ids** (`space/<id>`, `tab/<id>`, `pane/<id>/screen`), so scripts, tests
+- **Keys are stable herdr ids** (`space-<id>`, `tab-<id>`, and each grid `screen` under its
+  `pane-<id>`, addressed as the path `pane-<id>/screen`), so scripts, tests
   and focus all address the same elements.
 
 [rune]: https://github.com/anomalyco/rune/tree/4918969f04dce020f63b34e024368a86e5e1857d
@@ -522,6 +544,7 @@ Keep `model` free of Rune types where practical, so core logic tests run without
 [rune-grid-a11y]: https://github.com/anomalyco/rune/blob/4918969f04dce020f63b34e024368a86e5e1857d/changelog/unreleased/2026-11-14-a11y-grid-lines.md
 [rune-grid-caret]: https://github.com/anomalyco/rune/blob/4918969f04dce020f63b34e024368a86e5e1857d/changelog/unreleased/2026-11-13-grid-caret.md
 [rune-physical]: https://github.com/anomalyco/rune/blob/4918969f04dce020f63b34e024368a86e5e1857d/crates/rune/src/runtime/input/physical.rs
+[rune-input-keys]: https://github.com/anomalyco/rune/blob/4918969f04dce020f63b34e024368a86e5e1857d/crates/rune/src/runtime/input/keys.rs
 [rune-chord]: https://github.com/anomalyco/rune/blob/4918969f04dce020f63b34e024368a86e5e1857d/crates/rune/src/input/chord.rs
 [rune-keys]: https://github.com/anomalyco/rune/blob/4918969f04dce020f63b34e024368a86e5e1857d/crates/rune-edit/src/keys.rs
 [rune-tx-keys]: https://github.com/anomalyco/rune/blob/4918969f04dce020f63b34e024368a86e5e1857d/crates/rune/src/el/tx/keys.rs
