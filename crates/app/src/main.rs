@@ -4,5 +4,5 @@ fn main() {
         eprintln!("herdr-frontend: {mismatch}");
         std::process::exit(1);
     }
-    rune::run(herdr_frontend::spec());
+    herdr_frontend::app().run();
 }

@@ -31,6 +31,14 @@ snap scene="hello" *args: build
     {{bin}} --snap target/snap/{{scene}}.png --scene {{scene}} {{args}}
     echo target/snap/{{scene}}.png
 
+# Compare the terminal renderer with Ghostty.app, pixel by pixel (opens a Ghostty window per screen).
+ghostty-diff *screens:
+    scripts/ghostty-diff {{screens}}
+
+# Time N terminal panes all changing at once against the 120 Hz frame (renderer gate 3).
+pane-budget:
+    cargo run --release -p herdr-frontend --example pane-budget
+
 # Check the Rune pin against Rune's own patch list at the pinned rev.
 check-pins:
     scripts/check-rune-pins

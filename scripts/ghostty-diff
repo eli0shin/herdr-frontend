@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# The renderer's pixel diff against Ghostty.app (docs/research/renderer-gates.md): for each screen,
+# capture Ghostty drawing it (scripts/ghostty-capture), draw the same bytes at the same grid with
+# herdr-frontend's renderer (`--snap --scene screen-file`), and compare them cell by cell
+# (`pixel-diff`). Results go to target/ghostty/<screen>/: ghostty.png, ours.png, diff.png and
+# report.md.
+#
+#   scripts/ghostty-diff [SCREEN...]     screens: colors boxes nvim (default: all)
+#
+# Opens a Ghostty window for a few seconds per screen. macOS on a 2x display, JetBrains Mono 14 pt
+# (a 17 x 37 px cell).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+screens=("$@")
+[ ${#screens[@]} -gt 0 ] || screens=(colors boxes nvim)
+
+cargo build --quiet -p herdr-frontend --bins
+bin=target/debug
+fixtures=$PWD/crates/app/fixtures
+streams=$PWD/crates/terminal/tests/streams
+
+for screen in "${screens[@]}"; do
+    out=target/ghostty/$screen
+    mkdir -p "$out"
+    case $screen in
+        colors | boxes)
+            scripts/ghostty-capture "$out" -- cat "$fixtures/$screen.bin"
+            ;;
+        nvim)
+            # Neovim with no user config, in a scratch home, splits and a visual selection as in
+            # fixtures/nvim-splits.bin, but at Ghostty's grid.
+            scratch=$(mktemp -d)
+            cp "$streams/meters.py" "$streams/sample.txt" "$streams/pager.txt" "$scratch/"
+            printf ':set number cursorline\r:vsplit sample.txt\r:split pager.txt\r:set number\r\027l9Gvjj$' >"$scratch/keys"
+            scripts/ghostty-capture "$out" --keep 3 -- /usr/bin/env -i HOME="$scratch" \
+                TERM=xterm-256color PATH=/opt/homebrew/bin:/usr/bin:/bin LANG=en_US.UTF-8 \
+                /bin/sh -c "cd '$scratch' && exec nvim --clean --cmd 'set termguicolors' -s keys meters.py"
+            ;;
+        *)
+            echo "ghostty-diff: no screen named $screen" >&2
+            exit 2
+            ;;
+    esac
+    read -r rows cols <"$out/grid"
+    # The snap's size in points: the grid at 8.5 x 18.5 pt a cell, rounded up.
+    width=$(( (cols * 17 + 1) / 2 ))
+    height=$(( (rows * 37 + 1) / 2 ))
+    HERDR_FRONTEND_SCREEN="$out/screen.bin" HERDR_FRONTEND_GRID="${cols}x${rows}" \
+        "$bin/herdr-frontend" --snap "$out/ours.png" --scene screen-file \
+        --size "${width}x${height}" --scale 2 >/dev/null 2>&1
+    "$bin/pixel-diff" "$out/ghostty.png" "$out/ours.png" "$out/screen.bin" "$cols" "$rows" \
+        "$out/diff.png" | tee "$out/report.md"
+    echo
+done

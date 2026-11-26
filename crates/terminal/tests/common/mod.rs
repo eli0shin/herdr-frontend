@@ -1,6 +1,7 @@
 //! The fonts the metrics tests measure, and where to find them.
 //!
-//! `tests/fonts/` holds the fonts whose licenses allow it (JetBrains Mono and Geist Mono, OFL).
+//! The fonts whose licenses allow it are checked in (OFL): Geist Mono in `tests/fonts/`, and
+//! JetBrains Mono in the workspace's `assets/fonts/`, which the app draws terminals with too.
 //! Eli's Operator Mono Book Herdr is commercial, so it's read from his dotfiles and the tests that
 //! need it skip when it isn't there. System fonts are read from `/System/Library/Fonts` and skip
 //! the same way.
@@ -44,10 +45,17 @@ pub fn eli_fonts() -> PathBuf {
     home.join(".dotfiles/home/.config/herdr-app/fonts")
 }
 
+/// A font in the workspace's `assets/fonts/`.
+pub fn asset(file: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../assets/fonts")
+        .join(file)
+}
+
 pub fn jetbrains_mono() -> FontFile {
     FontFile {
         name: "JetBrains Mono",
-        path: checked_in("JetBrainsMono-Variable.ttf"),
+        path: asset("JetBrainsMono-Variable.ttf"),
         index: 0,
     }
 }

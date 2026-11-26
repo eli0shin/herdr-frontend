@@ -17,6 +17,8 @@ macOS only for now. Needs [rustup](https://rustup.rs) (the toolchain comes from
 just run          # open the window
 just test         # pin check, fmt, clippy, tests and bindings check, as CI runs them
 just snap [scene] # render a scene headless to target/snap/<scene>.png
+just ghostty-diff # compare the terminal renderer with Ghostty.app (opens Ghostty windows)
+just pane-budget  # time many terminal panes changing at once against the 120 Hz frame
 just check-pins   # check the Rune pin against Rune's patch list at that rev
 just bindings     # regenerate the libghostty-vt bindings (`--check` fails on a diff)
 ```
