@@ -26,4 +26,8 @@ caches it in `~/Library/Caches/ghostty-vt-sys` (set `GHOSTTY_VT_CACHE_DIR` to mo
 `curl`, `unzip` and `lipo` from the Xcode Command Line Tools, but no Zig. The bindings in
 `crates/ghostty-vt-sys/src/bindings.rs` are committed, so only `just bindings` needs libclang.
 
+herdr-client's tests start their own isolated herdr-core (a `test-*` session with scratch dirs under
+`/tmp`), never yours. They use the `hc` on your machine, or `HERDR_TEST_HC=/path/to/herdr-core`, and
+skip without one. CI installs the pinned hc release.
+
 Rune is pinned to one `dev` rev in `Cargo.toml`; bump it as `docs/research/rune.md` §1 describes.
