@@ -276,6 +276,12 @@ Ghostty's:
      between them.
    - or count this as a failed gate and move to the custom pass.
 
+**Implemented** in `crates/app/src/view/terminal/` (ticket 012): the `GridRow` builder and row
+cache, Ghostty's box-drawing lines as sprites, the cursor and selection, and a pane view. The
+gates are measured in [`renderer-gates.md`](renderer-gates.md), along with the Ghostty pixel
+diff (`just ghostty-diff`) and the many-pane budget (`just pane-budget`). The recommendation is to
+stay on grid.
+
 **Fallback: a custom wgpu pass.** A Rune `Compositor` draws each pane at its `El::effect` slot
 with instanced cell shaders ported from Ghostty. Ghostty's pieces:
 
