@@ -31,9 +31,8 @@ Why, in short:
   which spawns a local PTY. Every app that feeds a surface from the network (cmux, Geistty,
   gterm, VVTerm) carries a fork that adds an IO backend.
 - **The surface can't composite inside a Rune window.** It draws into an `NSView` or `UIView`
-  that it owns, through its own `IOSurfaceLayer` and Metal device. It supports only macOS and
-  iOS. Overlays above panes, transforms, clipping and fades would all have to be native view
-  tricks.
+  that it owns, through its own `IOSurfaceLayer` and Metal device. Overlays above panes,
+  transforms, clipping and fades would all have to be native view tricks.
 - **Fidelity comes from the data, and libghostty-vt has it.** Ghostty's own renderer reads the
   same `terminal.RenderState` that libghostty-vt's C render API wraps. Porting its cell-building
   code is a translation, not a reverse-engineering job.
@@ -59,7 +58,7 @@ Every path below is at these revisions unless a different one is given.
 | herdr-app (`herdr-app:`)                 | `b721deda985270ec8256552692729a4add389b2a`. Its `vendor/ghostty` pin is `291fd050b9e9c293c8adb6a140742649b7e42d3a` (2026-10-14) |
 | anomalyco/opencode-rune (`opencode-rune:`) | `7420a0a1330622526f716963f9d1afa2a0bd85af` (dev, 2026-11-25). Pins Ghostty `v1.4.0` = `83fb95624b`          |
 | anomalyco/rune (`rune:`)                 | `4918969f04dce020f63b34e024368a86e5e1857d` (dev, 2026-11-25)                                                    |
-| herdr-core protocol                      | `hc schema`, herdr-core 0.1.22 (read only)                                                                      |
+| herdr-core (`core:`)                     | tag `v0.1.22` (`6e29846`) source, `hc schema` from the same version, and ticket 001's `docs/research/herdr-core-protocol.md` |
 | Ghostty discussions                      | [#12131](https://github.com/ghostty-org/ghostty/discussions/12131), [#15254](https://github.com/ghostty-org/ghostty/discussions/15254), [#15295](https://github.com/ghostty-org/ghostty/discussions/15295) |
 | Forks                                    | [manaflow-ai/cmux `docs/ghostty-fork.md`](https://github.com/manaflow-ai/cmux/blob/27810b92/docs/ghostty-fork.md), [daiimus/geistty `ARCHITECTURE.md`](https://github.com/daiimus/geistty/blob/main/ARCHITECTURE.md), [madeye/gterm `PLAN.md`](https://github.com/madeye/gterm/blob/main/PLAN.md) |
 
@@ -123,17 +122,17 @@ So nothing has changed, and the direction is firmer than it was.
 | Upstream support | None. The API is internal and "tailored to the needs of the macOS app" (`ghostty.h:1-11`, #15295). Manual IO exists only in forks. | Stable semver C ABI. Minor releases only add, and CI checks each change against ABI goldens (`dist/doxygen/pages/stability.md`, `PACKAGING-LIBGHOSTTY.md` "Versioning and ABI"). |
 | IO from herdr-core | Needs a fork. The forks feed output through `Termio.processOutput` under the renderer mutex and get input through a callback on Ghostty's IO thread (Geistty `ARCHITECTURE.md`, gterm `PLAN.md`). | Built in: `ghostty_terminal_vt_write()` in, `GHOSTTY_TERMINAL_OPT_WRITE_PTY` callback out. herdr-app already works this way (`herdr-app:src/vt.rs:385`). |
 | Compositing in a Rune/wgpu window | The surface turns a caller's `NSView`/`UIView` into a layer-hosting view with its own `IOSurfaceLayer` (`ghostty:src/apprt/embedded.zig:382`, `ghostty:src/renderer/Metal.zig:91-129`). Rune overlays, popovers and drag previews can't draw above it except as separate native views or windows. Sharing one GPU frame would need yet another fork patch to export the IOSurface into Rune's `NativeSurface` (`rune:crates/rune-media/src/native_surface/mod.rs`), with one frame of latency and cross-device sync. | Drawn inside Rune's own frame. A `rune::grid` is an ordinary element. A custom `Compositor` paints each pane's `El::effect` slot "in painter order, inside the slot's isolated layers, so the slot's opacity (an exit fade included), clip and transform already apply" (`rune:crates/rune/src/compose.rs:9-14`). Either way, overlays, splits and animations just work. |
-| Platforms | macOS and iOS only: `Platform = union { macos, ios }` (`embedded.zig:382`). | macOS, iOS, Linux, Windows and wasm. Prebuilt xcframework, Windows zips and wasm modules ship with each release. |
+| Platforms (requirement: macOS now, iOS later; `AGENTS.md` "Scope") | Meets it: macOS and iOS only, `Platform = union { macos, ios }` (`embedded.zig:382`). | Meets it: the prebuilt xcframework has macOS and iOS slices. Linux, Windows and wasm builds also exist, but they're out of current scope. |
 | Many panes | Each surface spawns a renderer thread and an IO thread (`ghostty:src/Surface.zig:99-136`, `:754`) and has its own swap chain and layer. Fonts are shared through `SharedGridSet`. | One Rune frame, one text system and atlas. Each pane costs a terminal, a render state and its changed rows. Grid at 200×60, headless thread CPU p50: 2.46 ms full redraw, 0.40 ms one row, 0.30 ms nothing (`rune:changelog/unreleased/2026-11-13-grid.md`). |
 | Rendering fidelity | Exactly Ghostty's. | Same input data, because Ghostty's renderer consumes `terminal.RenderState` (`ghostty:src/renderer/generic.zig:275`) and the C API wraps the same type (`ghostty:src/terminal/c/render.zig:24`). Matching Ghostty is up to our port of `Metrics.calc`, `rebuildRow`, glyph placement and the sprite font, plus how close Rune's text rasterizer is. See the gates in [§2](#where-the-renderer-draws) and [Risks](#8-risks-and-staged-plan). |
 | Terminal data for our features | Only what `ghostty.h` exports. #15295 shows embedders patching it just to find an image under a click. | Full grid, tracked references, selection, search, formatter, OSC 133 prompts and kitty placements, which is what copy mode, find, herdr labels and links need. |
 | Configuration and fonts | Ghostty's own config system and font discovery. Our settings would have to be translated into Ghostty config. | Ours. |
 | Future iOS app | Possible on a fork (Geistty, gterm and cmux iOS all ship one). The app would have two renderers: Ghostty's for terminals and Rune's for everything else. | The xcframework has iOS device and simulator slices, verified in the 1.0.2 zip, and Rune's `LayerHost` attaches a runtime to a `CAMetalLayer` (`rune:ARCHITECTURE.md` "Hosts"). Same core, same renderer. |
-| Maintenance | A fork rebased onto a moving internal API. cmux's `docs/ghostty-fork.md` shows what that costs. | Pin a signed release tarball and port renderer changes when we choose to. |
+| Maintenance | A fork rebased onto a moving internal API. cmux's `docs/ghostty-fork.md` shows what that costs. | Pin a signed release (the checksummed xcframework) and port renderer changes when we choose to. |
 
-Option (a) wins only on "pixel-identical with zero renderer work, on Apple platforms". It loses
-on support, IO, compositing, platforms, data access and pane cost. Those are the requirements
-herdr-frontend can't drop, so I recommend (b).
+Both meet the platform requirement. Option (a) wins only on "pixel-identical with zero renderer
+work". It loses on support, IO, compositing, data access and pane cost. Those are the
+requirements herdr-frontend can't drop, so I recommend (b).
 
 ## 1. The libghostty-vt API we need, building and pinning
 
@@ -179,18 +178,8 @@ I linked a C smoke test against the macOS archive with plain `cc smoke.c libghos
 other libraries. It wrote VT bytes, resized to 100x30 with a 17x37 cell, and read back
 `version=1.0.2 grid=100x30 px=1700x1110`.
 
-**Linux, Windows and source builds.** Use the source tarball and the deps tarball from the same
-version with Zig 0.17.x. Major and minor must match exactly, and any 0.17 patch works:
-
-```sh
-zig build --system ../libghostty-vt-1.0.2-deps -Doptimize=ReleaseFast -Dcpu=baseline \
-  -Dtarget=<arch-os-abi> --prefix <out>
-```
-
-This is from `ghostty:PACKAGING-LIBGHOSTTY.md` "Building libghostty-vt". A git checkout needs
-`-Demit-lib-vt`, because without a `LIB_VERSION` file `zig build` builds the app. Windows has
-prebuilt zips with `ghostty-vt-static.lib`. Link statically, as both reference apps do. I didn't
-run a Zig build in this research.
+Link statically, as both reference apps do. macOS is the only platform in current scope, and
+this path needs no Zig at all.
 
 **Bindings.** Run bindgen against `ghostty/vt.h` with the allowlists herdr-app uses
 (`herdr-app:crates/ghostty-sys/build.rs`: `ghostty_.*`, `Ghostty.*`, `GHOSTTY_.*`,
@@ -199,8 +188,21 @@ the generated `bindings.rs` for each pinned release, and have CI regenerate it a
 diff. That keeps libclang out of normal builds. At startup, check `ghostty_build_info()` against
 the header version (`stability.md` "Checking the Version").
 
-**Pin:** libghostty-vt `vt-1.0.2` (`573c4a21e0`), from the signed source tarball, not a git
-submodule. Move to later 1.x releases on purpose. They only add API.
+> **Later, out of current scope: Linux, Windows and source builds.** Nothing is built or tested
+> for Linux or Windows yet (`AGENTS.md` "Scope"). When they are:
+> - build from the source tarball and the deps tarball of the same version (checksums above),
+>   with Zig 0.17.x. Major and minor must match exactly, and any 0.17 patch works:
+>   `zig build --system ../libghostty-vt-1.0.2-deps -Doptimize=ReleaseFast -Dcpu=baseline -Dtarget=<arch-os-abi> --prefix <out>`
+>   (`ghostty:PACKAGING-LIBGHOSTTY.md` "Building libghostty-vt").
+> - a git checkout needs `-Demit-lib-vt`, because without a `LIB_VERSION` file `zig build`
+>   builds the app.
+> - Windows has prebuilt zips with `ghostty-vt-static.lib`.
+> - add one Zig 0.17 CI job for Linux.
+>
+> I didn't run a Zig build in this research.
+
+**Pin:** libghostty-vt `vt-1.0.2` (`573c4a21e0`), from the release's checksummed xcframework,
+not a git submodule. Move to later 1.x releases on purpose. They only add API.
 
 Don't copy either reference pin:
 
@@ -235,7 +237,7 @@ opencode-rune draws its terminal this way (§7).
 
 **Recommendation: build on `rune::grid` first.** Our Ghostty port lives in the `GridRow` builder:
 run breaking, colors, sprites, underline styles and pinned cells. Find highlights go into the
-row's fills, like selection (gate 5). A hovered link changes the underline in the builder, as
+row's fills, like selection (gate 4). A hovered link changes the underline in the builder, as
 Ghostty does: single, or double if the text is already single-underlined
 (`ghostty:src/renderer/generic.zig:3245-3258`). The cursor and IME preedit are sibling elements
 over the grid. Then check it against these gates, which are where grid's model differs from
@@ -246,17 +248,13 @@ Ghostty's:
    cell is narrower (`ghostty:src/font/face/coretext.zig:363-378`). Grid places narrow cells by
    tracking one shaped line, which puts the extra space after each glyph. We need the same
    per-row offset, or a check that the difference is invisible.
-2. **Ligatures.** Ghostty keeps `calt`/`liga` on. opencode-rune turns them off "so ligatures
-   can't shift cells" on a tracked line (`opencode-rune:features/terminal-surface/src/grid/mod.rs:101-102`).
-   To match Ghostty, a ligature run would have to become a pinned multi-column `cell` with
-   ligatures on in its own style. That's unverified.
-3. **Sprites.** Ghostty rasterizes box drawing and the other sprite glyphs at the cell size.
+2. **Sprites.** Ghostty rasterizes box drawing and the other sprite glyphs at the cell size.
    Grid draws them as a vector `Shape`, so we need a pixel diff on box drawing, Powerline and
    braille.
-4. **Many panes.** Profile N visible panes scrolling at once against the 8.3 ms frame at
+3. **Many panes.** Profile N visible panes scrolling at once against the 8.3 ms frame at
    120 Hz. A full redraw is 2.46 ms per 200×60 pane, so four panes all scrolling at once would
    miss it unless they're smaller.
-5. **Layering.** Grid paints one row at a time: fills, then the line clipped to its row, then
+4. **Layering.** Grid paints one row at a time: fills, then the line clipped to its row, then
    pinned cells, then the vector layer (`rune:crates/rune/src/runtime/paint/grid.rs:50-139`).
    Nothing outside the grid can sit between a row's backgrounds and its text. Ghostty draws
    all backgrounds, then the layers between, then unclipped text. That breaks three things:
@@ -309,7 +307,7 @@ UI frame (Rune display link, `poll`):
      render_state_clean()
   view: grid(cols, cell_w, cell_h, rows) + cursor / preedit overlays
         + kitty images as image elements: below-bg ones under the grid, above-text ones over it,
-          and below-text ones only through gate 5's workaround (two grids)
+          and below-text ones only through gate 4's workaround (two grids)
   (fallback: Compositor::render paints the same rows as instanced cells at El::effect slots)
 ```
 
@@ -371,9 +369,15 @@ the grayscale atlas once per (codepoint, cell size).
   changes, on selection boundaries, and around the cursor (`font-shaping-break = cursor`, the
   default, `Config.zig:382`). It also splits the "bad ligatures" `fi`, `fl` and `st`
   (`run.zig:126-142`). The shaped glyphs are then placed on cell boundaries.
-- **Ligature policy:** do what Ghostty does by default. Keep the font's `calt` and `liga`, break
-  runs at the cursor and at style and selection boundaries, never join `fi`, `fl` or `st`, and
-  offer a setting equivalent to `font-feature = -calt, -liga, -dlig` (`Config.zig:238-253`).
+- **Ligature policy: off.** Eli's setup has ligatures off (`settings.json` `font_ligatures`
+  false, `docs/research/feature-inventory.md:182-184`). So the terminal text style turns off
+  `calt` and `liga`, as opencode-rune does on its grid "so ligatures can't shift cells"
+  (`opencode-rune:features/terminal-surface/src/grid/mod.rs:101-102`). That's what Ghostty does
+  with `font-feature = -calt, -liga` (`Config.zig:238-253`). Still break runs on style and
+  selection boundaries and at the cursor.
+  - Later, out of current scope: ligatures on, Ghostty's default. On grid's tracked line, a
+    ligature run would have to become a pinned multi-column `cell` with ligatures on in its own
+    style, which is unverified.
 - For shaping and rasterization, use rune-text's stack: Parley, swash and skrifa, with
   CoreGraphics-matched smoothing (`rune:ARCHITECTURE.md`). Font lookup works like this
   (`rune:crates/rune-text/Cargo.toml:54-67`):
@@ -419,6 +423,16 @@ Worked example, JetBrains Mono (bundled by herdr-app; `upm 1000`, typo 1020/−3
 - 1x: 8.4 × 18.48 rounds to an **8 × 18** px cell.
 - 2x: 16.8 × 36.96 rounds to a **17 × 37** px cell.
 
+Eli's parity font, Operator Mono Book Herdr (`~/.config/herdr-app/fonts/DotfilesOperatorMonoBook-Regular.otf`).
+His settings are `font_size` 17 and `zoom` 1.1. herdr-app multiplies them
+(`herdr-app:src/settings.rs:761-763`), so the terminal is at 18.7 pt. The font has `upm 1000`,
+hhea 960/−240/0, typo 800/−200/200, `USE_TYPO_METRICS` not set (so hhea applies), and an ASCII
+max advance of 550. Ghostty's CoreText face is sized at the unrounded `points × dpi / 72`
+(`coretext.zig:76-84`):
+
+- 1x: 10.285 × 22.44 rounds to a **10 × 22** px cell.
+- 2x (Retina): 20.57 × 44.88 rounds to a **21 × 45** px cell.
+
 ### Sprite glyphs
 
 Ghostty doesn't take these from fonts. It draws them procedurally at the exact cell size with z2d
@@ -439,7 +453,7 @@ The same sprite face draws all five underline styles and the cursor shapes:
 Port Ghostty's geometry to Rust: the arm weights, the thicknesses from `box_thickness`, and the
 corner, diagonal and Powerline paths. On `rune::grid`, emit them into the row's `shape` layer
 with edges on whole device pixels, as opencode-rune does
-(`opencode-rune:features/terminal-surface/src/draw.rs`). That's gate 3 in
+(`opencode-rune:features/terminal-surface/src/draw.rs`). That's gate 2 in
 [Where the renderer draws](#where-the-renderer-draws). If vector output doesn't match Ghostty's
 raster pixels, rasterize each sprite once per (codepoint, cell metrics) with tiny-skia, which is
 already in Rune's tree. Ghostty's canvas is a plain path rasterizer. Then draw the result as an
@@ -482,7 +496,7 @@ when to re-read the list, and each image's `IMAGE_GENERATION` keys its texture c
 
 Draw each placement in its layer, ordered by z within the layer. The three layers are below the
 cell backgrounds, between backgrounds and text, and above text (`types.h:380-407`,
-`render.h:197-375`, `guides/images.md`). On `rune::grid`, the middle layer needs gate 5's
+`render.h:197-375`, `guides/images.md`). On `rune::grid`, the middle layer needs gate 4's
 two-grid workaround. Clip fixed and relative placements to the viewport. Pixel values are in the
 cell size passed to `ghostty_terminal_resize`. Because our cell is whole pixels, no extra scaling
 is needed.
@@ -520,9 +534,12 @@ is needed.
 - **Paste.** `ghostty_terminal_paste` reads the modes itself. It handles bracketed paste (2004)
   and kitty paste events (5522), strips unsafe bytes, and returns `GHOSTTY_REJECTED` for unsafe
   text. Confirm with the user, then retry with `allow_unsafe` (`guides/input.md` "Paste").
-- **Focus.** `ghostty_focus_encode`, sent only when `GHOSTTY_MODE_FOCUS_EVENT` is set. herdr-core
-  also has a FOCUS control frame. Ticket 001 should decide whether the core or the viewer encodes
-  focus for a terminal that several viewers share.
+- **Focus.** For a herdr-core terminal, send only FOCUS frames to the core: `1` gained, `0` lost.
+  Never write `ghostty_focus_encode` bytes yourself. The core writes `CSI I` or `CSI O` to the
+  program whenever its own screen has DEC mode 1004 on (`core:crates/herdr-core/src/viewers.rs:348-359`),
+  so local encoding would send every focus event twice. FOCUS(1) counts as activity and takes the
+  PTY size, so send RESIZE with the pane's current grid before or with it
+  (`docs/research/herdr-core-protocol.md` §4, "Recommended viewer policy").
 
 ## 4. Sizing
 
@@ -551,48 +568,67 @@ is needed.
    (`Thread.zig:28-31`). We should:
    - recompute the pane's grid every frame while the user resizes, and draw the current
      terminal clipped to the pane.
-   - send the pane's grid to the core as `RESIZE` at most once every 25 ms, always including the
-     final size. That's a request. The local terminal is resized to the size the core actually
-     gives the PTY (see the next section), not straight to the pane.
+   - when the pane is the one taking the size (focused, in the focused window; see the next
+     section), send its grid to the core as `RESIZE` at most once every 25 ms, always including
+     the final size. The local terminal is resized to the size the core actually gives the PTY,
+     not straight to the pane.
    - send `FACTS` with the new cell size before `RESIZE`, so a program woken by the resize asks
      for the new cell. herdr-app does the same (`terminal.rs:190-207`).
 
 ### Several viewers on one terminal (herdr-core)
 
-These come from the schema and from herdr-app's own integration test.
+Ticket 001's protocol doc covers who owns the PTY size, from herdr-core `v0.1.22` (`6e29846`)
+source: `docs/research/herdr-core-protocol.md` §4. In short:
 
-- `terminal.attach` takes the viewer's `cols`, `rows` and `display` (fg, bg, cursor, and `cell`
-  in pixels, "used to answer display queries"). Also `observe` ("Watch only: never type or
-  resize"), `resumed` ("sets the size only once active again") and `resize_notifications`
-  ("Observer understands core-to-viewer RESIZE before replacement paints") (`hc schema`,
-  `AttachResult`).
-- herdr-app's test `two_app_viewers_answer_queries_without_idle_size_theft` (`herdr-app:src/hc.rs:704-760`)
-  attaches two viewers at 80×24 and 100×30. The terminal ends up at the active viewer's 100
-  columns. An idle viewer's replies, sent as `AUTOMATIC_INPUT`, don't take the size back. And
-  **both viewers answer each query**: the program receives "six kitty replies (two per query)".
+- **The terminal has one grid.** It's the size of the most recently active non-observe viewer.
+  A viewer becomes active by attaching (unless `resumed: true`), sending DATA or RESIZE, or
+  sending FOCUS(1).
+- **`resize_notifications` is for observers only.** The core honors it only when `observe` is
+  also set (`core:crates/herdr-core/src/viewers.rs:88`). Only observers get core-to-viewer
+  RESIZE plus an authoritative repaint.
+- **A typing viewer gets no in-band size news.** It must follow `size` events `{cols, rows}`,
+  which arrive on the events channel and aren't ordered with its stream bytes.
 
-That leads to two requirements for herdr-frontend:
+herdr-app's test `two_app_viewers_answer_queries_without_idle_size_theft` (`herdr-app:src/hc.rs:704-760`)
+shows the effect. Two viewers at 80×24 and 100×30 leave the terminal at the active viewer's 100
+columns, and an idle viewer's `AUTOMATIC_INPUT` replies don't take the size back.
 
-1. **The local terminal follows the PTY size, not the pane.** herdr-app never asks for
-   `resize_notifications` (`hc.rs:466-470`). It resizes its local terminal to its own pane
-   (`terminal.rs:190-200`). While another viewer owns the size, it parses bytes laid out for 100
-   columns into an 80-column terminal, so wrapping breaks. Instead:
-   - Attach with `resize_notifications: true`.
-   - **If `AttachResult.resize_notifications` comes back true,** resize the local terminal only
-     on core-to-viewer `RESIZE`. Draw that grid in the pane: clipped, letterboxed, and marked as
-     "sized by another viewer". Typing or focusing the pane claims the size again by sending our
-     `RESIZE`.
-   - **If it comes back false or absent,** the schema says "the observer must track size changes
-     separately". That can happen when a hop on the path, such as a `machine/t7` address through
-     another core, doesn't relay the notices. Fall back to herdr-app's behavior: resize locally
-     to the pane. Re-read `cols` and `rows` with `terminal.get` whenever the pane gains focus or
-     sends input, and resize locally to match.
-   - Ticket 001 should confirm whether the core also sends `RESIZE` back to the viewer that
-     asked for the size, or only to the others.
-2. **Decide once who answers queries.** Duplicate replies are harmless for some queries and
-   wrong for others, such as DA, DSR and kitty graphics `a=q`. Ticket 001, or herdr-core itself,
-   should settle whether only the active viewer forwards `WRITE_PTY` replies or the core answers
-   alone.
+That gives the renderer two requirements:
+
+1. **The local terminal follows the core's grid, not the pane.** herdr-app resizes its local
+   terminal to its own pane (`terminal.rs:190-200`). While another viewer leads, it parses bytes
+   laid out for 100 columns into an 80-column terminal, so wrapping breaks. Instead, attach and
+   send per ticket 001's per-pane-state table (normal attach, `resumed: true`, or observer), and
+   size the local terminal like this:
+   - **Normal and `resumed` viewers:** call `ghostty_terminal_resize` from `size` events, plus
+     our own RESIZE when this pane takes the size. Draw that grid in the pane, letterboxed or
+     clipped, while another viewer leads. Because `size` events aren't ordered with stream bytes,
+     output just before or after a change can be parsed at the old width. Full-screen programs
+     redraw after SIGWINCH, which corrects it. Plain output written in that window can stay
+     wrapped at the old width, which is a known limit for non-observe viewers.
+   - **Observers (`observe: true, resize_notifications: true`, for hidden panes):** resize on
+     each core RESIZE. The authoritative repaint that follows is exact. The reply confirms
+     `resize_notifications` only if every hop on the path supports it, such as a `machine/`
+     terminal through another core. If `AttachResult.resize_notifications` is false, follow
+     `size` events like a normal viewer.
+2. **Only some query replies can be duplicated.**
+   - The core strips the queries its own screen answered from the bytes it sends viewers, "a
+     viewer seeing them would answer a second time" (`core:crates/herdr-core/src/relay.rs:2-3`).
+   - The leader's `FACTS` answer the program's color and cell-size queries
+     (`viewers.rs:47`, `apply_display`).
+   - Observers' replies never reach the program (`viewers.rs:476-477`, `answering`).
+
+   So only replies to queries the core doesn't answer can come from more than one typing viewer
+   at once. Examples are kitty image queries, which is the "six kitty replies (two per query)" in
+   the test above, and mode-2048 reports. herdr-core leaves 2048 to viewers on purpose. It drops
+   its own screen's reports, because "In-band resize belongs to the viewer, which knows the pixel
+   geometry" (`core:crates/herdr-core/src/relay.rs:57-60`). Because our local terminal follows the core's
+   grid, our 2048 reports carry the right cols and rows. Their pixel fields are `cols × cell`
+   with our own cell, though, and Herdr app's cell can differ. For Eli's Operator Mono at
+   18.7 pt at 1x, Herdr app's formula (§5) gives about 10×26, assuming GPUI reports hhea
+   ascent and descent. Ghostty's metrics give our 10×22. So two viewers can still send reports
+   that disagree on pixel size. Whether several typing viewers should all
+   answer these queries is still an open herdr-core question.
 
 ## 5. Why herdr-app's size reporting and Neovim rendering are wrong
 
@@ -604,10 +640,10 @@ so symptoms are stated as what the code does.
 1. **Viewers fight over the size.** This is the size-reporting defect. When another client owns
    the PTY size, herdr-app's local terminal keeps its own pane's size and lays the program's
    output out at the wrong width. See [§4](#several-viewers-on-one-terminal-herdr-core).
-2. **Idle viewers send size reports with the wrong size.** Every viewer's local terminal answers
-   the program's queries, and the core forwards each viewer's `AUTOMATIC_INPUT`. The
-   `hc.rs:704-760` test shows the program receiving "six kitty replies (two per query)". Size
-   reports go the same way:
+2. **Idle viewers send size reports with the wrong size.** Every typing viewer's local terminal
+   answers the queries the core doesn't answer itself (§4), and the core forwards each viewer's
+   `AUTOMATIC_INPUT`. The `hc.rs:704-760` test shows the program receiving "six kitty replies
+   (two per query)". Size reports go the same way:
    - Turning on mode 2048 makes libghostty-vt report the terminal's own geometry right away
      (`ghostty:src/terminal/stream_terminal.zig:2082`, herdr-app's test at `vt.rs:1958-1970`).
    - `fit` forwards the report again after each pane resize (`terminal.rs:200-206`).
@@ -615,7 +651,8 @@ so symptoms are stated as what the code does.
 
    So next to the active viewer's 100×30 report, the program also gets the idle viewer's 80×24
    report, an in-band size report that contradicts the PTY. That test turns 2048 on every round.
-   I haven't checked whether herdr-core's own answers, built from `FACTS`, add more.
+   Color and cell-size queries aren't duplicated: the core answers those from the leader's
+   `FACTS` and strips them from viewers' streams (§4).
 3. **The rounded cell it reports is not a bug.** `device_cell()` reports
    `round(logical width × scale)` (`terminal.rs:212-215`): 8 px at 1x for a cell drawn at 8.4.
    - It hands that same cell to `ghostty_terminal_resize` and the `SIZE` callback
@@ -738,10 +775,10 @@ reference dies"). Never keep one across a `vt_write`.
 
 **What to take from it.** It proves libghostty-vt on `rune::grid` works, including on the web.
 Its build caching and checksum verification are worth copying, and so is its row cache. We
-should replace three things:
+should keep its `calt`/`liga` off policy, which matches Eli's ligatures-off setting
+(`grid/mod.rs:101-102`). It should replace two things:
 
 - its metrics, with Ghostty's `Metrics.calc` (§2).
-- its ligatures-off policy, with Ghostty's (gate 2).
 - its pre-1.0 FFI, with 1.0.2 bindings.
 
 Then check grid against the gates in [§2](#where-the-renderer-draws).
@@ -754,32 +791,33 @@ Then check grid against the gates in [§2](#where-the-renderer-draws).
 | --- | --- |
 | Our rasterizer doesn't match Ghostty's CoreText output, and fidelity is the goal. | rune-text claims CoreGraphics-matched smoothing. Build a pixel-diff harness against Ghostty.app (same font, size and scale) early, in stage 4. Fall back to CoreText rasterization on macOS if diffs remain. |
 | rune-text may not expose raw face metrics, per-codepoint fallback, or (for the fallback pass) glyph-level shaping. | Ticket 004 checks. If not, read the font tables with skrifa, and use swash and harfrust directly for the pass, keeping rune-text's discovery and its CoreText fallback on Apple. |
-| `rune::grid` fails a fidelity gate (glyph centering, ligatures, sprite pixels, layering) or the many-pane budget. | Gates in §2, measured in stage 4. The fallback is the custom `Compositor` pass, which needs its own rasterizer and atlas and takes over frame encoding for the whole app. |
+| `rune::grid` fails a fidelity gate (glyph centering, sprite pixels, layering) or the many-pane budget. | Gates in §2, measured in stage 4. The fallback is the custom `Compositor` pass, which needs its own rasterizer and atlas and takes over frame encoding for the whole app. |
 | Single-threaded Rune UI with heavy output from many panes. | Parse on worker threads, use two-phase updates, cap the bytes per frame per pane, and use render holds. |
-| Multi-viewer size and duplicate replies need herdr-core decisions. | Raise them in ticket 001 (§4). Until then, use `resize_notifications` and a letterboxed grid. |
+| With Herdr app open too, a terminal's size flips to whichever client touched it last (`herdr-core-protocol.md` §4), and typing viewers both answer queries the core doesn't answer. | Follow ticket 001's per-pane viewer policy, and size the local terminal from `size` events (observers: RESIZE) so it always draws the real grid (§4). Whether several typing viewers should all answer the remaining queries is open upstream. |
 | Ghostty's renderer keeps changing upstream, and our port drifts. | Pin the Ghostty revision the port came from (`vt-1.0.2` here), keep a parity corpus, and re-port on purpose. |
-| Zig is still needed for Linux. | Prebuilt xcframework (macOS, iOS) and Windows zips. One Zig 0.17 CI job builds Linux from the signed tarball. |
 | Gaps in libghostty-vt (no preedit, no OSC 72 drops, no fonts). | All of these are renderer or app concerns, handled in our layer. |
 
 ### Staged plan
 
 Each stage ends with tests in `cargo test` plus a fixture or screenshot check.
 
-1. **`ghostty-vt-sys`:** link the pinned 1.0.2 xcframework on macOS and the signed source build
-   elsewhere. Commit the bindings, and check the version at startup. Smoke test: write bytes and
-   read the render state, as above.
+1. **`ghostty-vt-sys` (macOS only):** link the pinned, checksummed 1.0.2 xcframework's macOS
+   slice. No Zig, and no other platforms (see the "Later" note in §1). Commit the bindings, and
+   check the version at startup. Smoke test: write bytes and read the render state, as above.
 2. **Terminal core:** a worker-thread terminal wrapper with callbacks, render holds, scrollback
    limits, and herdr-core attach bytes in and replies out. Test against recorded streams. It runs
    headless and draws nothing.
 3. **Metrics and grid:** port face-metric extraction and `Metrics.calc`, plus grid and padding
-   math. Golden tests against Ghostty's numbers for several fonts, sizes and scales. Wire up
-   `RESIZE` and `FACTS`.
+   math. Golden tests against Ghostty's numbers for several fonts, sizes and scales. These must
+   include Eli's parity font, Operator Mono Book Herdr at 17 pt with zoom 1.1 (18.7 pt): a
+   **10×22** cell at 1x and **21×45** at 2x (§2). Also include JetBrains Mono at 14 pt: 8×18
+   and 17×37. Wire up `RESIZE` and `FACTS`.
 4. **Renderer MVP on `rune::grid`:** a `GridRow` builder from the render state (runs, colors,
    fills, pinned cells), the row-id cache, cursor and selection. One pane, then many. Start the
    pixel-diff harness against Ghostty.app, and measure the §2 gates. If a gate fails, decide
    here whether to move to the `Compositor` pass.
 5. **Fidelity:** port the sprites (`sprite/draw/*.zig`), underline styles and colors, Nerd Font
-   icon constraints, the color emoji atlas, fallback, and the ligature policy. Neovim checklist:
+   icon constraints, the color emoji atlas, and fallback, with ligatures off. Neovim checklist:
    splits, floats, undercurl, statusline icons, CJK.
 6. **Input:** keys (kitty, consumed mods, releases), IME preedit, mouse, paste, focus.
 7. **Scrollback:** viewport and scrollbar, smooth scroll with overscan, search, OSC 8 and links.
