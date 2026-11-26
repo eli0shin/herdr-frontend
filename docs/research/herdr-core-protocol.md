@@ -555,15 +555,18 @@ are worth raising upstream for herdr-app: use `resumed` for hidden and reattache
   the status leaves `working`. A program that never reports has no status, and `wait` treats it
   as working until it exits (`core:crates/herdr-core/src/status.rs`).
 - **The attention model** (herdr-app's, which herdr-frontend should match;
-  `app:src/model.rs` `status`, `alert`, `alert_for`, `priority`):
+  `app:src/model.rs` `status`, `alert`, `alert_for`, `priority`). In herdr-frontend this drives
+  in-app UI only: sidebar status, attention markers, and in-app toasts like Eli's `eli-toast` mod.
+  Native OS notifications and sounds are out of scope.
   - Displayed status is blocked (blocked or error), working, done (turn > seen), or idle. Tabs and
     spaces roll up by the priority blocked > done > working > idle.
-  - Alerts: entering blocked or error alerts always. Going from busy to anything else alerts only
-    when the person isn't looking.
-  - Only terminals in a pane alert. Sub-agents (`parent` set) never alert; their root agent
-    stands in for them. Any alert brings the root agent's settled tab back.
-  - herdr-app plays a sound and shows a toast (`app:src/window.rs` `alert`). With both clients
-    running, both will alert (see Open questions).
+  - When to raise an in-app toast: entering blocked or error always does. Going from busy to
+    anything else does only when the person isn't looking.
+  - Only terminals in a pane raise one. Sub-agents (`parent` set) never do; their root agent
+    stands in for them. Raising one also brings the root agent's settled tab back.
+  - herdr-app also plays a sound when sounds are enabled in its settings (`app:src/window.rs`
+    `alert`). Eli has them off, and herdr-frontend leaves them out. Each app's toasts show only in
+    its own window, so running both at once doesn't duplicate anything on screen.
 - **Parents and children.** A terminal started from inside a terminal gets `parent`, which is set
   once. Children end with their parent unless `outlive_parent`. The core types notes about a
   child (turn ended, blocked, error, exit) into its parent agent as `<hc from="t7 name">…</hc>`
@@ -640,7 +643,7 @@ the client), but with typed messages and the fixes above.
 |---|---|---|
 | `herdr-proto` (pure, no I/O) | The frame codec: `Frame {channel, kind, payload}`, an incremental `Decoder` that is safe across split reads, `encode`. Kind constants. The JSON-RPC envelope. Typed params and results for the methods in §2.1, as serde structs with `#[serde(default)]` and `#[serde(flatten)] extra: Map<String, Value>` so unknown fields survive. `ErrorKind`, an enum with `Other(String)`. `Event`, a parsed notification, with a line splitter for event streams. `TerminalSet`: the snapshot plus the apply rules (§2.3), seq handling and `missed`. | `serde`, `serde_json` |
 | `herdr-client` (I/O) | `Connection`: a transport (an `hc connect` child, or a Unix socket), the handshake, `Hello`/`Capabilities`, a reader thread and a writer thread, call routing with ids, timeouts and `$/cancelRequest`, and stream routes with early-frame buffering. `AttachStream` and `EventStream` handles, which hold credit and close on drop. `Supervisor`: reconnect with backoff, a connection generation counter, and a `Lost` broadcast. `MachineWatcher`: polls `machine.list`. | `herdr-proto`, a channel crate with both blocking and async receive (`flume` or `async-channel`) |
-| `herdr-shared` (pure logic) | Herdr's shared conventions: the `herdr-app` `Document` model with **lossless** unknown-field and unknown-kind preservation; `Node` and tree operations; `qualify`/`local`; id generation. `Mirror`, one per machine: last version, in-flight round, pending intents, replay-on-conflict. Label keys and the `herdr.seen` rules (`SeenTracker`, with the per-batch maximum). The attention and alert rules. Adoption and closed-pane rules, so herdr-frontend can match them. | `herdr-proto` |
+| `herdr-shared` (pure logic) | Herdr's shared conventions: the `herdr-app` `Document` model with **lossless** unknown-field and unknown-kind preservation; `Node` and tree operations; `qualify`/`local`; id generation. `Mirror`, one per machine: last version, in-flight round, pending intents, replay-on-conflict. Label keys and the `herdr.seen` rules (`SeenTracker`, with the per-batch maximum). The attention rules (displayed status, rollup, and when to raise an in-app toast). Adoption and closed-pane rules, so herdr-frontend can match them. | `herdr-proto` |
 | app (Rune) | Window and views. The per-screen `View` (its own home, never herdr-app's). The terminal VT and renderer (libghostty-vt, ticket 003). The viewer policy (§4.2). | all three |
 
 Pure crates hold the risky rules (event application, document merge, seen and attention). Those
@@ -731,16 +734,12 @@ Other results:
 
 These need decisions in later tickets.
 
-1. **Duplicate alerts.** With both apps running, both play sounds and show toasts for the same
-   agent. Options: always alert; alert only while herdr-frontend's window is frontmost; or detect
-   herdr-app through its control socket (`~/.config/herdr-app/herdr-app.sock`) and stay quiet.
-   I'd recommend the frontmost-window rule.
-2. **The `where` label.** Leave it to herdr-app (version 1), or port `space_name` and `tab_name`
+1. **The `where` label.** Leave it to herdr-app (version 1), or port `space_name` and `tab_name`
    exactly, including the git checkout-top lookup.
-3. **Mod blocks** (`{mod, props}`) in shared documents can't run in herdr-frontend. They need a
+2. **Mod blocks** (`{mod, props}`) in shared documents can't run in herdr-frontend. They need a
    placeholder design. Closing one must be allowed, but it must never be rewritten.
-4. **Upstream fixes to herdr-app's sizing** (§4.3, items 1–4), so that using both side by side
+3. **Upstream fixes to herdr-app's sizing** (§4.3, items 1–4), so that using both side by side
    doesn't flip sizes. This is for the herdr-app maintainers to decide, not this repo.
-5. **`TERM_PROGRAM`.** Should herdr-frontend's terminals identify as `herdr`, as herdr-app's do,
+4. **`TERM_PROGRAM`.** Should herdr-frontend's terminals identify as `herdr`, as herdr-app's do,
    so programs behave the same whichever client started them? This depends on ticket 003's VT
    choice.
