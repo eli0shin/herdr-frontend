@@ -721,6 +721,61 @@ pub enum Intent { NewSpace{..}, NewTab{..}, Split{..}, ClosePane{..}, MoveSpace{
 - The supervisor owns reconnect. Every handle carries the connection generation, so results from
   an old connection are ignored, as herdr-app's `core_generation` guards do.
 
+### herdr-client as built
+
+`crates/herdr-client` follows the sketch and the threading above, with these specifics:
+
+- Channels are `std::sync::mpsc`, not `flume`: nothing in the client needs async receive.
+  `Pending<R>` is its own one-shot slot with `wait`, `wait_timeout`, `try_take` and `Future`.
+  The wake hook is `Wake = Arc<dyn Fn() + Send + Sync>`, the same type as `rune::Waker`. The
+  connection's hook fires when a call is answered, a stream has something new, or the
+  connection is lost. `attach_with` and `subscribe_with` give a stream its own hook, such as a
+  no-op for a worker thread that blocks on it.
+- `Transport::Hc(HcCommand)` runs `hc connect`. `HcCommand` carries the binary, `--session` and
+  any environment changes, and `command()` runs other `hc` commands under the same environment.
+  `find_hc` searches like `app:src/core_bin.rs`: the setting, `PATH`, the usual install places,
+  then the login shell's `PATH`. A binary counts only if `--version` prints `hc …`.
+  `Transport::Socket` dials the socket directly. `socket_path()` follows
+  `core:crates/herdr-core/src/paths.rs`: `HC_SOCKET`, then config `socket`, then the runtime dir,
+  then the state dir.
+- `Connection::open` writes the plain hello line before the writer thread starts. The reader
+  takes the one-line reply, then hands the bytes after it to the frame decoder. The check covers
+  `Hello::check` (generation, `MIN_CORE`, `USES`), `framed`, and the features in `NEEDS`
+  (`framed`, `attach`, `events`). If `hc connect` ends before replying, its stderr JSON becomes
+  `Error::Startup`.
+- Stream routes are registered by the reader thread itself, at the moment it reads the attach or
+  subscribe reply. A frame of the stream can't arrive before its route that way. Frames for a
+  channel with no route are still buffered (up to 8 MiB) and delivered when the route comes.
+- When a call times out (10 s by default; `call_timeout(_, None)` for `terminal.wait` and
+  `machine.exec`), the timer thread drops its route, sends `$/cancelRequest` and fails it with
+  `Error::Timeout`. If a timed-out attach or subscribe gets a reply anyway, that channel is
+  CLOSEd. Dropping an `AttachStream` or `EventStream` detaches it unless the core already ended
+  it. Frames on a detached channel are dropped until the core's CLOSE.
+- When the connection drops, every pending call fails with `Lost` (or `Closed` after
+  `Connection::close`), and every stream gets `StreamItem::Lost`.
+- `AttachStream` (and `StreamControl`, a clone-able sender for another thread) sends `input`
+  (DATA), `automatic` (AUTOMATIC_INPUT only when `StreamCaps` allows, else DATA), `resize`,
+  `focus`, `facts` and `credit`. Payloads too big for one frame are split. The owner credits
+  bytes after writing them into the VT. `EventStream` credits each frame once it parses it, and
+  `subscribe` grants an extra 1 MiB up front, as herdr-app does.
+- `Supervisor` runs one thread. It opens a connection with the next generation and subscribes
+  with no filter. It installs the snapshot as a new `TerminalSet` and posts
+  `Update::Connected`. Then it pumps events into the set, posting one `Update::Changed` per batch
+  of ready notifications. When the connection drops it posts `Update::Lost`. A failed attempt
+  posts `Update::Unavailable` and retries after a backoff of 250 ms doubling to 1 s. Reattaching
+  views with `resumed: true` and reading documents again on `Connected` are left to the app.
+  Stopping or dropping it returns promptly, so the UI thread can own it: a connect still in its
+  hello or subscribe wait is cancelled through a closer published before the handshake.
+- `MachineWatcher` polls `machine.list` every 2.5 s, and also at once whenever the supervisor
+  connects or terminals come or go. It posts only when the list changed. Stopping it doesn't
+  wait out a poll in flight. `MachineStatus` checks
+  each machine's last-seen version against `MIN_CORE`, plus `needs_update` (rule 10).
+- The integration tests (`crates/herdr-client/tests/isolated_core.rs`) start their own isolated
+  core per test: `HC_SESSION=test-hfc…`, scratch XDG dirs under `/tmp`, inherited `HC_*`
+  removed, and `hc server stop` afterwards. `hc` comes from `HERDR_TEST_HC`, else `find_hc`.
+  Without one the tests skip, except under CI, where CI installs the pinned, checksummed 0.1.22
+  release.
+
 ## Probe
 
 `/tmp/hfr001/probe/probe.py`, throwaway and not committed. It ran against an isolated core

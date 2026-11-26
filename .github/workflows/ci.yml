@@ -34,6 +34,25 @@ jobs:
         with:
           path: ~/Library/Caches/ghostty-vt-sys
           key: ghostty-vt-${{ hashFiles('crates/ghostty-vt-sys/build.rs') }}
+      - name: herdr-core
+        # The pinned hc that herdr-client's tests start isolated cores with (HERDR_TEST_HC). Taken
+        # straight from the release tarball, checksum-checked, never installed or started here.
+        # Checksums from https://releases.herdr.dev/core/0.1.22/manifest.json.
+        env:
+          HC_VERSION: 0.1.22
+        run: |
+          case "$(uname -m)" in
+            arm64) target=macos-aarch64 sha=90798daadefa8d126b90ef0bcdbe9c7dda9c6cfbf011a247065ab5da348f350e ;;
+            x86_64) target=macos-x86_64 sha=35144041969e870ddb4edcd2fd08fd26dfe5cee7d18e6b48adb276f90a48aa19 ;;
+            *) echo "no hc build for $(uname -m)" >&2; exit 1 ;;
+          esac
+          dir="$RUNNER_TEMP/herdr-core"
+          mkdir -p "$dir"
+          curl -fsSL "https://releases.herdr.dev/core/$HC_VERSION/herdr-core-$target.tar.gz" -o "$dir/hc.tar.gz"
+          echo "$sha  $dir/hc.tar.gz" | shasum -a 256 -c -
+          tar -xzf "$dir/hc.tar.gz" -C "$dir"
+          "$dir/herdr-core" --version
+          echo "HERDR_TEST_HC=$dir/herdr-core" >> "$GITHUB_ENV"
       - name: rune pins
         run: scripts/check-rune-pins
       - name: fmt
