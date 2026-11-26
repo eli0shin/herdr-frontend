@@ -136,10 +136,11 @@ link_handlers: [nvim-links]    toast: eli-toast    preview: layouts/eli.svg
 - [ ] **[Eli] No status bar row.** `navigator-status` sits at 0px height: only shown mods get
   commands, so it must be in the layout but draws nothing. Terminals reach the window's bottom
   (`cfg/mods/navigator-status/main.js:51-60`).
-- [ ] **[Eli] Hidden sidebar that lists agents only.** Spaces live in the Ctrl+G S picker. It is
+- [ ] **[Eli] Sidebar that lists agents only.** Spaces live in the Ctrl+G S picker. It is
   toggled with `cmd-b` / `ctrl-g b` (`layout.toggle:sidebar`). Its rows have no dividers. The
-  boundary to the work column can be dragged; below 160px the list draws a compact rail
-  (§6).
+  layout file hides it by default, but the saved clicks show it now at 366px
+  (`cfg/layouts/.state/eli.json`). The boundary to the work column can be dragged between 200
+  and 600px.
 - [ ] **[Eli] 38px rows with matching padding.** The sidebar's top row and the tab bar are both
   38px: 6px above the 29px tabs and 3px below, so the "Agents" label lines up with the tabs
   (`cfg/mods/eli-chrome/main.js:34-35`, `cfg/mods/eli-tabs/main.js:106-108`).
@@ -222,9 +223,12 @@ link_handlers: [nvim-links]    toast: eli-toast    preview: layouts/eli.svg
 - [ ] **[Eli] New space in a picked folder** (`cmd-n`, `ctrl-g ctrl-s`): see §11.
 - [ ] **[Eli] Space colors.** Each space gets a color from `ansi6, ansi3, ansi4, ansi5, ansi2,
   ansi1`: the one fewest spaces use, assigned once and stored in shared `space.colors` by space
-  id. Home (`~`) gets none. The Agents list shows the space name in that color lifted 28%
-  toward `#e8e8e8` (`cfg/mods/eli-agents/colors.js`). The algorithm is copied from the shipped
-  picker so they agree (`cfg/mods/picker/main.js:13-35`).
+  id. A picked `#rrggbb` is kept as is. Home (`~`) gets none. The algorithm is copied from the
+  shipped picker so they agree (`cfg/mods/picker/main.js:13-35`).
+  - The names map to fixed colors, not the theme's ANSI palette: ansi6 `#22a99a`, ansi3
+    `#e3814f`, ansi4 `#5b8def`, ansi5 `#8b7cf6`, ansi2 `#3fae6a`, ansi1 `#d9649a`. The picker
+    draws avatars in these. The Agents list shows the space name in that color lifted 28% toward
+    `#e8e8e8` (`cfg/mods/eli-agents/colors.js:9, 28-33`).
 - [ ] **[Eli] Close spaces whose folder was deleted** (`cfg/mods/navigator-status/dead-spaces.js`).
   - Why: `gh pr merge --delete-branch`, `git worktree remove` and `rm -rf` remove a worktree
     without telling Herdr.
@@ -352,8 +356,7 @@ The main way to reach agents. Agents are terminals that report OSC 7501 status: 
 - [ ] **[Eli] Sidebar header row** (`eli-chrome`). It shows "Agents" (11.5px, dim), the machine
   filter button (a monitor icon; "N hidden" in the working blue while any machines are hidden;
   a tooltip names Ctrl+G /) and the sort button (clock icon = priority, layers icon = grouped).
-  There is no brand, search or sidebar button. In the narrow rail it is empty
-  (`cfg/mods/eli-chrome/main.js`).
+  There is no brand, search or sidebar button (`cfg/mods/eli-chrome/main.js`).
 - [ ] **[Eli] Sort menu.** A popup with "Priority" and "Grouped by space" and a check on the
   current one. It sets shared `agents.sort` (default priority). It is `eli-agents` opened as a
   popup with `props.sortMenu` (`cfg/mods/eli-agents/main.js:165-189`).
@@ -411,7 +414,7 @@ The main way to reach agents. Agents are terminals that report OSC 7501 status: 
   - The `dotfiles.pi_pr_watch` label is trusted only while the terminal runs Pi.
   - Workers whose orchestrator is listed nest under it with tree lines and leave out the space.
   - An orchestrator's workers show only while it or one of its workers is focused (no fold
-    button); the rail shows all.
+    button).
   - A worker whose orchestrator isn't listed is an ordinary row.
   - The orchestrator's PR chip covers every PR it watches, even ones a worker also shows.
 - [ ] **[Eli] Jump labels on every row.** Rows read 1–9 and 0, then home-row letters
@@ -424,15 +427,17 @@ The main way to reach agents. Agents are terminals that report OSC 7501 status: 
     sort, focused agent and each agent's address, status and pin, so readers know when it's
     stale.
   - `navigator-status`, `agent-jump` and `pr-finder` read it (`main.js:282-291`).
+- [ ] **[Shipped, unused] Narrow rail** (sidebar under 160px, decided by width, not a flag).
+  Inherited from the stock Agents list, but unreachable in eli: the sidebar's `min` is 200, a
+  divider drag clamps to `min` (`app/src/window.rs` `drag_to`), and no key or palette entry runs
+  `layout.resize`. If reached, rows are 26px with the label and status only, workers show flat,
+  sub-agents are left out, and a "»" button restores shared `sidebar.width` (default 268); the
+  rail is 76px on macOS, 44px elsewhere (`cfg/mods/eli-agents/main.js:25-35, 305, 392-404,
+  522-537`).
 - [ ] **[Eli] Machine filter applied.** Agents on hidden machines leave the list, its numbers,
   agent-jump, Ctrl+G Shift+N and tab-close focus. They are still tracked, so their times hold.
   `agent.next/prev` still reach them, because the app appends unlisted agents (`cfg/README.md`
   "Filtering agents by machine").
-- [ ] **[Eli] Narrow rail** (sidebar under 160px, decided by width, not a flag).
-  - Rows are 26px with the label and status only; click focuses. A "»" button at the bottom
-    restores the width saved in shared `sidebar.width` (default 268).
-  - The rail collapses to 76px on macOS, 44px elsewhere. Workers and sub-agents show flat
-    (`main.js:25-35, 392-404, 522-537`).
 - [ ] **[Eli] Empty states.** "No agent status yet. Agents show up here when they report their
   status…", or "Every agent is on a hidden machine. Ctrl+G, / chooses which machines show."
 - [ ] **[Eli] Click a row** to focus its pane (`pane.focus {pane}`).
@@ -446,7 +451,11 @@ The main way to reach agents. Agents are terminals that report OSC 7501 status: 
   (`agent.next/prev`) in the list's published order, including agents the list leaves out.
 - [ ] **[Eli] Numbered agents.** `ctrl-g shift-1…9` and `shift-0` (also bound as `! @ # $ % ^ & *
   ( )`) run `navigator-status.agent-N` and focus the Nth row (`agent.focus`).
-  - The app has no "agent N" command.
+  - Why not the app's `agent.select {index}`: it counts the `setAgentOrder` order, which holds
+    every orchestrator's workers even while folded and then appends agents on hidden machines.
+    The row labels follow only the rows shown (`cfg/mods/eli-agents/main.js:287-289`). Mods
+    can set that order but not read it back (`cfg/herdr.d.ts` `setAgentOrder`), so the list
+    publishes its shown rows in shared state instead.
   - If the published order is stale (for example the sidebar hasn't been shown since launch, so
     its mod never ran), `agent-order.js` mirrors the sort: pinned first, then priority with
     parent rank, ties by `seq`, or grouped order. That fallback ignores the done hold and doesn't
@@ -694,7 +703,7 @@ The main way to reach agents. Agents are terminals that report OSC 7501 status: 
     - `select` doesn't scroll the view, so it steps away and back to make the view follow.
     - `^`/`$` select the row as a line for a moment and read where Ghostty's trimmed line
       selection starts and ends. Keys pressed meanwhile queue.
-- **Current limits** (`cfg/README.md` Copy mode, `.scratch/herdr-app-parity/spec.md`):
+- **Current limits** (`cfg/README.md` Copy mode, `dot/.scratch/herdr-app-parity/spec.md`):
   - No word motions (w/b/e).
   - No search (/ ? n N): the mod API exposes no terminal text.
   - `^`/`$` need the select-line trick, and a blank row selects nothing.
@@ -750,10 +759,11 @@ The main way to reach agents. Agents are terminals that report OSC 7501 status: 
     shows a toast and stops the click.
 - [ ] **[Shipped, used] Kitty graphics, OSC 52 clipboard writes (≤1 MiB, reads never),
   `minimum_contrast` and file drag-and-drop into terminals** (remote: copied there) (`cfg/AGENTS.md`).
-- [ ] **[Shipped, used] Select all** (`terminal.select_all`). The docs give Cmd+A as the macOS
-  default, but Eli's edited `keys.json` doesn't bind it, and an edited keys file keeps no new
-  defaults (`cfg/AGENTS.md` Keys). Check live whether Cmd+A works before treating it as
-  required.
+- [ ] **[Shipped, used] Select all** (`terminal.select_all`), from the palette only. The docs give
+  Cmd+A as the macOS default, but Eli's edited `keys.json` doesn't bind it, an edited keys file
+  keeps no new defaults (`cfg/AGENTS.md` Keys), and the terminal menu doesn't offer it. The
+  palette lists it because it isn't in the palette's hidden set
+  (`cfg/frame/palette/main.js` `HIDDEN`).
 
 ## 18. Session continuity and naming (hooks outside the app)
 
@@ -804,7 +814,8 @@ They define no parity requirement unless Eli asks for them.
 | `new-menu` | New terminal / agent / worktree menu | No "+" button; Cmd+T and Ctrl+G T make a tab |
 | `worktree` | New/Open/Remove worktree dialog | `repos` does worktrees |
 | `files`, `changes` | Side panels | In the layout but unreachable on purpose (§14) |
-| `pane`, `terminals-pane` | Pane headers | The eli layout has no pane headers |
+| `pane`, `terminals-pane` | Pane headers | The eli layout has no pane headers. `eli-tabs` still loads its close icon from `mods/pane/close.svg` |
+| `tabs` icons | `mods/tabs/win-*.svg` | Used by `eli-tabs` for Windows window buttons (`eli-tabs/main.js:120-122`) |
 | `terminals-bar`, layout `terminals` | Title-bar tabs with a space picker | Other layout |
 | `win98`, layout `win98` | Windows 98 desktop | Other layout |
 | layout `main` | Default layout | `eli` is the clone in use |
@@ -828,8 +839,10 @@ client.
    exists to receive commands (`navigator-status/main.js:51-54`). A hidden sidebar's mod isn't
    running until first shown, so the published agent order can be stale and `agent-order.js`
    re-implements the sort as a fallback that can disagree (§7).
-4. **No "focus agent N" command and no shared agent order.** The order is passed through shared
-   state with an `inputs` signature for staleness, read by three mods (§6).
+4. **The navigation order can be set but not read, and has one shape.** `agent.select {index}`
+   counts the full `setAgentOrder` list (folded workers, then agents on hidden machines), which
+   isn't the shown rows. So the list publishes its own order through shared state with an
+   `inputs` signature for staleness, and three mods read it (§6, §7).
 5. **Tab commands don't know about hidden tabs.** `tab.select {index}`, `tab.next/prev` and
    tab-close focus count agents' tabs, so `navigator-status` re-implements numbered tabs,
    stepping and close-focus, and the tab bar, space picker and tab keys each keep their own copy
@@ -867,11 +880,15 @@ client.
     tab means another copy of the hidden-tab rule (§13).
 20. **Help can't describe mod commands or in-popup keys** (§10). Eli's real keymap lives in his
     README.
-21. **The sidebar "rail" is width-based**, and mods also write a legacy `sidebar.collapsed` flag
-    for older mods (`eli-agents/main.js:25-35`).
+21. **The cloned Agents list carries dead rail code.** The shipped list's narrow rail is
+    width-based and writes a legacy `sidebar.collapsed` flag for older mods, but eli's
+    `min: 200` sidebar never gets narrow enough to use it (`eli-agents/main.js:25-35`, §6).
+    Cloning a shipped mod brings along behavior the layout can't reach.
 22. **Not migrated from the TUI:** edit scrollback (Ctrl+G E), the annotation/document-review
     plugin keys (Ctrl+G A, Shift+A, Ctrl+A, M, O, Shift+O) and the pane navigation-mode
-    H/J/K/L (`cfg/README.md` "Not migrated").
+    H/J/K/L (`cfg/README.md` "Not migrated"). Ctrl+G O has since been taken by the jump list
+    (`keys.json` `layout:eli`), so restoring the annotation keys would need a new key for one of
+    them.
 
 ## 22. Keybinding table
 
@@ -973,7 +990,6 @@ keys are GPUI sequences: press Ctrl+G, release, then the key.
 | Sub-agent row | Click | Peek |
 | Agent icon / fold chevron | Click | Fold sub-agents |
 | Section header | Click | Fold section |
-| Rail `»` | Click | Expand sidebar |
 | Header machine / sort buttons | Click | Machine filter / sort menu |
 | Terminal | Cmd-click path / URL / address | nvim-links or opener / open URL / peek |
 | Terminal | Right-click, Shift+right-click | Terminal menu (or program) |
