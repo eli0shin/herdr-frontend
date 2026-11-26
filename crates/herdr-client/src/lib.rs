@@ -21,6 +21,8 @@ mod machines;
 mod pending;
 mod stream;
 mod supervisor;
+#[cfg(all(test, unix))]
+mod test_core;
 mod transport;
 
 pub use connection::{CALL_TIMEOUT, ConnectOptions, Connection, EVENTS_EXTRA_CREDIT, NEEDS, USES};

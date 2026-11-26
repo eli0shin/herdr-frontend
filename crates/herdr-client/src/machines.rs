@@ -12,9 +12,9 @@ use herdr_proto::methods::MachineList;
 use herdr_proto::types::{MachineState, MachineView};
 use herdr_proto::{MIN_CORE, Mismatch, Version};
 
-use crate::Wake;
 use crate::error::Error;
 use crate::supervisor::{Poke, SupervisorHandle};
+use crate::{Pending, Wake};
 
 /// How often herdr-app polls `machine.list`.
 pub const POLL_EVERY: Duration = Duration::from_millis(2500);
@@ -177,7 +177,10 @@ fn run(
             continue;
         };
         let generation = connection.generation();
-        let update = match connection.call(MachineList::default()).wait() {
+        let Some(answer) = answer(shared, connection.call(MachineList::default())) else {
+            return;
+        };
+        let update = match answer {
             Ok(list) => {
                 let machines = Machines {
                     generation,
@@ -202,6 +205,22 @@ fn run(
     }
 }
 
+/// How often a poll in flight checks whether the watcher is stopping.
+const STOP_TICK: Duration = Duration::from_millis(50);
+
+/// Waits for a call's answer; `None` if the watcher stopped meanwhile, so stopping never waits
+/// out a call's timeout.
+fn answer<R>(shared: &Shared, mut pending: Pending<R>) -> Option<Result<R, Error>> {
+    loop {
+        if let Some(answer) = pending.wait_timeout(STOP_TICK) {
+            return Some(answer);
+        }
+        if lock(&shared.state).stop {
+            return None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,6 +237,43 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_does_not_wait_out_a_poll_in_flight() {
+        use crate::{Supervisor, SupervisorOptions, Update, no_wake};
+        let core = crate::test_core::FakeCore::serve(|mut peer| {
+            peer.answer_hello();
+            let Some(subscribe) = peer.message() else {
+                return;
+            };
+            peer.reply(
+                &subscribe["id"],
+                serde_json::json!({"seq": 0, "terminals": [], "channel": 1}),
+            );
+            // machine.list never gets an answer.
+            peer.ignore();
+        });
+        let supervisor = Supervisor::start(SupervisorOptions::new(core.transport()), no_wake());
+        assert!(matches!(
+            supervisor.recv_timeout(Duration::from_secs(5)),
+            Some(Update::Connected { .. })
+        ));
+        let watcher = MachineWatcher::start(supervisor.handle(), POLL_EVERY, no_wake());
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            watcher.try_recv().is_none(),
+            "the poll should still be waiting"
+        );
+        let start = std::time::Instant::now();
+        watcher.stop();
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            start.elapsed()
+        );
+        supervisor.stop();
     }
 
     #[test]

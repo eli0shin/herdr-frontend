@@ -764,8 +764,11 @@ pub enum Intent { NewSpace{..}, NewTab{..}, Split{..}, ClosePane{..}, MoveSpace{
   of ready notifications. When the connection drops it posts `Update::Lost`. A failed attempt
   posts `Update::Unavailable` and retries after a backoff of 250 ms doubling to 1 s. Reattaching
   views with `resumed: true` and reading documents again on `Connected` are left to the app.
+  Stopping or dropping it returns promptly, so the UI thread can own it: a connect still in its
+  hello or subscribe wait is cancelled through a closer published before the handshake.
 - `MachineWatcher` polls `machine.list` every 2.5 s, and also at once whenever the supervisor
-  connects or terminals come or go. It posts only when the list changed. `MachineStatus` checks
+  connects or terminals come or go. It posts only when the list changed. Stopping it doesn't
+  wait out a poll in flight. `MachineStatus` checks
   each machine's last-seen version against `MIN_CORE`, plus `needs_update` (rule 10).
 - The integration tests (`crates/herdr-client/tests/isolated_core.rs`) start their own isolated
   core per test: `HC_SESSION=test-hfc…`, scratch XDG dirs under `/tmp`, inherited `HC_*`

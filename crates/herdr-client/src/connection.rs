@@ -190,10 +190,25 @@ impl Connection {
     /// `options` (rule 10). Blocks until the core answers or `options.handshake_timeout` passes,
     /// so never call it on the UI thread.
     pub fn open(transport: &Transport, options: &ConnectOptions) -> Result<Connection, Error> {
-        Connection::open_with(transport.open()?, options)
+        Connection::open_with(transport.open()?, options, &|_| true)
     }
 
-    pub(crate) fn open_with(opened: Opened, options: &ConnectOptions) -> Result<Connection, Error> {
+    /// `open`, handing `opening` a [`Canceller`] before the handshake starts, so another thread
+    /// can end a connect that is stuck waiting for `hello`. If `opening` returns false, the
+    /// connect is abandoned at once with `Closed`.
+    pub(crate) fn open_cancellable(
+        transport: &Transport,
+        options: &ConnectOptions,
+        opening: &dyn Fn(Canceller) -> bool,
+    ) -> Result<Connection, Error> {
+        Connection::open_with(transport.open()?, options, opening)
+    }
+
+    pub(crate) fn open_with(
+        opened: Opened,
+        options: &ConnectOptions,
+        opening: &dyn Fn(Canceller) -> bool,
+    ) -> Result<Connection, Error> {
         let Opened {
             read,
             mut write,
@@ -222,6 +237,11 @@ impl Connection {
                 inner: inner.clone(),
             }),
         };
+
+        if !opening(Canceller(inner.clone())) {
+            inner.shutdown();
+            return Err(Error::Closed);
+        }
 
         // Plain mode until the hello reply: the request goes out before the writer starts.
         if let Err(e) = write.write_all(&hello_line()).and_then(|()| write.flush()) {
@@ -403,6 +423,17 @@ impl Connection {
                 }));
             });
         pending
+    }
+}
+
+/// Ends a connection from another thread, including one still in its handshake: whatever waits
+/// on it (the hello, a call) fails with `Closed`.
+#[derive(Clone)]
+pub(crate) struct Canceller(Arc<Inner>);
+
+impl Canceller {
+    pub(crate) fn cancel(&self) {
+        self.0.shutdown();
     }
 }
 
@@ -717,6 +748,7 @@ fn read_frames(
         }
         Err(e) => {
             let e = match e {
+                _ if inner.closing.load(Ordering::SeqCst) => Error::Closed,
                 Error::Lost => inner.startup_error().unwrap_or(Error::Lost),
                 e => e,
             };
@@ -876,7 +908,8 @@ mod tests {
     /// Opens a connection to a fake core that answers hello with `reply` (a whole message).
     fn open_fake(reply: Value, options: ConnectOptions) -> (Result<Connection, Error>, FakeCore) {
         let (opened, mut core) = fake_transport();
-        let opening = std::thread::spawn(move || Connection::open_with(opened, &options));
+        let opening =
+            std::thread::spawn(move || Connection::open_with(opened, &options, &|_| true));
         let hello = core.hello_line();
         assert_eq!(
             hello,
@@ -1015,8 +1048,9 @@ mod tests {
     #[test]
     fn a_core_that_closes_before_hello_is_lost() {
         let (opened, mut core) = fake_transport();
-        let opening =
-            std::thread::spawn(move || Connection::open_with(opened, &ConnectOptions::default()));
+        let opening = std::thread::spawn(move || {
+            Connection::open_with(opened, &ConnectOptions::default(), &|_| true)
+        });
         core.hello_line();
         core.hang_up();
         assert!(matches!(opening.join().unwrap(), Err(Error::Lost)));
@@ -1027,8 +1061,9 @@ mod tests {
         let (mut opened, mut core) = fake_transport();
         let (err_read, mut err_write) = std::io::pipe().unwrap();
         opened.stderr = Some(StderrLog::capture(err_read).unwrap());
-        let opening =
-            std::thread::spawn(move || Connection::open_with(opened, &ConnectOptions::default()));
+        let opening = std::thread::spawn(move || {
+            Connection::open_with(opened, &ConnectOptions::default(), &|_| true)
+        });
         core.hello_line();
         err_write
             .write_all(br#"{"error":{"kind":"config","message":"bad config","hint":"fix it"}}"#)

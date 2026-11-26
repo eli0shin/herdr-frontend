@@ -13,7 +13,7 @@ use std::time::Duration;
 use herdr_proto::methods::EventsSubscribe;
 use herdr_proto::{Changes, Hello, TerminalSet};
 
-use crate::connection::{ConnectOptions, Connection};
+use crate::connection::{Canceller, ConnectOptions, Connection};
 use crate::error::Error;
 use crate::stream::{EventItem, EventStream};
 use crate::transport::Transport;
@@ -110,6 +110,9 @@ struct State {
     stop: bool,
     generation: u64,
     connection: Option<Connection>,
+    /// The connection being opened, until it is subscribed: stopping ends its handshake or
+    /// subscribe wait at once instead of waiting out their timeouts.
+    opening: Option<Canceller>,
     terminals: TerminalSet,
 }
 
@@ -179,12 +182,15 @@ impl Supervisor {
     }
 
     fn shutdown(&mut self) {
-        let connection = {
+        let (connection, opening) = {
             let mut state = lock(&self.shared.state);
             state.stop = true;
-            state.connection.take()
+            (state.connection.take(), state.opening.take())
         };
         self.shared.changed.notify_all();
+        if let Some(opening) = opening {
+            opening.cancel();
+        }
         if let Some(connection) = connection {
             connection.close();
         }
@@ -305,12 +311,24 @@ fn connect(
         wake: shared.wake.clone(),
         ..options.connect.clone()
     };
-    let connection = Connection::open(&options.transport, &connect)?;
-    let (snapshot, events) = connection
-        .subscribe_with(EventsSubscribe::default(), no_wake())
-        .wait()
-        .inspect_err(|_| connection.close())?;
+    // Either this sees `stop`, or `shutdown` sees the canceller: a connect never outlives a stop.
+    let opening = |canceller: Canceller| {
+        let mut state = lock(&shared.state);
+        state.opening = Some(canceller);
+        !state.stop
+    };
+    let subscribed = Connection::open_cancellable(&options.transport, &connect, &opening).and_then(
+        |connection| {
+            connection
+                .subscribe_with(EventsSubscribe::default(), no_wake())
+                .wait()
+                .map(|subscribed| (connection.clone(), subscribed))
+                .inspect_err(|_| connection.close())
+        },
+    );
     let mut state = lock(&shared.state);
+    state.opening = None;
+    let (connection, (snapshot, events)) = subscribed?;
     if state.stop {
         drop(state);
         connection.close();
@@ -386,6 +404,49 @@ mod tests {
         let delays: Vec<_> = (0..5).map(|n| backoff.delay(n).as_millis()).collect();
         assert_eq!(delays, [250, 500, 1000, 1000, 1000]);
         assert_eq!(backoff.delay(u32::MAX), Duration::from_secs(1));
+    }
+
+    /// How long a stop may take: far below the 30 s handshake and 10 s call timeouts it must not
+    /// wait out.
+    const PROMPT: Duration = Duration::from_secs(2);
+
+    fn timed(f: impl FnOnce()) -> Duration {
+        let start = std::time::Instant::now();
+        f();
+        start.elapsed()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_ends_a_connect_stuck_in_its_handshake() {
+        let core = crate::test_core::FakeCore::serve(|peer| peer.hold());
+        let supervisor = Supervisor::start(SupervisorOptions::new(core.transport()), no_wake());
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            supervisor.try_recv().is_none(),
+            "the handshake should still be waiting"
+        );
+        let took = timed(|| supervisor.stop());
+        assert!(took < PROMPT, "stop took {took:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_ends_a_connect_stuck_in_its_subscribe() {
+        let core = crate::test_core::FakeCore::serve(|mut peer| {
+            if peer.answer_hello().is_some() {
+                peer.ignore();
+            }
+        });
+        let supervisor = Supervisor::start(SupervisorOptions::new(core.transport()), no_wake());
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            supervisor.try_recv().is_none(),
+            "the subscribe should still be waiting"
+        );
+        assert!(supervisor.connection().is_none());
+        let took = timed(|| drop(supervisor));
+        assert!(took < PROMPT, "drop took {took:?}");
     }
 
     #[test]
