@@ -1,9 +1,16 @@
 [package]
 name = "terminal"
-description = "libghostty-vt wrapper: per-terminal worker, snapshots, input"
+description = "libghostty-vt wrapper: per-terminal worker, snapshots, input, cell metrics"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Reads the font tables for the cell metrics. The version Rune's text stack already uses.
+skrifa = "0.44.0"
+
+# The CoreText cross-check in tests/coretext.rs: the same calls Ghostty's macOS face makes.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFData", "CFArray", "CFCGTypes"] }
+objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFont", "CTFontDescriptor", "CTFontManager", "objc2-core-graphics"] }

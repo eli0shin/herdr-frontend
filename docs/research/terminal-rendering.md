@@ -437,6 +437,25 @@ max advance of 550. Ghostty's CoreText face is sized at the unrounded `points ×
 - 1x: 10.285 × 22.44 rounds to a **10 × 22** px cell.
 - 2x (Retina): 20.57 × 44.88 rounds to a **21 × 45** px cell.
 
+**Implemented** in `crates/terminal` (ticket 010): `face.rs` (`FaceMetrics::from_data`, the
+`getMetrics` port), `metrics.rs` (`Metrics::calc`, `Modifiers`), and `size.rs` (the §4 grid,
+`window-padding-*` and `Size::report`). skrifa reads the tables, and `hmtx` and the outlines give
+the advances and bounds. `tests/coretext.rs` makes Ghostty's CoreText calls on the same fonts:
+JetBrains and Geist Mono, Operator Mono when present, and the system monospace fonts. It finds:
+
+- The pixel size, the ASCII bounding box and the advances match exactly. The one exception is a
+  variable font's advance: CoreText reports Geist Mono's 600 units as 600 × (1 − 2⁻¹⁶). That's
+  nowhere near enough to move a rounded cell.
+- When `OS/2` has no cap or ex height (Courier, Andale Mono), CoreText doesn't measure `H` or `x`.
+  It takes the floored mean of the tops of `H` and `O` (or `x` and `o`), in font units. That's
+  undocumented, but it matches every such font on macOS 27 that has those letters (35 of 49). The
+  port does the same.
+
+`tests/golden.rs` pins the full cell (size, baseline, underline, strikethrough, box, cursor) for
+Operator Mono, JetBrains Mono, Geist Mono and Menlo at several sizes, at 1x, 1.5x and 2x.
+`adjust-*` modifiers apply in field order. Ghostty applies them in its hash map's order, which
+matters only when `adjust-cell-height` is combined with a percent modifier on a position.
+
 ### Sprite glyphs
 
 Ghostty doesn't take these from fonts. It draws them procedurally at the exact cell size with z2d
