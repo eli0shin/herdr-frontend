@@ -321,6 +321,22 @@ Rune runs its UI on one thread with no render thread today (`rune:ARCHITECTURE.m
 frame model"). So VT parsing must stay on our own worker thread, and the two-phase update keeps
 the shared lock short.
 
+`crates/terminal` implements the worker side, with one change: there is no shared terminal lock.
+The worker thread owns the terminal and its render state and does the update itself. It copies
+the frame into an immutable `Snapshot` (rows are `Arc`s, the same `Arc` while a row stays clean,
+keyed by row id), and hands it over in a one-slot handoff:
+
+- it publishes only once the UI has taken the previous snapshot, then calls the app's waker.
+  Output that arrives in between folds into the next snapshot, so at most one frame waits.
+- replies (`WRITE_PTY`), encoded keys, mouse and pastes, and effects go out on one ordered
+  channel as `Output::Reply` (send as AUTOMATIC_INPUT), `Output::Input` (DATA) and
+  `Output::Event`. Replies leave as soon as their bytes are parsed, without waiting for a frame.
+- keys, mouse and pastes are encoded on the worker, against the modes as they are when the
+  worker reaches them, in order with the output before them.
+
+The UI thread never touches libghostty. It takes at most one snapshot per frame and builds
+`GridRow`s from it.
+
 ### Dirty tracking and damage
 
 - Use libghostty's two layers: global `DIRTY_FALSE/PARTIAL/FULL`, and row `DIRTY`. Iterate with
