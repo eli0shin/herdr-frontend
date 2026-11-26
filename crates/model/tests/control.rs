@@ -520,6 +520,11 @@ fn closing_a_space_needs_confirmed_then_ends_its_terminals() {
         m.ls()["recent"],
         json!([{"name": "work", "folder": "/home/me/code/x"}])
     );
+    // Opened again by name, it is no longer a recently closed space; another name leaves it.
+    call(&mut m, &mut core, "space.new", json!({"name": "other"}));
+    assert_eq!(m.ls()["recent"].as_array().unwrap().len(), 1);
+    call(&mut m, &mut core, "space.new", json!({"name": "work"}));
+    assert_eq!(m.ls()["recent"], json!([]));
 }
 
 #[test]

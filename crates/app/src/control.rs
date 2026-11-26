@@ -35,13 +35,18 @@ pub const SUBCOMMANDS: [&str; 4] = ["ls", "do", "status", "commands"];
 const USAGE: &str = "usage: herdr-frontend ls | herdr-frontend commands | herdr-frontend status | \
                      herdr-frontend do <command> [--arg value ... | json]";
 
-/// herdr-frontend's home: `$HERDR_FRONTEND_HOME`, else `~/.config/herdr-frontend`.
+/// herdr-frontend's home: `$HERDR_FRONTEND_HOME`, else `$XDG_CONFIG_HOME/herdr-frontend`, else
+/// `~/.config/herdr-frontend`, as herdr-app finds its own (`app:src/mods.rs` `app_dir`). Empty
+/// variables count as unset.
 pub fn home() -> PathBuf {
-    if let Some(home) = std::env::var_os(HOME_VAR).filter(|h| !h.is_empty()) {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    if let Some(home) = var(HOME_VAR) {
         return PathBuf::from(home);
     }
-    let user = std::env::var_os("HOME").unwrap_or_default();
-    PathBuf::from(user).join(".config").join("herdr-frontend")
+    var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(var("HOME").unwrap_or_default()).join(".config"))
+        .join("herdr-frontend")
 }
 
 /// The window's control socket.

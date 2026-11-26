@@ -22,8 +22,10 @@ Code: `crates/app/src/control.rs` (socket and client) and `crates/model/src/cont
 
 ## Transport
 
-- **Home:** `$HERDR_FRONTEND_HOME`, else `~/.config/herdr-frontend` (herdr-app's is
-  `$HERDR_APP_HOME`, else `~/.config/herdr-app`).
+- **Home:** `$HERDR_FRONTEND_HOME`, else `$XDG_CONFIG_HOME/herdr-frontend`, else
+  `~/.config/herdr-frontend`; empty variables count as unset. herdr-app finds its own the same way
+  (`$HERDR_APP_HOME`, `$XDG_CONFIG_HOME/herdr-app`, `~/.config/herdr-app`; `src/mods.rs`
+  `app_dir`), and the window uses the same rule, so it and the CLI agree on the socket.
 - **Socket:** `<home>/herdr-frontend.sock`. The window serves it. One window serves a home: a
   second one finds the live socket and doesn't take it. A socket that nobody answers on is left
   from a window that died, and the next window replaces it. A window removes its socket when it
@@ -142,7 +144,7 @@ Success is `{"ok": true}` unless a command below says otherwise.
 
 | Command | Arguments | What it does |
 | --- | --- | --- |
-| `space.new` | `name?`, `folder?`, `tab?`, `machine?`, `focus?` (`argv`, `task` refused) | Starts a terminal labeled for a new space, then puts the space in the layout and answers `{"space", "tab", "terminal"}`. `folder` defaults to the focused terminal's when it's on that machine, else home (another machine's home there). `machine` defaults to this computer, and `""` also means this computer. An unknown machine fails. `focus: false` keeps the shown space and tab; with no space shown, the new one shows. A `focus` that isn't a boolean fails. |
+| `space.new` | `name?`, `folder?`, `tab?`, `machine?`, `focus?` (`argv`, `task` refused) | Starts a terminal labeled for a new space, then puts the space in the layout and answers `{"space", "tab", "terminal"}`. Its name leaves `ls`'s `recent`. `folder` defaults to the focused terminal's when it's on that machine, else home (another machine's home there). `machine` defaults to this computer, and `""` also means this computer. An unknown machine fails. `focus: false` keeps the shown space and tab; with no space shown, the new one shows. A `focus` that isn't a boolean fails. |
 | `space.select` | `id?` or `index?` (1 = first) | Shows the space. A missing one fails: `no such space`. |
 | `space.rename` | `id?` (default: shown), `name` | Writes the trimmed name. `""` goes back to the automatic name. |
 | `space.close` | `id?` (default: shown), `confirmed` | Without `confirmed: true` it fails: `space.close ends its terminals: pass confirmed: true`. With it, removes the space and ends its terminals. |

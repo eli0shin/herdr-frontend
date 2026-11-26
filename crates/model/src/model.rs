@@ -846,7 +846,7 @@ impl Model {
             } => {
                 let intent = Intent::NewSpace {
                     space: space.clone(),
-                    name,
+                    name: name.clone(),
                     folder,
                     tab: tab.clone(),
                     tab_name,
@@ -855,6 +855,9 @@ impl Model {
                 };
                 let placed = self.edit(intent, fx);
                 if placed {
+                    // Open again, it is no longer a recently closed space (`app:src/model.rs`
+                    // `insert_space`).
+                    self.view.recent.retain(|r| r.name != name);
                     // Unfocused, it waits behind the shown space (or shows, with none shown).
                     if focus {
                         self.view.select_tab(&self.world, &tab);

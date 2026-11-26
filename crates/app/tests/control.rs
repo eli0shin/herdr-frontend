@@ -104,12 +104,24 @@ impl Window {
     }
 }
 
-fn run_in(home: &Home, args: &[&str], mut pump: impl FnMut()) -> Output {
+fn run_in(home: &Home, args: &[&str], pump: impl FnMut()) -> Output {
+    run_env(&[(HOME_VAR, Some(&home.0))], args, pump)
+}
+
+/// Runs `herdr-frontend <args>` with these variables set (`None`: unset), pumping until it
+/// exits.
+fn run_env(vars: &[(&str, Option<&Path>)], args: &[&str], mut pump: impl FnMut()) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_herdr-frontend"));
+    for (name, value) in vars {
+        match value {
+            Some(value) => command.env(name, value),
+            None => command.env_remove(name),
+        };
+    }
     let mut child = {
         let _fds = fds();
-        Command::new(env!("CARGO_BIN_EXE_herdr-frontend"))
+        command
             .args(args)
-            .env(HOME_VAR, &home.0)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -315,4 +327,38 @@ fn a_request_wakes_the_window_and_a_late_answer_times_out_politely() {
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert_eq!(json_of(&out), json!({"error": "the window did not answer"}));
     assert_eq!(woken.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[test]
+fn the_cli_finds_the_home_as_herdr_app_does() {
+    let scratch = Home::new("xdg");
+    let xdg = scratch.0.join("xdg");
+    let user = scratch.0.join("user");
+    // `$HERDR_FRONTEND_HOME` (empty: unset), then `$XDG_CONFIG_HOME/herdr-frontend`, then
+    // `~/.config/herdr-frontend`.
+    let empty = Path::new("");
+    for (vars, home) in [
+        (
+            vec![
+                (HOME_VAR, Some(empty)),
+                ("XDG_CONFIG_HOME", Some(xdg.as_path())),
+            ],
+            xdg.join("herdr-frontend"),
+        ),
+        (
+            vec![
+                (HOME_VAR, None),
+                ("XDG_CONFIG_HOME", Some(empty)),
+                ("HOME", Some(user.as_path())),
+            ],
+            user.join(".config/herdr-frontend"),
+        ),
+    ] {
+        // Inside the scratch home, so it goes with it; the window closes first.
+        let home = Home(home);
+        let mut window = Window::open(&home);
+        let out = run_env(&vars, &["ls"], || window.pump());
+        assert_eq!(out.status.code(), Some(0), "{vars:?}: {out:?}");
+        assert_eq!(json_of(&out), window.model.ls());
+    }
 }
