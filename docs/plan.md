@@ -27,10 +27,12 @@ Scope rules are in `AGENTS.md`.
   `settings`, and the theme. Eli's Herdr mods are specs, not code to port. There is no mod
   runtime.
 - **No OS notifications and no sounds.** Attention shows up in-app only.
+- **Window like Eli's Ghostty** (`window-decoration = false`): borderless, square corners, no
+  frame, no traffic lights, no title bar.
 - **The CLI surface Eli's tools drive** (`herdr-app ls | do | status` from repos, spawn-worker,
   agent-status, Pi and dot): herdr-frontend serves a compatible `ls | do | status` through its
-  own binary. Pointing those tools at whichever app is running is a dotfiles change, outside
-  this repo.
+  own binary. After parity, a frontend selection config makes those tools drive whichever app
+  it names, switchable back with one edit (ticket 035).
 
 ## Workspace layout
 
@@ -63,8 +65,11 @@ The tracker holds the dependency graph. These are the stages:
    - tabs, panes, the agents sidebar, agent navigation, toasts, pickers and palette;
    - the new-space flow, the PR finder, machines, review and peek;
    - theme and settings, the control CLI, multi-viewer sizing, packaging.
-6. **Parity audit** against `feature-inventory.md`, checked item by item, with gaps filed and
-   fixed. Only then is it "ready for Eli to test".
+6. **End-to-end harness** (ticket 034): the full app running for real against an isolated core,
+   driven by scripts, with full-window screenshots, and the same scenarios run in Herdr app.
+7. **Parity audit** (ticket 033) against `feature-inventory.md`, item by item, with side-by-side
+   full-app screenshots of both apps. Gaps are fixed. Only then is it "ready for Eli to test".
+8. **Tool routing** (ticket 035): the frontend selection config, and Eli's tools updated to use it.
 
 ## Testing rules for every ticket
 
