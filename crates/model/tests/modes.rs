@@ -429,6 +429,26 @@ fn copy_mode_needs_a_focused_terminal_and_ends_when_focus_leaves_it() {
 }
 
 #[test]
+fn closing_a_tab_or_pane_in_copy_mode_leaves_copy_mode_instead() {
+    let mut core = agents();
+    let mut m = connected(&mut core);
+    for keys in ["cmd-w", "cmd-shift-w"] {
+        press(&mut m, "ctrl-g [", true);
+        let fx = key(&mut m, &mut core, keys, true);
+        assert!(
+            fx.contains(&Effect::Terminal {
+                address: "t1".into(),
+                command: TerminalCommand::CopyEnd
+            }),
+            "{keys}: {fx:?}"
+        );
+        assert_eq!(*m.mode(), Mode::Normal, "{keys}");
+    }
+    assert!(core.kills().is_empty(), "nothing closed");
+    assert_eq!(core.doc(None).space("sp1").unwrap().tabs.len(), 2);
+}
+
+#[test]
 fn agents_step_in_list_order_and_rows_select_by_number() {
     let mut core = agents();
     let mut m = connected(&mut core);
@@ -715,7 +735,6 @@ fn unbuilt_features_say_not_yet() {
         Action::TabMenu("tb1".into()),
         Action::Peek("a2".into()),
         Action::FoldSubagents("a2".into()),
-        Action::FoldSection("Working".into()),
         Action::TerminalMenu("p1".into()),
         Action::OpenLink {
             pane: "p1".into(),

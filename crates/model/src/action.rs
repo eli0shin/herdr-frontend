@@ -391,10 +391,9 @@ pub enum Action {
     FocusAgent(String),
     /// Click a sub-agent row, or Cmd-click a terminal address: peek it.
     Peek(String),
-    /// Click an agent's icon or fold chevron.
+    /// Click an agent's icon or fold chevron. (§22's "fold section" row has no action:
+    /// sidebar sections don't collapse, `docs/plan.md`.)
     FoldSubagents(String),
-    /// Click an Agents section header.
-    FoldSection(String),
     /// Right-click a terminal (Shift+right-click when the program takes the mouse).
     TerminalMenu(String),
     /// Cmd-click a path or URL in a pane.
@@ -489,7 +488,6 @@ impl Action {
             | Action::FocusAgent(_)
             | Action::Peek(_)
             | Action::FoldSubagents(_)
-            | Action::FoldSection(_)
             | Action::TerminalMenu(_)
             | Action::OpenLink { .. }
             | Action::RearrangePane { .. }

@@ -369,7 +369,8 @@ impl View {
     /// After the layout changed: forget what read layouts no longer have, move focus off panes
     /// that went (back to the one focused before), end zooms of one-pane tabs, and replace a
     /// closed space or tab from where it was in `before` (the one that slides into its place, or
-    /// the last). Ids of machines not read yet are kept as they are.
+    /// the last; for a shown space gone without having been in `before`, what showed before, else
+    /// the first). Ids of machines not read yet are kept as they are.
     pub fn reconcile(&mut self, world: &World, before: &Before) {
         let gone = |id: &str, exists: bool| !exists && world.loaded_for(id);
         // Tabs.
@@ -436,7 +437,8 @@ impl View {
                 // A saved space whose machine wasn't read yet, gone once it is: keep what showed
                 // meanwhile (`app:src/mirror.rs` `View::apply_machine`).
                 .or_else(|| before.active.clone().filter(|id| world.space(id).is_some()))
-                .or_else(|| world.spaces().last().map(|s| s.id.clone()));
+                // A saved space gone at startup: the first, as herdr-app's `View::apply` does.
+                .or_else(|| world.spaces().next().map(|s| s.id.clone()));
         }
     }
 }

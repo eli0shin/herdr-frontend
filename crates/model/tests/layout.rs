@@ -73,8 +73,8 @@ fn nothing_is_read_or_written_while_disconnected() {
     let fx = m.step(1.0, Event::Tick);
     assert!(!fx.iter().any(|e| matches!(e, Effect::Doc { .. })));
     let fx = m.step(m.now(), Action::TabNew);
-    // The launch is asked for; the layout isn't read, so its reply couldn't place it.
-    assert!(fx.iter().any(|e| matches!(e, Effect::Call { .. })));
+    // The layout isn't read, so no terminal starts: it would be left without a pane.
+    assert!(!fx.iter().any(|e| matches!(e, Effect::Call { .. })));
     let mut m = connected(&mut core);
     drive(&mut m, &mut core, Event::Lost);
     let fx = m.step(m.now(), Action::PaneSplit(Split::Right));
@@ -340,6 +340,26 @@ fn closing_a_space_shows_the_one_that_slides_into_its_place() {
         Some("sp1"),
         "no next: the last"
     );
+}
+
+#[test]
+fn a_saved_space_gone_at_startup_falls_back_to_the_first_space() {
+    let mut core = Core::new(
+        doc(vec![
+            space("sp1", vec![tab("tb1", vec![pane("p1", "t1")])]),
+            space("sp2", vec![tab("tb2", vec![pane("p2", "t2")])]),
+            space("sp3", vec![tab("tb3", vec![pane("p3", "t3")])]),
+        ]),
+        vec![shell("t1", "/"), shell("t2", "/"), shell("t3", "/")],
+    );
+    let view = model::View {
+        active: Some("spGONE".into()),
+        ..Default::default()
+    };
+    let mut m = model::Model::with_view(HOME, view);
+    drive(&mut m, &mut core, Event::Connected);
+    assert_eq!(m.active_space().map(|s| s.id.as_str()), Some("sp1"));
+    assert_eq!(m.view().active.as_deref(), Some("sp1"));
 }
 
 #[test]
@@ -775,6 +795,21 @@ fn edits_to_an_unreadable_layout_are_refused_with_a_toast() {
             .any(|e| matches!(e, Effect::Toast(t) if t.title == "Layout unavailable"))
     );
     assert_eq!(tab_ids(&core.doc(None), "sp1"), ["tb1", "tb2", "tb3"]);
+    // Launches are refused before starting a terminal the layout couldn't take.
+    for action in [
+        Action::TabNew,
+        Action::PaneSplit(Split::Right),
+        Action::PaneSplit(Split::Down),
+    ] {
+        let fx = drive(&mut m, &mut core, action.clone());
+        assert!(
+            fx.iter()
+                .any(|e| matches!(e, Effect::Toast(t) if t.title == "Layout unavailable")),
+            "{action:?}: {fx:?}"
+        );
+    }
+    assert!(core.runs().is_empty(), "no terminal started");
+    assert_eq!(core.doc(None).tab("tb1").unwrap().root.panes().len(), 1);
 }
 
 #[test]

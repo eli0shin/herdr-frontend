@@ -473,21 +473,24 @@ impl Model {
             }
             Err(EditError::NoEffect) => false,
             Err(EditError::Unavailable) => {
-                let why = match m.mirror.layout() {
-                    Layout::Unavailable(why) | Layout::Blocked(why) | Layout::Undecodable(why) => {
-                        why.clone()
-                    }
-                    Layout::Loading => "not read yet".into(),
-                    Layout::Ready => String::new(),
-                };
-                fx.push(Effect::Toast(Toast::new(
-                    Level::Warning,
-                    "Layout unavailable",
-                    why,
-                )));
+                fx.push(Effect::Toast(unavailable(m.mirror.layout())));
                 false
             }
         }
+    }
+
+    /// Whether a machine's layout can take an edit now; when not, says so. A terminal started
+    /// for a layout that can't take its pane would be left kept and pane-less, so a launch asks
+    /// first (`app:src/window.rs` `require_document`).
+    fn layout_ready(&self, machine: Option<&str>, fx: &mut Effects) -> bool {
+        let Some(m) = self.world.machine(machine) else {
+            return false;
+        };
+        if *m.mirror.layout() == Layout::Ready {
+            return true;
+        }
+        fx.push(Effect::Toast(unavailable(m.mirror.layout())));
+        false
     }
 
     /// Ends terminals (`close_targets`: on cores 0.1.13 and later, which this client requires,
@@ -520,6 +523,9 @@ impl Model {
         launch: Launch,
         fx: &mut Effects,
     ) {
+        if !self.layout_ready(machine.as_deref(), fx) {
+            return;
+        }
         let (space, tab) = match &launch {
             Launch::Space { space, tab, .. } | Launch::Tab { space, tab, .. } => {
                 (space.clone(), tab.clone())
@@ -902,13 +908,14 @@ impl Model {
     }
 
     /// A one-key global binding, for a key an open overlay doesn't use: Herdr app runs the
-    /// window's keys over a dialog too. Closing a tab or pane closes the overlay instead, not
-    /// the terminal behind it (`app:src/window.rs` `run_key`).
+    /// window's keys over a dialog too. Closing a tab or pane closes the overlay (or leaves copy
+    /// mode) instead, not the terminal behind it (`app:src/window.rs` `run_key`).
     fn global_key(&self, chord: Chord) -> Option<Action> {
         match self.keymap.lookup(false, &[chord]) {
-            Lookup::Action(Action::TabClose | Action::PaneClose) => {
-                Some(Action::Popup(crate::action::PopupAction::Close))
-            }
+            Lookup::Action(Action::TabClose | Action::PaneClose) => Some(match self.mode {
+                Mode::Copy(_) => Action::Copy(crate::action::CopyAction::Quit),
+                _ => Action::Popup(crate::action::PopupAction::Close),
+            }),
             Lookup::Action(action) => Some(action.clone()),
             Lookup::Pending | Lookup::None => None,
         }
@@ -1158,6 +1165,16 @@ impl Model {
         let memory = closed::BIRTH_MEMORY.as_secs_f64();
         self.births.retain(|_, at| now - *at < memory);
     }
+}
+
+/// The toast for an edit or launch the layout can't take.
+fn unavailable(layout: &Layout) -> Toast {
+    let why = match layout {
+        Layout::Unavailable(why) | Layout::Blocked(why) | Layout::Undecodable(why) => why.clone(),
+        Layout::Loading => "not read yet".into(),
+        Layout::Ready => String::new(),
+    };
+    Toast::new(Level::Warning, "Layout unavailable", why)
 }
 
 /// The machine an intent edits.

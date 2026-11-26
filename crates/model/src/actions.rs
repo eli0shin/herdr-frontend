@@ -162,7 +162,6 @@ impl Model {
             | Action::TabMenu(_)
             | Action::Peek(_)
             | Action::FoldSubagents(_)
-            | Action::FoldSection(_)
             | Action::TerminalMenu(_)
             | Action::OpenLink { .. }
             | Action::RearrangePane { .. } => fx.push(Effect::NotYet(action)),

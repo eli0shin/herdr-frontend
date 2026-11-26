@@ -548,18 +548,19 @@ Keep `model` free of Rune types where practical, so core logic tests run without
 - **Launches are two-phase.** `tab.new`, splits and new spaces make their ids, send
   `terminal.run` with `herdr.space`/`herdr.tab`/`herdr.seen=0`, `keep` and herdr-app's `TERM`
   env, and put the pane in the layout only when the reply brings the address. A labeled terminal
-  whose tab has a launch pending is not adopted meanwhile. The model also adopts labeled
+  whose tab has a launch pending is not adopted meanwhile. A launch on a machine whose layout
+  can't take an edit is refused before any terminal starts. The model also adopts labeled
   orphans, removes panes whose stream ended or whose terminal the core no longer has, and backs a
   failing machine's layout reads off for `RETRY` (2 s).
 - **Keys.** `Keymap::eli()` is §22's effective table as data (`Chord` in Eli's syntax); the key
   file and live reload are ticket 016's. `Mode` is `Normal`, `Prefix` (dropped after 1 s, GPUI's
   pending-key timeout; an unbound sequence is swallowed whole), `Popup` or `Copy`. Popups and
   copy mode read their own keys (§22), then fall back to one-key global bindings, as Herdr app
-  runs window keys over a dialog; `tab.close`/`pane.close` close the popup instead. List popups
-  keep a query and a wrapping cursor; the feature that fills them reports `PopupRows` and resolves
-  `Effect::Pick`. Prompts, confirms and the agent-jump bar resolve in the model.
+  runs window keys over a dialog; `tab.close`/`pane.close` close the popup or leave copy mode
+  instead. List popups keep a query and a wrapping cursor; the feature that fills them reports
+  `PopupRows` and resolves `Effect::Pick`. Prompts, confirms and the agent-jump bar resolve in the model.
 - **Not built here** (they return `Effect::NotYet`): Neovim-aware Ctrl+H/J/K/L where the editor
-  label is set, `pane.resize`, the review view, peek, menus, folds, links and pane drag. Writing
+  label is set, `pane.resize`, the review view, peek, menus, sub-agent folds, links and pane drag. Writing
   `herdr.seen` labels (`SeenTracker`) and drawing alerts are ticket 025's; the model keeps
   `Attention` for displayed status and marks what the person looks at as seen.
 
