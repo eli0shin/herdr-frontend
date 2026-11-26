@@ -5,7 +5,16 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+# `cargo run` opens the app; `--bin pixel-diff` is the Ghostty comparison.
+default-run = "herdr-frontend"
 
 [dependencies]
 ghostty-vt-sys = { path = "../ghostty-vt-sys" }
 rune.workspace = true
+# The character map that decides which cells the primary face can draw. The version Rune's text
+# stack and the terminal crate's metrics already use.
+skrifa = "0.44.0"
+terminal = { path = "../terminal" }
+# Reads and writes the PNGs the pixel diff compares (`src/bin/pixel-diff.rs`). A version already
+# in Rune's tree.
+png = "0.18.1"

@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Capture what Ghostty.app draws for a program's output, and the output itself, for the renderer's
+# pixel diff (scripts/ghostty-diff, docs/research/renderer-gates.md).
+#
+#   scripts/ghostty-capture OUTDIR [--keep SECONDS] -- COMMAND [ARGS...]
+#
+# Starts a separate Ghostty instance with only this script's config (no user config): JetBrains
+# Mono, the font Ghostty embeds, at 14 pt, ligatures off, no padding, no window decoration, the
+# arctic colors, a steady block cursor. In it, COMMAND runs under `script`, which records every
+# byte it writes. Writes:
+#
+#   OUTDIR/ghostty.png  the window, captured with `screencapture -l` (the terminal running this
+#                       needs Screen Recording permission) and converted to sRGB
+#   OUTDIR/screen.bin   what COMMAND wrote
+#   OUTDIR/grid         Ghostty's grid, `ROWS COLS`
+#
+# The window shows for a few seconds, then the instance is killed. Under AeroSpace the window is
+# made fullscreen in its workspace (`aerospace fullscreen on`) before COMMAND starts, so it doesn't
+# get whatever tile is free; COMMAND runs at whatever grid Ghostty then has. Ghostty windows you
+# already have open aren't touched, and nothing is typed or clicked. macOS only.
+set -euo pipefail
+
+out=$(mkdir -p "$1" && cd "$1" && pwd)
+shift
+keep=2
+if [ "${1:-}" = "--keep" ]; then
+    keep=$2
+    shift 2
+fi
+[ "${1:-}" = "--" ] && shift
+[ $# -gt 0 ] || { echo "usage: ghostty-capture OUTDIR [--keep SECONDS] -- COMMAND [ARGS...]" >&2; exit 2; }
+app=${GHOSTTY_APP:-/Applications/Ghostty.app}
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+rm -f "$out/ghostty.png" "$out/screen.bin" "$out/grid"
+
+cat >"$work/config" <<EOF
+font-size = 14
+font-feature = -calt
+font-feature = -liga
+window-padding-x = 0
+window-padding-y = 0
+window-padding-balance = false
+window-decoration = false
+window-save-state = never
+window-width = 100
+window-height = 40
+background = 1e1e1e
+foreground = d4d4d4
+palette = 0=#1e1e1e
+palette = 1=#f44747
+palette = 2=#6a9955
+palette = 3=#d7ba7d
+palette = 4=#569cd6
+palette = 5=#c586c0
+palette = 6=#4dc9b0
+palette = 7=#dddddd
+palette = 8=#808080
+palette = 9=#f55757
+palette = 10=#80ad6b
+palette = 11=#e1cb9e
+palette = 12=#6fabdc
+palette = 13=#d6a9d2
+palette = 14=#70d3bf
+palette = 15=#ffffff
+selection-background = 04395e
+cursor-style = block
+cursor-style-blink = false
+shell-integration = none
+confirm-close-surface = false
+quit-after-last-window-closed = true
+command = /bin/sh $work/show
+EOF
+
+# The command's arguments, quoted for the shell in Ghostty.
+quoted=$(printf '%q ' "$@")
+cat >"$work/show" <<EOF
+cd '$work'
+while [ ! -e '$work/go' ]; do sleep 0.05; done
+stty size >'$work/grid.tmp' && mv '$work/grid.tmp' '$out/grid'
+script -q -F '$out/screen.bin' $quoted
+touch '$work/done'
+exec sleep 60
+EOF
+
+# Not `open -g`: Ghostty makes no window when it starts in the background.
+open -n -a "$app" --args --config-default-files=false --config-file="$work/config"
+
+# The instance just started: its process runs with this script's config.
+pid=""
+for _ in $(seq 50); do
+    pid=$(pgrep -n -f -- "--config-file=$work/config" || true)
+    [ -n "$pid" ] && break
+    sleep 0.1
+done
+[ -n "$pid" ] || { echo "ghostty-capture: Ghostty didn't start" >&2; exit 1; }
+trap 'kill "$pid" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+cat >"$work/window.swift" <<'EOF'
+import CoreGraphics
+let pid = Int32(CommandLine.arguments[1])!
+let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as! [[String: Any]]
+for w in windows where (w[kCGWindowOwnerPID as String] as? Int32) == pid
+    && (w[kCGWindowLayer as String] as? Int) == 0 {
+    print(w[kCGWindowNumber as String]!)
+    break
+}
+EOF
+window=""
+for _ in $(seq 40); do
+    window=$(swift "$work/window.swift" "$pid" 2>/dev/null || true)
+    [ -n "$window" ] && break
+    sleep 0.25
+done
+[ -n "$window" ] || { echo "ghostty-capture: no window for Ghostty ($pid)" >&2; exit 1; }
+if command -v aerospace >/dev/null; then
+    aerospace fullscreen on --window-id "$window" --no-outer-gaps
+    sleep 0.5
+fi
+touch "$work/go"
+
+# Let the command draw (a command that exits is done at once) and the frame settle.
+for _ in $(seq 20); do
+    [ -e "$work/done" ] && break
+    sleep 0.25
+done
+sleep "$keep"
+screencapture -x -o -l "$window" "$work/window.png"
+# The capture is in the display's color space (Display P3 on a Mac's panel); our snaps are sRGB, as
+# is what Ghostty draws (`window-colorspace = srgb`), so convert it back.
+sips --matchTo "/System/Library/ColorSync/Profiles/sRGB Profile.icc" "$work/window.png" \
+    --out "$out/ghostty.png" >/dev/null
+[ -s "$out/grid" ] || { echo "ghostty-capture: the shell in Ghostty didn't run" >&2; exit 1; }
+echo "$out: grid $(cat "$out/grid")"

@@ -1226,7 +1226,10 @@ name = "herdr-frontend"
 version = "0.0.1"
 dependencies = [
  "ghostty-vt-sys",
+ "png 0.18.1",
  "rune",
+ "skrifa",
+ "terminal",
 ]
 
 [[package]]
