@@ -567,6 +567,53 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   `herdr.seen` labels (`SeenTracker`) and drawing alerts are ticket 025's; the model keeps
   `Attention` for displayed status and marks what the person looks at as seen.
 
+### The app shell as built
+
+`crates/app` wires the model to a live core and draws it (ticket 014):
+
+- **`link`.** A `Link` trait the UI thread drives without blocking and drains once a frame in
+  `AppSpec::poll`. `Live` runs herdr-client's `Supervisor` and `MachineWatcher`, makes calls and
+  document rounds whose `Pending`s it `try_take`s, and reads every attach stream on one thread
+  (`hc-streams`), which writes a terminal's output straight into its terminal worker through a
+  `terminal::Writer`. The worker returns the credit once it parsed the bytes (`write_then`), so
+  a parser that falls behind holds the stream to the core's 256 KiB window. The UI hears only
+  when a stream starts or ends, so a hidden terminal's output never wakes it. `Fake` is an in-process core for scenes and tests:
+  it answers on the next poll, paints each terminal's recorded screen on attach, and keeps
+  every frame sent.
+- **`State::pump`.** Link news goes through `Model::step`; effects become link calls, focus
+  (`Tx::focus_when_shown` on `pane-<id>`), wakes and view saves. One `Viewer` per terminal the
+  shown tab draws: a `Terminal` worker and the `TerminalPane` drawing its snapshots. Viewers
+  stay attached while their pane is in the layout, shown or not.
+- **Viewer policy** (`herdr-core-protocol.md` §4). Every terminal attaches `resumed: true` at
+  the record's current grid, with `history: 2000` and this window's `display`. The pane in use,
+  the focused pane while the window is focused, sends FACTS, then RESIZE with its grid (Ghostty's
+  whole-pixel cell, `terminal::Size::report`, no padding, grid at the top left), then FOCUS(1);
+  RESIZE again on each grid change at most every 25 ms; FOCUS(0) when it stops being in use. The
+  local terminal follows the record's `cols` × `rows` (kept by `size` events), never the pane.
+  After a reconnect or a `restarted` event, viewers reattach `resumed` and reset their screen
+  for the repaint.
+- **Window.** Borderless (`WindowOptions::borderless`): AppKit's borderless style has square
+  corners, no title bar and no traffic lights. `Chrome { drag_regions: true }` makes only the
+  38 pt sidebar top row and tab strip (`.window_drag()`) move it. The view is the sidebar
+  placeholder (366 pt), the tab strip placeholder, and the tab area, where panes sit at the
+  model's `pane_rects` (`Geometry { gap: 1 }`) over a border-colored fill. The tab area's
+  `on_layout_tx` reports the geometry; before the first layout it comes from the window size
+  (`App::on_window_geometry`, `SIZE` headless).
+- **Input.** Plain typing only (`keys::encode`): text, Return, Backspace, Tab, Escape, arrows
+  and editing keys, and Ctrl with a letter, encoded by the terminal's worker for the program's
+  modes and sent as DATA. The focused pane's element takes keys in `El::on_key`; with nothing
+  focused, `AppSpec::on_key` types into the model's focused pane and gives it focus back. A click
+  focuses a pane (`Action::FocusPane`).
+- **Home** (`$HERDR_FRONTEND_HOME`, else `$XDG_CONFIG_HOME/herdr-frontend`, else
+  `~/.config/herdr-frontend`): `view.json` (the model's saved view) and `window.json` (position,
+  physical size, maximized, full screen, display). Writes go through a saver thread, written
+  whole and renamed; close and quit write at once. A saved place whose display is gone opens
+  centered.
+- **Headless.** `--snap`, `--tree` and `--script` never connect: `main` runs the app with no
+  core. The `shell*` scenes run on `Fake`; `State::settle` makes every pump wait on the
+  terminals (`Terminal::snapshot_now`) so a frame never races a worker. While the screen is
+  locked, macOS reports the real window covered and Rune draws no frames.
+
 [rune]: https://github.com/anomalyco/rune/tree/4918969f04dce020f63b34e024368a86e5e1857d
 [rune-readme]: https://github.com/anomalyco/rune/blob/4918969f04dce020f63b34e024368a86e5e1857d/README.md
 [rune-agents]: https://github.com/anomalyco/rune/blob/4918969f04dce020f63b34e024368a86e5e1857d/AGENTS.md

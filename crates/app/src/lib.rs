@@ -1,21 +1,27 @@
 //! The herdr-frontend app: its `AppSpec`, state, views and scenes.
 //!
-//! `main.rs` only runs [`app`], so headless tests drive exactly what the window shows.
+//! `main.rs` only runs [`app`] or [`live`], so headless tests drive exactly what the window
+//! shows. [`State`] holds the model and the core [`link::Link`]; [`view`] draws the shell
+//! (`view::shell`) around the shown tab's live terminals.
 
 pub mod control;
 pub mod fixtures;
+pub mod home;
+pub mod keys;
+pub mod link;
 mod scenes;
+pub mod state;
 pub mod view;
-
-use std::cell::RefCell;
+pub mod window;
 
 use rune::tok;
 use rune::{App, AppSpec, Cx, El, FontSmoothing, col, el, row, text};
-use terminal::Theme;
 
+pub use state::{State, TERMINAL_POINTS};
+
+use home::Home;
+use link::Live;
 use view::terminal::TerminalPane;
-use view::terminal::font::{Face, Font};
-use view::terminal::look::{self, Look};
 
 /// The window title.
 pub const TITLE: &str = "herdr-frontend";
@@ -23,80 +29,89 @@ pub const TITLE: &str = "herdr-frontend";
 /// The window's first size, in points.
 pub const SIZE: (f32, f32) = (1200.0, 800.0);
 
-/// The terminal font's size until settings land: Ghostty's and Herdr app's 14 pt default.
-pub const TERMINAL_POINTS: f32 = 14.0;
-
-/// The app's state: the terminal panes on screen, and how terminals look.
-pub struct State {
-    pub panes: Vec<TerminalPane>,
-    pub font: Font,
-    /// The colors terminals start with.
-    pub theme: Theme,
-    pub look: Look,
-    /// The font at the display scale the last frame drew at.
-    face: RefCell<Option<Face>>,
-}
-
-impl Default for State {
-    fn default() -> State {
-        let (theme, look) = look::arctic();
-        State {
-            panes: Vec::new(),
-            font: Font::jetbrains_mono(TERMINAL_POINTS),
-            theme,
-            look,
-            face: RefCell::new(None),
-        }
-    }
-}
-
-impl State {
-    /// The terminal font at display scale `scale`, measured once per scale.
-    pub fn face(&self, scale: f32) -> Face {
-        let mut face = self.face.borrow_mut();
-        match face.as_ref() {
-            Some(f) if f.scale == scale => f.clone(),
-            _ => {
-                let made = self
-                    .font
-                    .at(scale)
-                    .expect("the terminal font measures at every scale");
-                *face = Some(made.clone());
-                made
-            }
-        }
-    }
-}
-
-/// The app as Rune runs it, in a window or headless: [`spec`] with glyphs rasterized as Ghostty's
-/// are by default (`font-thicken = false`), which is CoreText with font smoothing off. Rune sets
-/// this per window, so the app's own text draws the same way.
+/// The app as Rune runs it, in a window or headless, with no core: [`spec`] with glyphs
+/// rasterized as Ghostty's are by default (`font-thicken = false`), which is CoreText with font
+/// smoothing off. Rune sets this per window, so the app's own text draws the same way.
 pub fn app() -> App<State> {
-    App::new(spec()).font_smoothing(FontSmoothing::Off)
+    App::new(spec())
+        .font_smoothing(FontSmoothing::Off)
+        .on_focus(State::on_focus)
 }
 
-/// The app's spec: its title, size, state, view and scenes.
+/// The app on a live core, with its home: the window opens where it was, borderless (Eli's
+/// Ghostty frame, [`window`]), and saves its place and view as it goes.
+pub fn live(link: Live, home: Option<Home>) -> App<State> {
+    let keeper = window::Keeper::new(home.clone());
+    let saved = keeper.saved();
+    let placed = saved.clone();
+    let on_window = keeper.clone();
+    let mut app = app()
+        .window_options(window::options(saved.as_ref()))
+        .chrome(window::CHROME)
+        .on_window(move |handle| on_window.created(handle, placed.as_ref()))
+        .on_window_geometry(|s, geometry, _| {
+            let scale = geometry.scale_factor as f32;
+            let (w, h) = geometry.physical_size;
+            if scale > 0.0 {
+                s.window_sized(w as f32 / scale, h as f32 / scale);
+            }
+            s.window.save(false);
+            true
+        })
+        .on_close(State::on_close)
+        .on_quit(State::on_close)
+        .init(move || {
+            let mut s = State::new(Box::new(link::Offline), home, keeper);
+            s.connect(Box::new(link));
+            s
+        });
+    if let Some(saved) = &saved {
+        app = app
+            .maximized(saved.maximized)
+            .full_screen(saved.full_screen);
+    }
+    app
+}
+
+/// The app's spec: its title, size, state, view, scenes and core hooks.
 pub fn spec() -> AppSpec<State> {
     AppSpec {
         scenes: scenes::SCENES,
+        setup: Some(State::setup),
+        poll: Some(State::poll),
+        on_key: Some(State::on_key),
         ..AppSpec::new(TITLE, SIZE, State::default, view)
     }
 }
 
-/// The whole window: the terminal panes in a square-ish grid (two, four and nine panes are 2 × 1,
-/// 2 × 2 and 3 × 3) with a 1 px gap, or the app's name in the middle while there are none. The
-/// app shell replaces this with the tab's pane tree.
+/// The whole window: the shell around the shown tab's terminals ([`view::shell`]), or, in the
+/// renderer's fixture scenes, their panes alone.
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
-    let t = tok::theme(true);
     if s.panes.is_empty() {
-        return col()
-            .key("root")
-            .w_full()
-            .h_full()
-            .center()
-            .fill(t.bg)
-            .child(text(TITLE).key("title").color(t.text_secondary));
+        if s.status == state::Status::Offline && s.model.shown_tab().is_none() {
+            return hello();
+        }
+        return view::shell::view(s, cx);
     }
+    fixture_panes(s, cx)
+}
+
+/// The app's name in the middle, before any core: the hello window.
+fn hello() -> El {
+    let t = tok::theme(true);
+    col()
+        .key("root")
+        .w_full()
+        .h_full()
+        .center()
+        .fill(t.bg)
+        .child(text(TITLE).key("title").color(t.text_secondary))
+}
+
+/// Fixture panes in a square-ish grid (two, four and nine panes are 2 × 1, 2 × 2 and 3 × 3)
+/// with a 1 px gap, nothing around them: what the Ghostty pixel diff compares.
+fn fixture_panes(s: &State, cx: &mut Cx<State>) -> El {
+    let t = tok::theme(true);
     let face = s.face(cx.env().scale);
     let gap = 1.0 / face.scale;
     let pane = |p: &TerminalPane| el().grow(1.0).h_full().child(p.view(&face, &s.look));

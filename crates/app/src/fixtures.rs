@@ -88,3 +88,76 @@ pub fn select(
         }
     }
 }
+
+/// A pane showing `terminal`, as a `herdr-app` document writes one.
+pub fn pane(id: &str, terminal: &str) -> serde_json::Value {
+    serde_json::json!({"id": id, "type": "block", "content": {"terminal": terminal}})
+}
+
+/// A split of `children` along `axis` (`"row"` or `"column"`).
+pub fn split(id: &str, axis: &str, children: Vec<serde_json::Value>) -> serde_json::Value {
+    serde_json::json!({"id": id, "type": axis, "children": children})
+}
+
+/// A tab named `name` whose root is `root`.
+pub fn tab(id: &str, name: &str, root: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"id": id, "name": name, "root": root})
+}
+
+/// A live shell terminal at `cols` × `rows`.
+pub fn terminal(address: &str, cols: u16, rows: u16) -> herdr_proto::Terminal {
+    herdr_proto::Terminal {
+        address: address.into(),
+        cwd: "/tmp".into(),
+        keep: true,
+        cols,
+        rows,
+        ..Default::default()
+    }
+}
+
+/// The demo core the shell scenes and tests run on: one space with two tabs. The first splits
+/// Neovim beside the colors and box-drawing screens (`t1 | t2 / t3`), the second holds one
+/// more shell. Each terminal shows its fixture screen, at the fixtures' 80 × 30.
+pub fn demo_core() -> crate::link::Fake {
+    let work = tab(
+        "tb-work",
+        "work",
+        split(
+            "tb-work",
+            "row",
+            vec![
+                pane("pn-1", "t1"),
+                split(
+                    "c-1",
+                    "column",
+                    vec![pane("pn-2", "t2"), pane("pn-3", "t3")],
+                ),
+            ],
+        ),
+    );
+    let logs = tab(
+        "tb-logs",
+        "logs",
+        split("tb-logs", "row", vec![pane("pn-4", "t4")]),
+    );
+    let doc = serde_json::json!({"spaces": [{
+        "id": "sp-1",
+        "name": "herdr-frontend",
+        "folder": "/tmp",
+        "tabs": [work, logs],
+    }]});
+    let terminals = ["t1", "t2", "t3", "t4"]
+        .into_iter()
+        .map(|a| terminal(a, COLS, ROWS))
+        .collect();
+    let fake = crate::link::Fake::new(doc, terminals);
+    {
+        let mut core = fake.core();
+        for (address, fixture) in [("t1", &NVIM_SPLITS), ("t2", &COLORS), ("t3", &BOXES)] {
+            core.screens.insert(address.into(), fixture.bytes.to_vec());
+        }
+        core.screens.insert("t4".into(), b"$ ".to_vec());
+    }
+    fake
+}

@@ -1,3 +1,7 @@
+use herdr_client::{HcCommand, Transport};
+use herdr_frontend::home::Home;
+use herdr_frontend::link::Live;
+
 fn main() {
     // `ls`, `do`, `status` and `commands` talk to the running window (`docs/cli.md`).
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -9,5 +13,12 @@ fn main() {
         eprintln!("herdr-frontend: {mismatch}");
         std::process::exit(1);
     }
-    herdr_frontend::app().run();
+    // `--snap`, `--tree` and `--script` draw scenes with no core, and never touch a real one.
+    if rune::is_headless() {
+        herdr_frontend::app().run();
+        return;
+    }
+    // `hc connect`, as Herdr app connects: the core `HC_SESSION` names, or the default one.
+    let link = Live::new(Transport::Hc(HcCommand::found()));
+    herdr_frontend::live(link, Some(Home::from_env())).run();
 }

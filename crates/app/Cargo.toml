@@ -10,9 +10,13 @@ default-run = "herdr-frontend"
 
 [dependencies]
 ghostty-vt-sys = { path = "../ghostty-vt-sys" }
+herdr-client = { path = "../herdr-client" }
+herdr-proto = { path = "../herdr-proto" }
+herdr-shared = { path = "../herdr-shared" }
 model = { path = "../model" }
 rune.workspace = true
-# The control socket's JSON (`src/control.rs`). The version the other crates use.
+serde = { version = "1.0.229", features = ["derive"] }
+# The control socket's JSON (`src/control.rs`) and saved state. The version the other crates use.
 serde_json = "1.0.154"
 # The character map that decides which cells the primary face can draw. The version Rune's text
 # stack and the terminal crate's metrics already use.
@@ -21,8 +25,3 @@ terminal = { path = "../terminal" }
 # Reads and writes the PNGs the pixel diff compares (`src/bin/pixel-diff.rs`). A version already
 # in Rune's tree.
 png = "0.18.1"
-
-[dev-dependencies]
-# The model's fake core, which `tests/control.rs` drives the control socket against.
-herdr-proto = { path = "../herdr-proto" }
-herdr-shared = { path = "../herdr-shared" }

@@ -2,6 +2,8 @@
 
 use crate::State;
 use crate::fixtures::{self, BOXES, COLORS, Fixture, NVIM_SPLITS};
+use crate::link::{Fake, Offline};
+use crate::state::Status;
 use crate::view::terminal::TerminalPane;
 
 /// A scene: its name and how it changes the first state.
@@ -15,7 +17,56 @@ pub(crate) const SCENES: &[Scene] = &[
     ("terminal-selection", selection),
     ("terminal-panes", panes),
     ("screen-file", screen_file),
+    ("shell", shell),
+    ("shell-one-pane", shell_one_pane),
+    ("shell-no-spaces", shell_no_spaces),
+    ("shell-connecting", shell_connecting),
+    ("shell-core-down", shell_core_down),
 ];
+
+/// The app on the demo core ([`fixtures::demo_core`]): the sidebar, the tab strip with `work`
+/// selected, and its three live panes, Neovim focused.
+fn shell(s: &mut State) {
+    s.connect(Box::new(fixtures::demo_core()));
+    s.settle();
+}
+
+/// One tab, one pane: the colors screen.
+fn shell_one_pane(s: &mut State) {
+    let doc = serde_json::json!({"spaces": [{
+        "id": "sp-1", "name": "solo", "folder": "/tmp",
+        "tabs": [fixtures::tab("tb-1", "colors", fixtures::split("tb-1", "row", vec![fixtures::pane("pn-1", "t1")]))],
+    }]});
+    let fake = Fake::new(
+        doc,
+        vec![fixtures::terminal("t1", fixtures::COLS, fixtures::ROWS)],
+    );
+    fake.core()
+        .screens
+        .insert("t1".into(), COLORS.bytes.to_vec());
+    s.connect(Box::new(fake));
+    s.settle();
+}
+
+/// Connected to a core whose layout has no spaces.
+fn shell_no_spaces(s: &mut State) {
+    s.connect(Box::new(Fake::new(
+        serde_json::json!({"spaces": []}),
+        Vec::new(),
+    )));
+    s.settle();
+}
+
+/// Waiting for the core.
+fn shell_connecting(s: &mut State) {
+    s.connect(Box::new(Offline));
+}
+
+/// The core can't be reached; the supervisor keeps trying.
+fn shell_core_down(s: &mut State) {
+    s.connect(Box::new(Offline));
+    s.status = Status::Down("hc connect: no core is running".into());
+}
 
 /// `fixture` alone in a focused pane: what the Ghostty pixel diff compares.
 fn one(s: &mut State, fixture: &Fixture) {
