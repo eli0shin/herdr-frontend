@@ -60,7 +60,7 @@ These are the rules implementation tickets must not break. Each one is explained
 |---|---|---|
 | `hc connect` child process | stdin and stdout carry the same protocol as the socket (`core:schema/README.md` "Connecting"). | **herdr-app's choice** (`app:src/hc.rs:329`). It starts the core when none is running (`core:crates/herdr-core/src/client.rs` `connect_or_start`). It also applies the session, `HC_SOCKET` and config `socket` rules, and on macOS it repairs a core left from an earlier GUI login (below). `--session <name>` selects a session, like `HC_SESSION`. If startup fails, stderr carries one JSON object `{"error":{"kind","message","hint"}}`, which herdr-app parses (`app:src/hc.rs` `connect_error`). |
 | Unix socket directly | `HC_SOCKET`, else config `socket`, else `$XDG_RUNTIME_DIR/herdr-core/<session>.sock`, else `/run/user/<uid>/herdr-core/`, else the session's state directory. Windows uses a named pipe. (`core:docs/security.md` "State and endpoints") | Lower overhead, but there's no autostart and no login repair, and the path rules must be reimplemented. Use it only behind the same transport trait. |
-| Remote core through ssh | `ssh box hc connect`. The protocol is identical. | Possible, but herdr-app never connects to a remote core directly. It adds machines to the local core (§1.7). Do the same. |
+| Remote core through ssh | `ssh box hc connect`. The protocol is identical. | Possible, but herdr-app never connects to a remote core directly. It adds machines to the local core (§1.6). Do the same. |
 
 macOS login repair: `hc connect` from a process in the GUI login may call `server.restart` on a
 core that belongs to an earlier macOS login (`core:crates/herdr-core/src/platform/macos_session.rs` `repair`). That
@@ -139,7 +139,7 @@ Errors are JSON-RPC errors with a stable `data.kind` and a `data.hint`:
   (`app:src/terminal.rs` `ingest`). For the events stream it grants an extra 1 MiB at subscribe
   and then credits as it parses (`app:src/hc.rs:494`, `app:src/window.rs` event loop).
 - A viewer more than 4 MiB behind (`MAX_PENDING`) gets a fresh repaint instead of the backlog. An
-  events subscriber that falls behind gets `missed` with a fresh snapshot (§2.4). A stalled
+  events subscriber that falls behind gets `missed` with a fresh snapshot (§2.3). A stalled
   stream never blocks channel 0 or other streams.
 - A stream is paused until its reply has gone out, so the `terminal.attach` or `events.subscribe`
   reply always comes before the first frame on its channel (`core:crates/herdr-core/src/server.rs`: `out.resume`
@@ -266,7 +266,7 @@ How to apply each event type (`core:schema/README.md` "Events"; `app:src/hc.rs` 
 | `lost` | `{reason, exit_code, signal, finished_ms: null}` | It stays `live`: set these fields, clear `pid`, drop `foreground`. Its attach stream has closed; wait for `restarted`. |
 | `restarted` | the whole Terminal | Replace it and reattach. |
 | `keep` | `{keep}` | Set it. |
-| `finished` | `{reason, exit_code, signal, finished_ms}` | `state = "finished"`, drop `foreground`. A `status` event clearing the status comes just before it. |
+| `finished` | `{reason, exit_code, signal, finished_ms}` | Set these fields, set `state = "finished"`, and drop `foreground`. A `status` event clearing the status comes just before it. |
 | `removed` | `{}` | Drop it. |
 | `status` | `{status, records, reported}` | Replace all three. |
 | `turn` | `{turn, state}` | Set `turn`. This is where seen and done decisions happen (§3.4). |
@@ -386,7 +386,8 @@ schema is herdr-app's serde types (`app:src/mirror.rs`, `app:src/layout.rs`):
   - A field herdr-frontend adds survives herdr-app (0.1.15 and later) only on a space or a tab.
     Builds before 0.1.15 drop it there too. Put any such addition there, and only one both apps
     agree on.
-  - Draw mod blocks as placeholders, but never remove them.
+  - Draw mod blocks as placeholders, and never drop or rewrite them when writing the document.
+    Whether a person may close one is open question 2.
 
 ### Labels
 
@@ -737,7 +738,8 @@ These need decisions in later tickets.
 1. **The `where` label.** Leave it to herdr-app (version 1), or port `space_name` and `tab_name`
    exactly, including the git checkout-top lookup.
 2. **Mod blocks** (`{mod, props}`) in shared documents can't run in herdr-frontend. They need a
-   placeholder design. Closing one must be allowed, but it must never be rewritten.
+   placeholder design, and herdr-frontend never drops or rewrites them on write (§3.3). Still
+   open: whether a person may close one from herdr-frontend, which removes it for herdr-app too.
 3. **Upstream fixes to herdr-app's sizing** (§4.3, items 1–4), so that using both side by side
    doesn't flip sizes. This is for the herdr-app maintainers to decide, not this repo.
 4. **`TERM_PROGRAM`.** Should herdr-frontend's terminals identify as `herdr`, as herdr-app's do,
