@@ -106,13 +106,12 @@ impl Faces {
         face: &Face,
         c: char,
         presentation: Presentation,
-        wide: bool,
     ) -> Option<(CFRetained<CTFont>, u16)> {
         let emoji_has = self.emoji.as_ref().and_then(|e| glyph(e, c));
         let emoji_wanted = match presentation {
             Presentation::Emoji => true,
             Presentation::Text => false,
-            Presentation::Default => wide && emoji_has.is_some(),
+            Presentation::Default => super::is_emoji_presentation(c),
         };
         if !emoji_wanted && let Some(g) = glyph(&self.nerd, c) {
             return Some((self.nerd.clone(), g));
@@ -231,7 +230,6 @@ pub(super) fn render(
     face: &Face,
     c: char,
     presentation: Presentation,
-    wide: bool,
     constraint_width: u32,
 ) -> Option<Rendered> {
     FACES.with(|faces| {
@@ -240,7 +238,7 @@ pub(super) fn render(
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::hash_map::Entry::Vacant(e) => e.insert(Faces::new(face)?),
         };
-        let (font, g) = faces.resolve(face, c, presentation, wide)?;
+        let (font, g) = faces.resolve(face, c, presentation)?;
         let color = is_color(&font);
         rasterize(
             &font,
@@ -414,7 +412,7 @@ mod tests {
     #[test]
     fn an_emoji_covers_its_two_cells_less_its_padding() {
         let face = face();
-        let r = render(&face, '🙂', Presentation::Default, true, 2).expect("Apple Color Emoji");
+        let r = render(&face, '🙂', Presentation::Default, 2).expect("Apple Color Emoji");
         assert!(r.color);
         // Two 17 px cells, 2.5% of a face width in from each side.
         let m = face.metrics;
@@ -427,16 +425,26 @@ mod tests {
     #[test]
     fn a_nerd_font_icon_comes_from_the_symbols_font_as_a_mask() {
         let face = face();
-        let r = render(&face, '\u{f015}', Presentation::Default, false, 1).expect("nf-fa-home");
+        let r = render(&face, '\u{f015}', Presentation::Default, 1).expect("nf-fa-home");
         assert!(!r.color);
         assert!(r.data.contains(&255));
         assert!(r.width <= face.metrics.cell_width + 1, "{}", r.width);
     }
 
     #[test]
+    fn a_wide_character_thats_text_by_default_draws_as_text() {
+        // 〰 is in Apple Color Emoji, but not Emoji_Presentation: Ghostty draws a text glyph.
+        let face = face();
+        let r = render(&face, '〰', Presentation::Default, 2).expect("a text face");
+        assert!(!r.color);
+        let r = render(&face, '〰', Presentation::Emoji, 2).expect("Apple Color Emoji");
+        assert!(r.color);
+    }
+
+    #[test]
     fn cjk_falls_back_to_a_system_face_on_the_baseline() {
         let face = face();
-        let r = render(&face, '日', Presentation::Default, true, 2).expect("a CJK fallback");
+        let r = render(&face, '日', Presentation::Default, 2).expect("a CJK fallback");
         assert!(!r.color);
         let m = face.metrics;
         // The ideograph sits inside its two cells, above the cell's bottom.

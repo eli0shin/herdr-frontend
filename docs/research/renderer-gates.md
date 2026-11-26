@@ -328,8 +328,9 @@ transparent, so the row still reads.
   4. CoreText's fallback for the character, scaled to match the terminal font's ideograph width
      (Ghostty's `ic_width` size adjustment).
 
-  A variation selector picks the presentation; without one, a wide character Apple Color Emoji
-  has is emoji.
+  A variation selector picks the presentation; without one, it's the Unicode
+  `Emoji_Presentation` property (from the `emoji-data.txt` of the uucode Ghostty pins), as in
+  Ghostty's `CodepointResolver`.
 - **Constraints** port `RenderOptions.Constraint`:
   - every emoji covers its cells, centered, with 2.5% side padding;
   - Nerd Font icons follow Ghostty's generated table (`glyph/tables.rs`, from

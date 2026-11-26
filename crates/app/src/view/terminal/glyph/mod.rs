@@ -7,15 +7,18 @@
 //!
 //! - **Font fallback** follows Ghostty's order (`font/CodepointResolver.zig`,
 //!   `font/SharedGridSet.zig`): the Symbols Nerd Font Ghostty embeds, then Apple Color Emoji for
-//!   emoji presentation, then CoreText's fallback for the character, scaled so its ideograph
-//!   width matches the terminal font's (`Collection.SizeAdjustment.ic_width`).
+//!   emoji presentation, then the fallback faces already loaded, then CoreText's fallback for the
+//!   character, scaled so its ideograph width matches the terminal font's
+//!   (`Collection.SizeAdjustment.ic_width`). A character is emoji when a variation selector says
+//!   so, or by default when it has the Unicode `Emoji_Presentation` property.
 //! - **Constraints** ([`constraint`]) size and place the glyph: every emoji covers its cells,
 //!   Nerd Font icons follow Ghostty's table, other symbols shrink to fit, and a symbol followed by
 //!   a blank cell may spread into it.
 //! - **Rasterizing** makes the same CoreGraphics calls as Ghostty's `coretext.zig`
 //!   `renderGlyph`: antialiased, no font smoothing, subpixel positioning without quantizing, the
 //!   glyph's box placed by its constraint and centered in the rounded cell. Color glyphs are drawn
-//!   in Display P3, text glyphs as an alpha mask in the cell's color.
+//!   in sRGB (Ghostty uses Display P3 for its P3 surface; ours is sRGB), text glyphs as an alpha
+//!   mask in the cell's color.
 //!
 //! What it doesn't take: clusters of several code points other than a variation selector
 //! (combining marks, emoji ZWJ sequences, skin tones). Those stay pinned cells Rune shapes, as do
@@ -150,15 +153,15 @@ pub fn render(
     if let Some(hit) = GLYPHS.with(|g| g.borrow().get(&key).cloned()) {
         return hit;
     }
-    let made = rasterize(face, text, wide, constraint_width).map(Rc::new);
+    let made = rasterize(face, text, constraint_width).map(Rc::new);
     GLYPHS.with(|g| g.borrow_mut().insert(key, made.clone()));
     made
 }
 
 #[cfg(target_os = "macos")]
-fn rasterize(face: &Face, text: &str, wide: bool, constraint_width: u32) -> Option<GlyphImage> {
+fn rasterize(face: &Face, text: &str, constraint_width: u32) -> Option<GlyphImage> {
     let (c, presentation) = single(text)?;
-    let r = coretext::render(face, c, presentation, wide, constraint_width)?;
+    let r = coretext::render(face, c, presentation, constraint_width)?;
     Some(GlyphImage {
         x: r.x,
         top: r.top,
@@ -171,19 +174,28 @@ fn rasterize(face: &Face, text: &str, wide: bool, constraint_width: u32) -> Opti
 }
 
 #[cfg(not(target_os = "macos"))]
-fn rasterize(_: &Face, _: &str, _: bool, _: u32) -> Option<GlyphImage> {
+fn rasterize(_: &Face, _: &str, _: u32) -> Option<GlyphImage> {
     None
 }
 
 /// What presentation a cell asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Presentation {
-    /// Its own: emoji for a wide character an emoji font has, text otherwise.
+    /// Its own: emoji if it has the Unicode `Emoji_Presentation` property, text otherwise.
     Default,
     /// VS15.
     Text,
     /// VS16.
     Emoji,
+}
+
+/// Whether `c` is emoji by default (the Unicode `Emoji_Presentation` property).
+pub fn is_emoji_presentation(c: char) -> bool {
+    let cp = c as u32;
+    let at = tables::EMOJI_PRESENTATION.partition_point(|&(_, hi)| hi < cp);
+    tables::EMOJI_PRESENTATION
+        .get(at)
+        .is_some_and(|&(lo, _)| lo <= cp)
 }
 
 /// The one character a cell holds, with a variation selector read as its presentation.
@@ -210,5 +222,13 @@ mod tests {
         assert_eq!(single("☺\u{FE0E}"), Some(('☺', Presentation::Text)));
         assert_eq!(single("e\u{301}"), None);
         assert_eq!(single("👍🏽"), None);
+    }
+
+    #[test]
+    fn emoji_presentation_is_unicodes() {
+        assert!(is_emoji_presentation('🙂') && is_emoji_presentation('⌚'));
+        // Wide, and in Apple Color Emoji, but text by default.
+        assert!(!is_emoji_presentation('〰') && !is_emoji_presentation('㊙'));
+        assert!(!is_emoji_presentation('☺') && !is_emoji_presentation('日'));
     }
 }
