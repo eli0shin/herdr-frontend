@@ -71,9 +71,18 @@ tools.
   props are stored as given.
 - [ ] **Terminal adoption labels.** `herdr.space=<id>` and `herdr.tab=<id>` place a terminal in a
   space/tab. Remote ids carry a `<machine>/` prefix in the app, but labels on that machine use
-  bare ids (`cfg/AGENTS.md`). `spawn-worker`, `agent-status` and `repos` start terminals with
+  bare ids (`cfg/AGENTS.md`). `spawn-worker` and `agent-status` start terminals with
   `hc run --bg --keep --no-parent --label herdr.space=… --label herdr.tab=…`
   (`~/.agents/skills/orchestrator/scripts/spawn-worker:311`, `~/.agents/skills/agent-status/ACTIONS.md:32`).
+  `repos` uses `space.new {focus: false}` instead (§0 CLI surface).
+  - An id the app doesn't know becomes a new space or tab, unnamed so Herdr names it
+    (`cfg/AGENTS.md:154`), and it shows up without taking focus. `spawn-worker` creates
+    worker spaces and tabs this way with fresh `sp…`/`tb…` ids, because `space.new` and
+    `tab.new` always focused what they opened (herdr-app#447;
+    `~/.agents/skills/orchestrator/scripts/spawn-worker:292-295`). `agent-status` resume adds
+    a tab to an existing space the same way (`~/.agents/skills/agent-status/ACTIONS.md:32`).
+    herdr-frontend must adopt such terminals the same way: create the unknown space or tab and
+    leave focus where it is.
 - [ ] **App labels on terminals.** `herdr.pinned` (`terminal.pin`), `herdr.right-click=program`
   (`terminal.right_click`) and `herdr.seen` (done → idle shared across clients; seen on a live
   terminal with `hc get t4 --json`).
