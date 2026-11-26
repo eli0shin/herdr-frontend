@@ -20,4 +20,5 @@ Text: The quick brown fox jumps over the lazy dog. 0123456789
 Punctuation: ~!@#$%^&*()_+{}|:"<>? -> => != == <= >= /* */ // www fi fl
 Wide: 日本語のテキスト and 한국어 and emoji 🙂🚀 end
 Marks: café naïve é ä Ωμέγα Привет
+Underlines: [4:1msingle[0m [4:2mdouble[0m [4:3mcurly[0m [4:4mdotted[0m [4:5mdashed[0m [4:3m[58:2::244:71:71merror curl[0m [4:4;33m[58:5:4mdots[0m
 [2 q[29;1H$ 

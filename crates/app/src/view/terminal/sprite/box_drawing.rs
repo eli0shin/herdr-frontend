@@ -1,31 +1,11 @@
-//! Box-drawing lines drawn at the cell's exact pixels, as Ghostty's sprite face draws them rather
-//! than taking them from the font: a port of `linesChar` and its table in
-//! `ghostty:src/font/sprite/draw/box.zig` at `v1.4.0`, for the 109 characters it draws.
-//!
-//! Every other sprite (dashes, arcs, diagonals, blocks, braille, Powerline, legacy computing)
-//! still comes from the font until the fidelity ticket ports the rest of `sprite/draw/*`.
+//! Box Drawing, U+2500 to U+257F: a port of `ghostty:src/font/sprite/draw/box.zig` at `v1.4.0`.
+//! `linesChar` draws the 109 line characters, the rest are dashes, arcs and diagonals.
 
 use terminal::Metrics;
 
-/// A filled box in a cell, in device pixels from the cell's top left: `x0..x1` by `y0..y1`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PxRect {
-    pub x0: u32,
-    pub y0: u32,
-    pub x1: u32,
-    pub y1: u32,
-}
-
-/// A box as a polygon in points, at display scale `s`.
-pub fn rect_pt(b: PxRect, s: f32) -> Vec<[f32; 2]> {
-    let (x0, y0, x1, y1) = (
-        b.x0 as f32 / s,
-        b.y0 as f32 / s,
-        b.x1 as f32 / s,
-        b.y1 as f32 / s,
-    );
-    vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
-}
+use super::PxRect;
+use super::canvas::Canvas;
+use super::raster::{Cap, Path};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Line {
@@ -177,11 +157,173 @@ const LINES: &[(u32, Lines)] = &[
 ];
 
 /// The boxes Ghostty fills for `c`, if it's a box-drawing line character.
-pub fn lines(c: char, metrics: &Metrics) -> Option<Vec<PxRect>> {
+pub(super) fn lines(c: char, metrics: &Metrics) -> Option<Vec<PxRect>> {
     let at = LINES
         .binary_search_by_key(&(c as u32), |&(cp, _)| cp)
         .ok()?;
     Some(lines_char(metrics, LINES[at].1))
+}
+
+/// Draws box-drawing character `cp` (U+2500 to U+257F) on `canvas`.
+pub(super) fn draw(cp: u32, canvas: &mut Canvas, m: &Metrics) {
+    let light = m.box_thickness;
+    let heavy = m.box_thickness * 2;
+    let gap = light.max(4);
+    match cp {
+        0x2504 => dash_horizontal(m, canvas, 3, light, gap),
+        0x2505 => dash_horizontal(m, canvas, 3, heavy, gap),
+        0x2506 => dash_vertical(m, canvas, 3, light, gap),
+        0x2507 => dash_vertical(m, canvas, 3, heavy, gap),
+        0x2508 => dash_horizontal(m, canvas, 4, light, gap),
+        0x2509 => dash_horizontal(m, canvas, 4, heavy, gap),
+        0x250A => dash_vertical(m, canvas, 4, light, gap),
+        0x250B => dash_vertical(m, canvas, 4, heavy, gap),
+        0x254C => dash_horizontal(m, canvas, 2, light, light),
+        0x254D => dash_horizontal(m, canvas, 2, heavy, heavy),
+        0x254E => dash_vertical(m, canvas, 2, light, heavy),
+        0x254F => dash_vertical(m, canvas, 2, heavy, heavy),
+        0x256D => arc(m, canvas, Corner::BottomRight),
+        0x256E => arc(m, canvas, Corner::BottomLeft),
+        0x256F => arc(m, canvas, Corner::TopLeft),
+        0x2570 => arc(m, canvas, Corner::TopRight),
+        0x2571 => diagonal_up(m, canvas),
+        0x2572 => diagonal_down(m, canvas),
+        0x2573 => {
+            diagonal_up(m, canvas);
+            diagonal_down(m, canvas);
+        }
+        _ => {
+            if let Some(boxes) = char::from_u32(cp).and_then(|c| lines(c, m)) {
+                for b in boxes {
+                    canvas.box_(b.x0 as i32, b.y0 as i32, b.x1 as i32, b.y1 as i32, 255);
+                }
+            }
+        }
+    }
+}
+
+/// The corner an arc bends toward: `╭` goes from the bottom to the right.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Corner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+/// `arc`: a light line from the cell's edge to the middle, turning with a cubic of radius half the
+/// cell's smaller side, stroked with butt caps.
+fn arc(m: &Metrics, canvas: &mut Canvas, corner: Corner) {
+    let thick = m.box_thickness;
+    let (w, h, t) = (
+        f64::from(m.cell_width),
+        f64::from(m.cell_height),
+        f64::from(thick),
+    );
+    let cx = f64::from(m.cell_width.saturating_sub(thick) / 2) + t / 2.0;
+    let cy = f64::from(m.cell_height.saturating_sub(thick) / 2) + t / 2.0;
+    let r = w.min(h) / 2.0;
+    let s = 0.25;
+    let (edge_y, toward_y) = match corner {
+        Corner::TopLeft | Corner::TopRight => (0.0, -1.0),
+        Corner::BottomLeft | Corner::BottomRight => (h, 1.0),
+    };
+    let (edge_x, toward_x) = match corner {
+        Corner::TopLeft | Corner::BottomLeft => (0.0, -1.0),
+        Corner::TopRight | Corner::BottomRight => (w, 1.0),
+    };
+    let path = Path::new()
+        .move_to(cx, edge_y)
+        .line_to(cx, cy + toward_y * r)
+        .curve_to(
+            cx,
+            cy + toward_y * s * r,
+            cx + toward_x * s * r,
+            cy,
+            cx + toward_x * r,
+            cy,
+        )
+        .line_to(edge_x, cy);
+    canvas.stroke(&path, t, Cap::Butt);
+}
+
+/// `╱`: a light line from the top right to the bottom left, overshooting the corners a little
+/// along its slope.
+fn diagonal_up(m: &Metrics, canvas: &mut Canvas) {
+    let (w, h) = (f64::from(m.cell_width), f64::from(m.cell_height));
+    let (sx, sy) = ((w / h).min(1.0), (h / w).min(1.0));
+    canvas.line(
+        (w + 0.5 * sx, -0.5 * sy),
+        (-0.5 * sx, h + 0.5 * sy),
+        f64::from(m.box_thickness),
+    );
+}
+
+/// `╲`: a light line from the top left to the bottom right.
+fn diagonal_down(m: &Metrics, canvas: &mut Canvas) {
+    let (w, h) = (f64::from(m.cell_width), f64::from(m.cell_height));
+    let (sx, sy) = ((w / h).min(1.0), (h / w).min(1.0));
+    canvas.line(
+        (-0.5 * sx, -0.5 * sy),
+        (w + 0.5 * sx, h + 0.5 * sy),
+        f64::from(m.box_thickness),
+    );
+}
+
+/// `dashHorizontal`: `count` dashes that tile seamlessly, with half a gap at each end and any
+/// spare pixels added to the dashes.
+fn dash_horizontal(m: &Metrics, canvas: &mut Canvas, count: u32, thick: u32, desired_gap: u32) {
+    if m.cell_width < 2 * count {
+        let t = m.box_thickness;
+        canvas.box_(
+            0,
+            (m.cell_height.saturating_sub(t) / 2) as i32,
+            m.cell_width as i32,
+            (m.cell_height.saturating_sub(t) / 2 + t) as i32,
+            255,
+        );
+        return;
+    }
+    let gap = desired_gap.min(m.cell_width / (2 * count)) as i32;
+    let total_dash = m.cell_width as i32 - count as i32 * gap;
+    let dash = total_dash.div_euclid(count as i32);
+    let mut extra = total_dash.rem_euclid(count as i32);
+    let y = (m.cell_height.saturating_sub(thick) / 2) as i32;
+    let mut x = gap.div_euclid(2);
+    for _ in 0..count {
+        let mut x1 = x + dash;
+        if extra > 0 {
+            extra -= 1;
+            x1 += 1;
+        }
+        canvas.box_(x, y, x1, y + thick as i32, 255);
+        x = x1 + gap;
+    }
+}
+
+/// `dashVertical`: `count` dashes from the top, with a whole gap at the bottom.
+fn dash_vertical(m: &Metrics, canvas: &mut Canvas, count: u32, thick: u32, desired_gap: u32) {
+    if m.cell_height < 2 * count {
+        let t = m.box_thickness;
+        let x = (m.cell_width.saturating_sub(t) / 2) as i32;
+        canvas.box_(x, 0, x + t as i32, m.cell_height as i32, 255);
+        return;
+    }
+    let gap = desired_gap.min(m.cell_height / (2 * count)) as i32;
+    let total_dash = m.cell_height as i32 - count as i32 * gap;
+    let dash = total_dash.div_euclid(count as i32);
+    let mut extra = total_dash.rem_euclid(count as i32);
+    let x = (m.cell_width.saturating_sub(thick) / 2) as i32;
+    let mut y = 0;
+    for _ in 0..count {
+        let mut y1 = y + dash;
+        if extra > 0 {
+            extra -= 1;
+            y1 += 1;
+        }
+        canvas.box_(x, y, x + thick as i32, y1, 255);
+        y = y1 + gap;
+    }
 }
 
 /// `linesChar`: each arm as a box from the cell's edge to where the arms meet, with Ghostty's

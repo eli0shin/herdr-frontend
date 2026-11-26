@@ -8,9 +8,10 @@
 //! - a fill for each run of cells with the same non-default background, selection included;
 //! - pinned cells for what mustn't move the columns after it: wide characters, clusters of
 //!   several code points, and characters the regular face has no glyph for;
-//! - boxes in the vector layer for underlines, strikethrough, overline and box-drawing lines, at
-//!   Ghostty's whole-pixel positions. A box-drawing character also stays in the text, drawn
-//!   transparent, so the row reads as the terminal's text.
+//! - Ghostty's sprites in the vector layer, at whole device pixels: underlines of every style,
+//!   strikethrough, overline, and the characters Ghostty draws itself (box drawing, blocks,
+//!   braille, Powerline, [`sprite`] has the list). A sprite character also stays in the text,
+//!   drawn transparent, so the row reads as the terminal's text.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -21,7 +22,7 @@ use terminal::{CellFlags, Colors, Rgb, Row, RowId, Underline, Width};
 
 use super::font::Face;
 use super::look::{Look, color};
-use super::sprite::{self, PxRect};
+use super::sprite::{self, AlphaBox, Kind};
 
 /// A text weight Ghostty's bold face draws at.
 const BOLD: f32 = 700.0;
@@ -36,8 +37,9 @@ pub struct BuiltRow {
     /// Background runs: columns `start..end` and their color.
     pub fills: Vec<(u16, u16, Color)>,
     pub cells: Vec<Pinned>,
-    /// Lines and sprites over the text, in device pixels from the row's top left.
-    pub boxes: Vec<(PxRect, Color)>,
+    /// Sprites over the text, in device pixels from the row's top left, each box in its color
+    /// at its coverage.
+    pub boxes: Vec<(AlphaBox, Color)>,
     pub wraps: bool,
 }
 
@@ -147,14 +149,12 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
         if cell.flags.contains(CellFlags::FAINT) {
             fg = fg.alpha(look.faint_opacity);
         }
-        let x0 = u32::from(col) * cell_w;
-        let x1 = x0 + span_cols * cell_w;
-        // A wide character's lines span both its cells; its spacer draws none of its own.
-        // Invisible text draws no lines either, as in xterm and Ghostty.
-        if matches!(cell.width, Width::Narrow | Width::Wide)
-            && !cell.flags.contains(CellFlags::INVISIBLE)
-        {
-            decorations(cell, fg, x0, x1, face, &mut built.boxes);
+        let x0 = (u32::from(col) * cell_w) as i32;
+        // Every cell draws its own decorations, a wide character's spacer too, as Ghostty does:
+        // a curl or dots start again in each cell. Invisible text draws none, as in xterm and
+        // Ghostty.
+        if !cell.flags.contains(CellFlags::INVISIBLE) {
+            decorations(cell, fg, x0, face, &mut built.boxes);
         }
 
         let text = cell.text.as_str();
@@ -168,21 +168,14 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
             _ => None,
         };
 
-        // A box-drawing line draws as Ghostty's sprite, in the vector layer. Its character
-        // stays in the row, drawn transparent, so a screen reader still reads it.
+        // A character Ghostty draws itself draws as its sprite, in the vector layer. It stays in
+        // the row, drawn transparent, so a screen reader still reads it.
         let mut ink_fg = fg;
         if drawn
             && let Some(c) = single
-            && let Some(boxes) = sprite::lines(c, metrics)
+            && let Some(glyph) = sprite::glyph(c, span_cols as u8, metrics)
         {
-            built.boxes.extend(boxes.into_iter().map(|b| {
-                let shifted = PxRect {
-                    x0: b.x0 + x0,
-                    x1: b.x1 + x0,
-                    ..b
-                };
-                (shifted, fg)
-            }));
+            push_sprite(&glyph, x0, fg, &mut built.boxes);
             ink_fg = Color::TRANSPARENT;
         }
 
@@ -259,58 +252,45 @@ fn span(start: usize, end: usize, ink: Ink, style: &TextStyle) -> Span {
     span
 }
 
-/// Underline, strikethrough and overline as boxes at Ghostty's positions
-/// (`ghostty:src/font/sprite/draw/special.zig`). Curly, dotted and dashed underlines draw as
-/// single ones until the fidelity ticket ports their sprites.
+/// A sprite's boxes at `x0` in the row, in `color` at each box's coverage.
+fn push_sprite(glyph: &sprite::Sprite, x0: i32, color: Color, boxes: &mut Vec<(AlphaBox, Color)>) {
+    boxes.extend(glyph.boxes.iter().map(|b| {
+        let at = AlphaBox {
+            x0: b.x0 + x0,
+            x1: b.x1 + x0,
+            ..*b
+        };
+        (at, color.alpha(color.a * f32::from(b.alpha) / 255.0))
+    }));
+}
+
+/// Underline, strikethrough and overline sprites for one cell, as Ghostty's `rebuildRow` adds
+/// them: the underline in the underline color (the foreground's if unset), the others in the
+/// foreground, all at the cell's faint opacity.
 fn decorations(
     cell: &terminal::Cell,
     fg: Color,
-    x0: u32,
-    x1: u32,
+    x0: i32,
     face: &Face,
-    boxes: &mut Vec<(PxRect, Color)>,
+    boxes: &mut Vec<(AlphaBox, Color)>,
 ) {
     let m = &face.metrics;
-    // The sprite canvas reaches a quarter cell past the cell's top and bottom.
-    let below = m.cell_height + m.cell_height / 4;
-    let mut line = |y0: u32, thickness: u32, color: Color| {
-        boxes.push((
-            PxRect {
-                x0,
-                y0,
-                x1,
-                y1: y0 + thickness,
-            },
-            color,
-        ));
-    };
     if cell.underline != Underline::None {
-        let color = cell.underline_color.map_or(fg, |c| {
-            let c = super::look::color(c);
-            c.alpha(fg.a)
-        });
-        let thickness = m.underline_thickness;
-        match cell.underline {
-            Underline::Double => {
-                let y = m
-                    .underline_position
-                    .min(below.saturating_sub(2 * thickness));
-                line(y.saturating_sub(thickness), thickness, color);
-                line(y + thickness, thickness, color);
-            }
-            _ => {
-                let y = m.underline_position.min(below.saturating_sub(thickness));
-                line(y, thickness, color);
-            }
-        }
-    }
-    if cell.flags.contains(CellFlags::STRIKETHROUGH) {
-        line(m.strikethrough_position, m.strikethrough_thickness, fg);
+        let color = cell
+            .underline_color
+            .map_or(fg, |c| super::look::color(c).alpha(fg.a));
+        push_sprite(
+            &sprite::decoration(Kind::Underline(cell.underline), m),
+            x0,
+            color,
+            boxes,
+        );
     }
     if cell.flags.contains(CellFlags::OVERLINE) {
-        // The row's vector layer can't reach above the row, so an overline above the cell sits
-        // at its top edge.
-        line(m.overline_position.max(0) as u32, m.overline_thickness, fg);
+        push_sprite(&sprite::decoration(Kind::Overline, m), x0, fg, boxes);
+    }
+    if cell.flags.contains(CellFlags::STRIKETHROUGH) {
+        push_sprite(&sprite::decoration(Kind::Strikethrough, m), x0, fg, boxes);
     }
 }
 
@@ -333,7 +313,7 @@ impl BuiltRow {
         }
         let mut shape = Shape::new();
         for &(b, color) in &self.boxes {
-            shape = shape.fill(sprite::rect_pt(b, face.scale), color);
+            shape = shape.fill(sprite::alpha_box_pt(b, 0, face.scale), color);
         }
         row.shape(shape)
     }
@@ -538,7 +518,7 @@ mod tests {
         assert_eq!(row.spans[0].color, Some(Color::TRANSPARENT));
         assert_eq!(row.spans[1].color, Some(rgb(FG)));
         // │ centered in column 0, ─ across column 1, at Ghostty's 2 px.
-        let cell_w = face.metrics.cell_width;
+        let cell_w = face.metrics.cell_width as i32;
         assert!(row.boxes.iter().all(|(_, c)| *c == rgb(FG)));
         assert!(
             row.boxes
@@ -560,8 +540,8 @@ mod tests {
         let at = |col: u32| -> Vec<(u32, u32)> {
             row.boxes
                 .iter()
-                .filter(|(b, _)| b.x0 == col * m.cell_width)
-                .map(|(b, _)| (b.y0, b.y1 - b.y0))
+                .filter(|(b, _)| b.x0 == (col * m.cell_width) as i32)
+                .map(|(b, _)| (b.y0 as u32, (b.y1 - b.y0) as u32))
                 .collect()
         };
         assert_eq!(at(0), [(m.underline_position, m.underline_thickness)]);
@@ -574,7 +554,68 @@ mod tests {
             at(2),
             [(m.underline_position - t, t), (m.underline_position + t, t)]
         );
-        assert_eq!(at(3), [(0, m.overline_thickness)]);
+        assert_eq!(
+            at(3),
+            [(m.overline_position.max(0) as u32, m.overline_thickness)]
+        );
+    }
+
+    #[test]
+    fn a_curly_underline_in_its_own_color_starts_again_in_every_cell() {
+        let face = face();
+        let w = face.metrics.cell_width as i32;
+        // Neovim's diagnostic: undercurl (4:3) in a 24-bit underline color (58:2).
+        let row = built("\x1b[4:3;58:2::255:0:0mab\x1b[0m");
+        let red = rgb(0xff0000);
+        assert!(!row.boxes.is_empty());
+        assert!(row.boxes.iter().all(|(_, c)| c.r == red.r && c.g == 0.0));
+        // Each cell pushes its own sprite, so the second half is the first moved a cell right.
+        let (first, second) = row.boxes.split_at(row.boxes.len() / 2);
+        let moved: Vec<_> = first
+            .iter()
+            .map(|(b, c)| (b.x0 + w, b.y0, b.x1 + w, b.y1, *c))
+            .collect();
+        let second: Vec<_> = second
+            .iter()
+            .map(|(b, c)| (b.x0, b.y0, b.x1, b.y1, *c))
+            .collect();
+        assert_eq!(moved, second, "the same sprite in each cell");
+        assert!(row.boxes.iter().any(|(_, c)| c.a < 1.0), "antialiased");
+    }
+
+    #[test]
+    fn a_wide_characters_spacer_draws_its_own_underline() {
+        let face = face();
+        let m = face.metrics;
+        let row = built("\x1b[4m日\x1b[0m");
+        let starts: Vec<i32> = row.boxes.iter().map(|(b, _)| b.x0).collect();
+        assert_eq!(starts, [0, m.cell_width as i32]);
+    }
+
+    #[test]
+    fn blocks_and_braille_draw_as_sprites() {
+        let row = built("█▒⣿");
+        assert_eq!(
+            row.text.chars().filter(|&c| c != ' ').count() + row.cells.len(),
+            3
+        );
+        // █ is one opaque box filling its cell; ▒ is half-alpha.
+        let face = face();
+        let (w, h) = (
+            face.metrics.cell_width as i32,
+            face.metrics.cell_height as i32,
+        );
+        assert!(
+            row.boxes
+                .iter()
+                .any(|(b, c)| (b.x0, b.y0, b.x1, b.y1) == (0, 0, w, h) && c.a == 1.0)
+        );
+        assert!(
+            row.boxes
+                .iter()
+                .any(|(b, c)| b.x0 == w && (c.a - 128.0 / 255.0).abs() < 1e-6)
+        );
+        assert!(row.boxes.iter().filter(|(b, _)| b.x0 >= 2 * w).count() >= 2);
     }
 
     #[test]
