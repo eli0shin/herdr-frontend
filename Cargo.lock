@@ -1679,6 +1679,12 @@ dependencies = [
 [[package]]
 name = "model"
 version = "0.0.1"
+dependencies = [
+ "herdr-proto",
+ "herdr-shared",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "moxcms"

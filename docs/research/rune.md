@@ -524,6 +524,45 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   `pane-<id>`, addressed as the path `pane-<id>/screen`), so scripts, tests
   and focus all address the same elements.
 
+### `model` as built
+
+`crates/model` depends on `herdr-proto` and `herdr-shared` only, with no Rune types. Its shape:
+
+- **One transition.** `Model::step(now, Event | Action) -> Effects`. `now` is the app clock
+  (Rune's `Tx::clock`), passed with every input so deadlines never run on a stale time. Events
+  are core news (`Connected`, `Lost`, `Terminals(TerminalUpdate)` built with
+  `TerminalUpdate::from_changes`, `Machines`), replies (`DocRead`, `DocWritten`,
+  `Reply { token }`, `StreamClosed`), input (`Key { chord, terminal }`), and `Tick` when a
+  `WakeAt` comes due.
+  `Effects` lists what to do (`Call` with a `Token`, `Doc` rounds, `Terminal` commands, `App`,
+  `Focus`, `Toast`, `Alert`, `Pick`, `NotYet`, `WakeAt`, `SaveView`), plus `handled`: whether a
+  key was used, so it must not reach the terminal.
+- **World and view.** `World` holds one `Mirror` per machine (this one first, then by name;
+  temporary machines left out) and the terminal records. `View` holds this screen's choices by
+  id and falls back to the first space, tab or pane. `View::reconcile` forgets ids a read layout
+  lost, keeps a machine's ids until its layout is read, and replaces a closed space or tab with
+  the one that slides into its place. Eli's close rule (left first, skipping hidden and settled
+  tabs; an agent's tab hands over to the next agent) runs on top for the shown space. After each
+  step the shown space, tab and pane are written down, so a swap or a tab moved first can't move
+  what is shown. `View::to_json` is the saved file; the jump list is in memory only.
+- **Launches are two-phase.** `tab.new`, splits and new spaces make their ids, send
+  `terminal.run` with `herdr.space`/`herdr.tab`/`herdr.seen=0`, `keep` and herdr-app's `TERM`
+  env, and put the pane in the layout only when the reply brings the address. A labeled terminal
+  whose tab has a launch pending is not adopted meanwhile. The model also adopts labeled
+  orphans, removes panes whose stream ended or whose terminal the core no longer has, and backs a
+  failing machine's layout reads off for `RETRY` (2 s).
+- **Keys.** `Keymap::eli()` is §22's effective table as data (`Chord` in Eli's syntax); the key
+  file and live reload are ticket 016's. `Mode` is `Normal`, `Prefix` (dropped after 1 s, GPUI's
+  pending-key timeout; an unbound sequence is swallowed whole), `Popup` or `Copy`. Popups and
+  copy mode read their own keys (§22), then fall back to one-key global bindings, as Herdr app
+  runs window keys over a dialog; `tab.close`/`pane.close` close the popup instead. List popups
+  keep a query and a wrapping cursor; the feature that fills them reports `PopupRows` and resolves
+  `Effect::Pick`. Prompts, confirms and the agent-jump bar resolve in the model.
+- **Not built here** (they return `Effect::NotYet`): Neovim-aware Ctrl+H/J/K/L where the editor
+  label is set, `pane.resize`, the review view, peek, menus, folds, links and pane drag. Writing
+  `herdr.seen` labels (`SeenTracker`) and drawing alerts are ticket 025's; the model keeps
+  `Attention` for displayed status and marks what the person looks at as seen.
+
 [rune]: https://github.com/anomalyco/rune/tree/4918969f04dce020f63b34e024368a86e5e1857d
 [rune-readme]: https://github.com/anomalyco/rune/blob/4918969f04dce020f63b34e024368a86e5e1857d/README.md
 [rune-agents]: https://github.com/anomalyco/rune/blob/4918969f04dce020f63b34e024368a86e5e1857d/AGENTS.md
