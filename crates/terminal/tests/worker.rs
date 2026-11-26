@@ -219,3 +219,52 @@ fn dropping_the_terminal_stops_its_worker() {
         Err(mpsc::TryRecvError::Disconnected)
     ));
 }
+
+#[test]
+fn a_writer_feeds_the_worker_from_another_thread() {
+    let (terminal, wakes) = spawn(config());
+    let writer = terminal.writer();
+    std::thread::spawn(move || writer.write(b"from a thread".to_vec()))
+        .join()
+        .unwrap();
+    snapshot_where(&terminal, &wakes, |s| s.line(0) == "from a thread");
+}
+
+#[test]
+fn a_writer_left_behind_doesnt_keep_the_worker_running() {
+    let (terminal, wakes) = spawn(config());
+    let writer = terminal.writer();
+    drop(terminal);
+    let deadline = Instant::now() + PATIENCE;
+    while wakes.recv_timeout(Duration::from_millis(10)).is_ok() {
+        assert!(Instant::now() < deadline);
+    }
+    assert!(matches!(
+        wakes.try_recv(),
+        Err(mpsc::TryRecvError::Disconnected)
+    ));
+    // Writing to a stopped terminal goes nowhere.
+    writer.write(b"late".to_vec());
+}
+
+#[test]
+fn a_snapshot_now_has_everything_sent_before_it_and_empties_the_handoff() {
+    let (terminal, wakes) = spawn(config());
+    // The first frame waits in the handoff, untaken.
+    wakes.recv_timeout(PATIENCE).expect("woken");
+    let writer = terminal.writer();
+    writer.write(b"one\r\n".to_vec());
+    terminal.write(b"two".to_vec());
+    let s = terminal.snapshot_now(PATIENCE).expect("a snapshot");
+    assert_eq!((s.line(0).as_str(), s.line(1).as_str()), ("one", "two"));
+    assert_eq!(terminal.take_snapshot(), None, "the stale frame is gone");
+
+    // What comes after shows as usual.
+    terminal.write(b" three".to_vec());
+    snapshot_where(&terminal, &wakes, |s| s.line(1) == "two three");
+
+    // A reset through the writer starts the screen over.
+    terminal.writer().reset();
+    let s = terminal.snapshot_now(PATIENCE).expect("a snapshot");
+    assert_eq!(s.text(), "");
+}

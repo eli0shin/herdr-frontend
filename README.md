@@ -14,7 +14,7 @@ macOS only for now. Needs [rustup](https://rustup.rs) (the toolchain comes from
 `rust-toolchain.toml`) and [just](https://just.systems).
 
 ```sh
-just run          # open the window
+just run          # open the window on your herdr-core
 just test         # pin check, fmt, clippy, tests and bindings check, as CI runs them
 just snap [scene] # render a scene headless to target/snap/<scene>.png
 just ghostty-diff # compare the terminal renderer with Ghostty.app (opens Ghostty windows)
@@ -22,6 +22,12 @@ just pane-budget  # time many terminal panes changing at once against the 120 Hz
 just check-pins   # check the Rune pin against Rune's patch list at that rev
 just bindings     # regenerate the libghostty-vt bindings (`--check` fails on a diff)
 ```
+
+`just run` connects with `hc connect`, as Herdr app does: the core `HC_SESSION` names, or your
+default one. It reads the shared layout and never writes it except for edits it makes itself
+(adopting a labeled terminal, say). Its own files (this window's view and place) live in
+`$HERDR_FRONTEND_HOME`, else `~/.config/herdr-frontend`. `--snap`, `--tree` and `--script` never
+connect to a core.
 
 The first build downloads the pinned libghostty-vt xcframework (16 MB), checks its SHA-256 and
 caches it in `~/Library/Caches/ghostty-vt-sys` (set `GHOSTTY_VT_CACHE_DIR` to move it). It needs

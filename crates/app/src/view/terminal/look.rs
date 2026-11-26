@@ -88,3 +88,33 @@ pub fn color(c: Rgb) -> Color {
         a: 1.0,
     }
 }
+
+/// The window's own colors around the terminals, until the theme ticket maps the whole of
+/// arctic (`~/.dotfiles/home/.config/herdr-app/themes/arctic.json` `colors`) to Rune's tokens.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChromeColors {
+    /// The window behind everything.
+    pub canvas: Rgb,
+    /// The sidebar and the tab strip.
+    pub chrome: Rgb,
+    /// The line between split panes.
+    pub border: Rgb,
+    /// A selected tab.
+    pub raised: Rgb,
+    pub text: Rgb,
+    pub muted: Rgb,
+}
+
+impl ChromeColors {
+    pub fn arctic() -> ChromeColors {
+        let hex = |v: u32| Rgb::new((v >> 16) as u8, (v >> 8) as u8, v as u8);
+        ChromeColors {
+            canvas: hex(0x1e1e1e),
+            chrome: hex(0x1e1e1e),
+            border: hex(0x858585),
+            raised: hex(0x2a2d2e),
+            text: hex(0xd4d4d4),
+            muted: hex(0x8f8f8f),
+        }
+    }
+}

@@ -13,6 +13,9 @@
 //! - **[`Output`]** on a channel, in order: query replies (send them to herdr-core as
 //!   AUTOMATIC_INPUT), encoded user input (DATA), and [`Event`]s (title, bell, clipboard, ...).
 //!
+//! Another thread (the one reading the core's attach stream) feeds output through a
+//! [`Writer`]. [`Terminal::snapshot_now`] waits for a settled screen, for tests and scenes.
+//!
 //! A [`Vt`] can also be driven directly, with no thread, as the replay tests do.
 //!
 //! The cell metrics are ported from Ghostty, so a cell here is the same whole-pixel cell Ghostty
@@ -87,6 +90,10 @@ enum Request {
     },
     /// The UI took the snapshot in the handoff and the worker has a newer frame waiting.
     Publish,
+    /// Snapshot everything handled so far, now, and empty the handoff.
+    SnapshotNow(Sender<Snapshot>),
+    /// The terminal is dropped: stop, even while [`Writer`]s keep the channel open.
+    Stop,
 }
 
 /// The one-slot handoff between the worker and the UI.
@@ -137,9 +144,15 @@ impl Terminal {
 
     /// Feeds the program's output (herdr-core DATA frames).
     pub fn write(&self, bytes: impl Into<Vec<u8>>) {
-        let bytes = bytes.into();
-        if !bytes.is_empty() {
-            self.send(Request::Write(bytes));
+        self.writer().write(bytes);
+    }
+
+    /// A handle another thread feeds the program's output through (the thread that reads the
+    /// core's attach stream). Requests from one thread arrive in the order it sent them, through
+    /// this handle or the terminal itself.
+    pub fn writer(&self) -> Writer {
+        Writer {
+            requests: self.requests.clone(),
         }
     }
 
@@ -201,6 +214,15 @@ impl Terminal {
         snapshot
     }
 
+    /// A snapshot of everything this thread sent the worker so far, waiting up to `timeout` for
+    /// it. The handoff is emptied, so the next [`Terminal::take_snapshot`] has only what changes
+    /// after. It blocks: for tests and scenes that need a settled screen, never a UI frame.
+    pub fn snapshot_now(&self, timeout: std::time::Duration) -> Option<Snapshot> {
+        let (tx, rx) = mpsc::channel();
+        self.send(Request::SnapshotNow(tx));
+        rx.recv_timeout(timeout).ok()
+    }
+
     /// Replies, encoded input and events, in order. Drain it whenever the waker runs.
     pub fn output(&self) -> &Receiver<Output> {
         &self.output
@@ -213,9 +235,33 @@ impl Terminal {
     }
 }
 
+/// Feeds a [`Terminal`]'s worker from another thread. Cheap to clone; once the terminal is
+/// dropped, writes go nowhere.
+#[derive(Clone)]
+pub struct Writer {
+    requests: Sender<Request>,
+}
+
+impl Writer {
+    /// The program's output, as [`Terminal::write`].
+    pub fn write(&self, bytes: impl Into<Vec<u8>>) {
+        let bytes = bytes.into();
+        if !bytes.is_empty() {
+            let _ = self.requests.send(Request::Write(bytes));
+        }
+    }
+
+    /// Starts the screen over, as [`Terminal::reset`]: before a repaint that replaces it.
+    pub fn reset(&self) {
+        let _ = self.requests.send(Request::Reset);
+    }
+}
+
 impl Drop for Terminal {
     fn drop(&mut self) {
-        // Closing the request channel ends the worker's loop.
+        // A `Writer` may still hold the channel open, so say stop; closing it ends the loop
+        // too, for a worker that never reads the request.
+        self.send(Request::Stop);
         let (closed, _) = mpsc::channel();
         drop(std::mem::replace(&mut self.requests, closed));
         if let Some(worker) = self.worker.take() {
@@ -260,8 +306,10 @@ impl Worker {
             let mut parsed = 0;
             let mut next = first;
             while let Some(request) = next {
-                if let Request::Write(bytes) = &request {
-                    parsed += bytes.len();
+                match &request {
+                    Request::Write(bytes) => parsed += bytes.len(),
+                    Request::Stop => return,
+                    _ => {}
                 }
                 self.handle(request);
                 next = if parsed < BATCH_BYTES {
@@ -330,7 +378,18 @@ impl Worker {
                 }
                 false
             }
-            Request::Publish => false,
+            Request::Publish | Request::Stop => false,
+            Request::SnapshotNow(reply) => {
+                self.flush();
+                {
+                    let mut handoff = self.handoff.lock().expect("handoff lock");
+                    handoff.snapshot = None;
+                    handoff.waiting = false;
+                }
+                self.changed = false;
+                let _ = reply.send(self.vt.snapshot());
+                return;
+            }
         };
         self.changed |= changed;
         // Replies leave as soon as their write is parsed, so the program isn't kept waiting
