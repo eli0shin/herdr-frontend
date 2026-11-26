@@ -1241,6 +1241,11 @@ dependencies = [
 [[package]]
 name = "herdr-shared"
 version = "0.0.1"
+dependencies = [
+ "herdr-proto",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "hermit-abi"

@@ -561,10 +561,13 @@ are worth raising upstream for herdr-app: use `resumed` for hidden and reattache
   Native OS notifications and sounds are out of scope.
   - Displayed status is blocked (blocked or error), working, done (turn > seen), or idle. Tabs and
     spaces roll up by the priority blocked > done > working > idle.
-  - When to raise an in-app toast: entering blocked or error always does. Going from busy to
-    anything else does only when the person isn't looking.
+  - When to raise an alert: entering blocked or error always does. Going from busy to
+    anything else does only when the person isn't looking. An alert shows an in-app toast only
+    when the person isn't looking at that agent (`app:src/window.rs` `alert` returns early when
+    `looking`), so a blocked agent on screen alerts without a toast.
   - Only terminals in a pane raise one. Sub-agents (`parent` set) never do; their root agent
-    stands in for them. Raising one also brings the root agent's settled tab back.
+    stands in for them. Raising one also brings the root agent's settled tab back, toast or not.
+    What changed before the first listing raises nothing.
   - herdr-app also plays a sound when sounds are enabled in its settings (`app:src/window.rs`
     `alert`). Eli has them off, and herdr-frontend leaves them out. Each app's toasts show only in
     its own window, so running both at once doesn't duplicate anything on screen.
@@ -702,6 +705,46 @@ pub enum Intent { NewSpace{..}, NewTab{..}, Split{..}, ClosePane{..}, MoveSpace{
 - Tests replay messages recorded from an isolated core by `scripts/record_proto_fixtures.py`
   (`crates/herdr-proto/tests/fixtures`), including the check that applying the recorded events to
   the subscribe snapshot gives the core's final `terminal.list`.
+
+### herdr-shared as built
+
+`crates/herdr-shared` ports herdr-app's rules from `app:` v0.1.18 (`src/mirror.rs`,
+`src/layout.rs`, `src/model.rs`, `src/mirror_sync.rs`, and `reconcile`, `adopt`,
+`checked_closed`, `share_seen` and `kill_targets` in `src/window.rs`):
+
+- `Document` → `Space` → `Tab` → `Node` types only what herdr-frontend reads. Every other field,
+  at every level, stays in `extra` as read, including the root's and every node's (which
+  herdr-app drops). A node's `type` it doesn't know is `Kind::Other`, whose `children` are still
+  walked when they read as nodes. Block `content` is kept whole and read through
+  `Content::shows` in herdr-app's untagged order. `size`, a stack's `active`, `floating` and looks
+  live in `extra` behind accessors. Fields herdr-app always writes are always written, with
+  herdr-app's defaults when a document left them out. Sizes are computed in `f32` and written
+  widened to `f64`, as herdr-app's `serde_json::to_value` writes them.
+- Golden tests (`tests/golden.rs`) decode and encode real documents recorded read-only from the
+  live core by `scripts/record_shared_fixtures.py`, and compare against the core's exact bytes.
+  The core stores documents with sorted keys and no spaces. The script replaces space and tab
+  names and folders, after checking that re-printing the untouched value gives the core's bytes.
+- `Intent`s carry every id they create and are idempotent: one whose new ids exist, or whose
+  terminal already has a pane, does nothing. A swap records where its pane was and does nothing
+  once it has moved. So a replay never doubles or undoes an edit, and a terminal both apps placed
+  never shows twice. Intents use qualified ids, as the app holds them.
+- `Mirror` does no I/O. `next_round` returns the `DocGet` or `DocSet` to make, one in flight at a
+  time; `finish_read` and `finish_write` take the reply. A conflict re-reads, then replays the
+  intents on the fresh copy, dropping those that no longer apply; after `MAX_REPLAYS` (5)
+  conflicts in a row the rest are given up. The count starts again whenever nothing is left
+  to write. Reads come from `note_doc` (a newer version),
+  `note_missed` and `reconnected`. `needs_update`/`needs_login` block until one of those, and a
+  document that can't be read is never written. Its `shown()` is the base with pending edits
+  applied, qualified.
+- `labels`: the label keys and writes (new pane, keep, park, pin, seen, unread); `SeenTracker`
+  ports `share_seen` and the per-batch echo check (`Changes::seen`).
+- `attention`: `Agent` (`set_word`, `displayed`), `rollup`, `alert`, `alert_for`, `toast`,
+  `root_agent`, and `Attention`, which raises nothing on the first listing.
+- `adoption` (`orphans`, `adoptable`, `needs_keep`, `folder`, `Intent::Adopt`) and `closed`
+  (`stream_closed`, `missing`, `closed_by_lookup`, `Births`, `close_targets`,
+  `kill_tree_targets`, `legacy_child_lifetime`). Two deliberate differences from herdr-app: an
+  adopted terminal whose labeled tab exists but is empty goes into that tab instead of a
+  duplicate tab with the same id, and a new space never reuses a tab id another space has.
 
 ### Threading
 
