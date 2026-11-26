@@ -3,6 +3,19 @@
 A Rust/Rune desktop client of herdr-core. It must interoperate with a running Herdr app on the same
 core: never break the shared layout documents, labels, or terminal state that Herdr app relies on.
 
+## Scope (decided with Eli)
+
+- macOS first. Rune is cross-platform, but nothing is built or tested for Linux or Windows yet.
+- UI is anomalyco/rune, the GPU-rendered native Rust UI framework, not a TUI library. Sidebar, tabs,
+  popups, palette and toasts are native Rune elements; terminal panes are GPU-rendered views.
+- Features are built in Rust, configured by files (keys, theme, settings). No JS mod runtime.
+- Parity target is Eli's own setup (`docs/research/feature-inventory.md`): his eli layout, arctic
+  theme and Operator Mono font. Shipped-but-unused Herdr features are out of scope.
+- No native OS notifications and no sounds, ever. Attention shows in the app only (sidebar,
+  markers, in-app toasts).
+- When you need "the latest" version of anything, look it up live without putting a version or
+  date in the query; don't trust remembered versions.
+
 ## Tracker
 
 Tickets live in the `herdr-frontend` Tickets project (`tickets --project herdr-frontend ...`).
