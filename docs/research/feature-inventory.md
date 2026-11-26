@@ -57,6 +57,12 @@ labels, OSC 7501 agent status, `exec --on` for other machines, and the per-machi
 layout document. herdr-frontend talks to herdr-core directly, so the core concept is what it must
 reproduce. Keys are written as in `keys.json`: `ctrl-g s` means press Ctrl+G, release, then S.
 
+"The TUI" means legacy Herdr, the terminal program Eli used before Herdr app and whose keys
+his setup carries over. "The review TUI" is Eli's `review` program, which runs in a terminal
+pane. Neither describes herdr-frontend. Like Herdr app, herdr-frontend is a native desktop app on
+[Rune](https://github.com/anomalyco/rune): sidebars, tab bars, popups, the palette and toasts are
+native elements drawn in its window, and terminal panes are GPU-rendered views inside it.
+
 ---
 
 ## 0. Interop contract (must not break)
