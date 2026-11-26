@@ -623,17 +623,30 @@ That gives the renderer two requirements:
    the test above, and mode-2048 reports. herdr-core leaves 2048 to viewers on purpose. It drops
    its own screen's reports, because "In-band resize belongs to the viewer, which knows the pixel
    geometry" (`core:crates/herdr-core/src/relay.rs:57-60`). Because our local terminal follows the core's
-   grid, our 2048 reports carry the right cols and rows. Their pixel fields are `cols × cell`
-   with our own cell, though, and Herdr app's cell can differ. For Eli's Operator Mono at
-   18.7 pt at 1x, Herdr app's formula (§5) gives about 10×26, assuming GPUI reports hhea
-   ascent and descent. Ghostty's metrics give our 10×22. So two viewers can still send reports
-   that disagree on pixel size. Whether several typing viewers should all
-   answer these queries is still an open herdr-core question.
+   grid, our 2048 reports carry the right cols and rows. Their pixel fields are `cols × cell`,
+   with each viewer's own cell.
+   - **For Eli's setup, both viewers report the same pixel size.** The installed Herdr app is
+     0.1.18 (`herdr-core-protocol.md:14`). At `v0.1.18` (`9a9ae13`), its `font_cell_metrics`
+     (`src/terminal.rs:1846-1906`) ports Ghostty's metrics: the same vertical-metrics order,
+     rounded `ascent − descent + gap`, the widest ASCII advance, in device pixels. So
+     Operator Mono Book Herdr at 18.7 pt gives 10×22 at 1x and 21×45 at 2x in both apps.
+   - The pixel fields differ only when the two viewers use different fonts, sizes or display
+     scales.
+
+   Whether several typing viewers should all answer these queries is still an open herdr-core
+   question.
 
 ## 5. Why herdr-app's size reporting and Neovim rendering are wrong
 
-Each item is checked against `herdr-app@b721ded`. I read the code and didn't take screenshots,
-so symptoms are stated as what the code does.
+Each item is checked against `herdr-app@b721ded` (0.1.14), the local checkout. I read the code
+and didn't take screenshots, so symptoms are stated as what the code does.
+
+> **Note:** the installed Herdr app is 0.1.18 (`herdr-core-protocol.md:14`), and 0.1.18 moved
+> to Ghostty-style cell metrics (`v0.1.18` `src/terminal.rs:1846-1906` `font_cell_metrics`).
+> So the items below that depend on its metrics (3, 4 and 5: the fractional cell, the 5%-short
+> images and the line height) describe the pinned `b721ded`, not the current release.
+> I haven't re-checked the other items against 0.1.18. Ticket 001's doc lists other sizing
+> behavior that changed since then.
 
 ### Size reporting
 
