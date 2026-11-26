@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: docs
+        run: test -f README.md && test -f AGENTS.md
+      - name: rust
+        if: hashFiles('Cargo.toml') != ''
+        run: |
+          rustup show
+          cargo fmt --all -- --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
