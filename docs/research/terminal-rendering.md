@@ -5,9 +5,20 @@ Ticket `003-research-terminal-rendering-with-libghostty-vt`. Researched 2026-11-
 ## Recommendation
 
 Build on **libghostty-vt 1.0.2** for terminal state, render state, selection, search and input
-encoding. Write our own GPU renderer, drawn by a Rune `Compositor` at `El::effect` slots, and
-port Ghostty's renderer logic: `Metrics.calc`, `rebuildRow`, the sprite font and the cell
-shaders. Don't embed Ghostty's surface (`ghostty.h`), upstream or forked.
+encoding. Render the terminals ourselves inside the Rune window, porting Ghostty's renderer
+logic: `Metrics.calc`, `rebuildRow`'s run and color rules, the sprite font, and glyph
+placement. Don't embed Ghostty's surface (`ghostty.h`), upstream or forked.
+
+Where our renderer draws:
+
+1. **First, on Rune's `rune::grid` element.** It's "a terminal's screen as one element". It
+   caches each row, has accessibility, and is already measured, and opencode-rune draws its
+   libghostty-vt terminal with it.
+2. **If grid fails the fidelity or many-pane gates in [§2](#where-the-renderer-draws), move to
+   a custom wgpu pass** that a Rune `Compositor` paints at `El::effect` slots, porting Ghostty's
+   cell shaders.
+
+Ticket 004 (PR #2) reaches the same order.
 
 Why, in short:
 
@@ -27,7 +38,8 @@ Why, in short:
   same `terminal.RenderState` that libghostty-vt's C render API wraps. Porting its cell-building
   code is a translation, not a reverse-engineering job.
 - **Many panes are cheaper.** Each Ghostty surface brings its own renderer thread, IO thread and
-  swap chain. Our design has one renderer, one glyph atlas and one pass for every pane.
+  swap chain. Our panes are elements in Rune's one frame, sharing its text system and atlas.
+  The grid measures 0.40 ms per frame with one changed row on a 200×60 screen.
 - **iOS reuse is better.** The libghostty-vt xcframework ships iOS slices, and Rune's
   `LayerHost` runs a Rune runtime on a `CAMetalLayer`, so the same renderer and core run on iOS.
 
@@ -110,10 +122,10 @@ So nothing has changed, and the direction is firmer than it was.
 | --- | --- | --- |
 | Upstream support | None. The API is internal and "tailored to the needs of the macOS app" (`ghostty.h:1-11`, #15295). Manual IO exists only in forks. | Stable semver C ABI. Minor releases only add, and CI checks each change against ABI goldens (`dist/doxygen/pages/stability.md`, `PACKAGING-LIBGHOSTTY.md` "Versioning and ABI"). |
 | IO from herdr-core | Needs a fork. The forks feed output through `Termio.processOutput` under the renderer mutex and get input through a callback on Ghostty's IO thread (Geistty `ARCHITECTURE.md`, gterm `PLAN.md`). | Built in: `ghostty_terminal_vt_write()` in, `GHOSTTY_TERMINAL_OPT_WRITE_PTY` callback out. herdr-app already works this way (`herdr-app:src/vt.rs:385`). |
-| Compositing in a Rune/wgpu window | The surface turns a caller's `NSView`/`UIView` into a layer-hosting view with its own `IOSurfaceLayer` (`ghostty:src/apprt/embedded.zig:382`, `ghostty:src/renderer/Metal.zig:91-129`). Rune overlays, popovers and drag previews can't draw above it except as separate native views or windows. Sharing one GPU frame would need yet another fork patch to export the IOSurface into Rune's `NativeSurface` (`rune:crates/rune-media/src/native_surface/mod.rs`), with one frame of latency and cross-device sync. | Drawn inside Rune's own frame. A custom `Compositor` paints each pane's `El::effect` slot "in painter order, inside the slot's isolated layers, so the slot's opacity (an exit fade included), clip and transform already apply" (`rune:crates/rune/src/compose.rs:9-14`). Overlays, splits and animations just work. |
+| Compositing in a Rune/wgpu window | The surface turns a caller's `NSView`/`UIView` into a layer-hosting view with its own `IOSurfaceLayer` (`ghostty:src/apprt/embedded.zig:382`, `ghostty:src/renderer/Metal.zig:91-129`). Rune overlays, popovers and drag previews can't draw above it except as separate native views or windows. Sharing one GPU frame would need yet another fork patch to export the IOSurface into Rune's `NativeSurface` (`rune:crates/rune-media/src/native_surface/mod.rs`), with one frame of latency and cross-device sync. | Drawn inside Rune's own frame. A `rune::grid` is an ordinary element. A custom `Compositor` paints each pane's `El::effect` slot "in painter order, inside the slot's isolated layers, so the slot's opacity (an exit fade included), clip and transform already apply" (`rune:crates/rune/src/compose.rs:9-14`). Either way, overlays, splits and animations just work. |
 | Platforms | macOS and iOS only: `Platform = union { macos, ios }` (`embedded.zig:382`). | macOS, iOS, Linux, Windows and wasm. Prebuilt xcframework, Windows zips and wasm modules ship with each release. |
-| Many panes | Each surface spawns a renderer thread and an IO thread (`ghostty:src/Surface.zig:99-136`, `:754`) and has its own swap chain and layer. Fonts are shared through `SharedGridSet`. | One renderer, one shared atlas per font config and scale, one encoder pass. Each pane costs a terminal and a render state. |
-| Rendering fidelity | Exactly Ghostty's. | Same input data, because Ghostty's renderer consumes `terminal.RenderState` (`ghostty:src/renderer/generic.zig:275`) and the C API wraps the same type (`ghostty:src/terminal/c/render.zig:24`). Matching Ghostty is up to our port of `Metrics.calc`, `rebuildRow`, the sprite font and the shaders, plus how close our text rasterizer is (see [Risks](#8-risks-and-staged-plan)). |
+| Many panes | Each surface spawns a renderer thread and an IO thread (`ghostty:src/Surface.zig:99-136`, `:754`) and has its own swap chain and layer. Fonts are shared through `SharedGridSet`. | One Rune frame, one text system and atlas. Each pane costs a terminal, a render state and its changed rows. Grid at 200×60, headless thread CPU p50: 2.46 ms full redraw, 0.40 ms one row, 0.30 ms nothing (`rune:changelog/unreleased/2026-11-13-grid.md`). |
+| Rendering fidelity | Exactly Ghostty's. | Same input data, because Ghostty's renderer consumes `terminal.RenderState` (`ghostty:src/renderer/generic.zig:275`) and the C API wraps the same type (`ghostty:src/terminal/c/render.zig:24`). Matching Ghostty is up to our port of `Metrics.calc`, `rebuildRow`, glyph placement and the sprite font, plus how close Rune's text rasterizer is. See the gates in [§2](#where-the-renderer-draws) and [Risks](#8-risks-and-staged-plan). |
 | Terminal data for our features | Only what `ghostty.h` exports. #15295 shows embedders patching it just to find an image under a click. | Full grid, tracked references, selection, search, formatter, OSC 133 prompts and kitty placements, which is what copy mode, find, herdr labels and links need. |
 | Configuration and fonts | Ghostty's own config system and font discovery. Our settings would have to be translated into Ghostty config. | Ours. |
 | Future iOS app | Possible on a fork (Geistty, gterm and cmux iOS all ship one). The app would have two renderers: Ghostty's for terminals and Rune's for everything else. | The xcframework has iOS device and simulator slices, verified in the 1.0.2 zip, and Rune's `LayerHost` attaches a runtime to a `CAMetalLayer` (`rune:ARCHITECTURE.md` "Hosts"). Same core, same renderer. |
@@ -202,6 +214,84 @@ Don't copy either reference pin:
 
 ## 2. Renderer design
 
+### Where the renderer draws
+
+Rune has a built-in element for this: `rune::grid(cols, cell_w, cell_h, rows: Vec<Rc<GridRow>>)`,
+"a terminal's screen as one element" (`rune:crates/rune/src/el/grid.rs:1-10,161`). A
+`GridRow` has these parts (`grid.rs:73-110`):
+
+- the narrow cells' text as one shaped line, styled by spans (color, weight, italic, single
+  underline)
+- `cell(col, width, text, style, color)` for wide or fallback glyphs pinned to their column
+- `fill(start, end, color)` for background and selection runs
+- `shape(Shape)` for a vector layer over the text
+- `wraps`
+
+A row is shaped once while the app hands back the same `Rc`, and redraws its last instances
+while nothing it depends on changed. Accessibility reads it as role `terminal`. On 200×60,
+headless thread CPU per frame at p50, it costs 2.46 ms for a full redraw, 0.40 ms with one row
+changed and 0.30 ms with nothing changed (`rune:changelog/unreleased/2026-11-13-grid.md`).
+opencode-rune draws its terminal this way (§7).
+
+**Recommendation: build on `rune::grid` first.** Our Ghostty port lives in the `GridRow` builder:
+run breaking, colors, sprites, underline styles and pinned cells. Find highlights go into the
+row's fills, like selection (gate 5). A hovered link changes the underline in the builder, as
+Ghostty does: single, or double if the text is already single-underlined
+(`ghostty:src/renderer/generic.zig:3245-3258`). The cursor and IME preedit are sibling elements
+over the grid. Then check it against these gates, which are where grid's model differs from
+Ghostty's:
+
+1. **Glyph placement.** Ghostty places each glyph on its own cell. It also centers it in the
+   rounded cell by `(cell_width − face_width) / 2`, keeping only the fractional part when the
+   cell is narrower (`ghostty:src/font/face/coretext.zig:363-378`). Grid places narrow cells by
+   tracking one shaped line, which puts the extra space after each glyph. We need the same
+   per-row offset, or a check that the difference is invisible.
+2. **Ligatures.** Ghostty keeps `calt`/`liga` on. opencode-rune turns them off "so ligatures
+   can't shift cells" on a tracked line (`opencode-rune:features/terminal-surface/src/grid/mod.rs:101-102`).
+   To match Ghostty, a ligature run would have to become a pinned multi-column `cell` with
+   ligatures on in its own style. That's unverified.
+3. **Sprites.** Ghostty rasterizes box drawing and the other sprite glyphs at the cell size.
+   Grid draws them as a vector `Shape`, so we need a pixel diff on box drawing, Powerline and
+   braille.
+4. **Many panes.** Profile N visible panes scrolling at once against the 8.3 ms frame at
+   120 Hz. A full redraw is 2.46 ms per 200×60 pane, so four panes all scrolling at once would
+   miss it unless they're smaller.
+5. **Layering.** Grid paints one row at a time: fills, then the line clipped to its row, then
+   pinned cells, then the vector layer (`rune:crates/rune/src/runtime/paint/grid.rs:50-139`).
+   Nothing outside the grid can sit between a row's backgrounds and its text. Ghostty draws
+   all backgrounds, then the layers between, then unclipped text. That breaks three things:
+   - kitty images in the below-text layer. They must sit above cell backgrounds and below text
+     (`types.h:380-407`). Placeholders use z −1, so they land in this layer.
+   - find highlights under the text. Drawn under the grid, they disappear beneath the explicit
+     backgrounds that most Neovim colorschemes set on every cell. Drawn over it, they tint the
+     glyphs.
+   - glyphs that overflow their row, which `Metrics.zig:249-256` expects from some fonts. Grid
+     clips them.
+
+   Options on the grid side:
+   - put find highlights into `GridRow::fill`, as selection already is.
+   - draw two grids per pane, one with fills only and one with text, with below-text images
+     between them.
+   - or count this as a failed gate and move to the custom pass.
+
+**Fallback: a custom wgpu pass.** A Rune `Compositor` draws each pane at its `El::effect` slot
+with instanced cell shaders ported from Ghostty. Ghostty's pieces:
+
+- `updateFrame` copies the render state under the lock, and `rebuildCells` and `rebuildRow`
+  turn it into GPU buffers (`ghostty:src/renderer/generic.zig:1371`, `:2630`, `:2925`).
+- The bg pass is a full-screen fragment shader over a per-cell bg buffer (`cell_bg_fragment`,
+  `shaders.metal:451`, and `cell.zig:42-74` `bg_cells[row * cols + col]`).
+- Text is instanced quads (`cell_text_vertex`, `shaders.metal:556`), with minimum contrast and
+  cursor-cell recoloring in the shader (`shaders.metal:653-662`).
+
+That gives pixel-for-pixel control, but costs a lot:
+
+- our own rasterizer and atlas. PR #2 found no public API for a compositor to sample Rune's
+  glyph atlas.
+- no grid accessibility tree, no CPU painter, and no `--snap` parity.
+- possibly `GpuBackend::Wgpu` on macOS, because Rune's native Metal backend supports only a
+  subset of wgpu (PR #2, `docs/research/rune.md` §3).
+
 ### Data flow, bytes to frame
 
 ```
@@ -214,21 +304,16 @@ UI frame (Rune display link, `poll`):
   for each visible pane:
      lock; render_state_begin_update(); read SCROLLBAR, VIEWPORT_ACTIVE, MOUSE_TRACKING; unlock
      render_state_end_update()                      [no terminal lock, guides/rendering.md]
-     dirty == FALSE and nothing of ours changed → reuse last GPU buffers
-     else rebuild dirty rows (RowId cache) → CPU buffers: bg cells, text glyphs, decorations
-     upload changed ranges; render_state_clean()
-  Compositor::render → draw_with(): at each pane's El::effect slot:
-     images below bg → bg pass (one quad per pane, per-cell bg buffer) → images below text →
-     text and sprite instances (grayscale + color atlas) → images above text → cursor
+     dirty == FALSE and nothing of ours changed → hand back the same rows
+     else rebuild dirty rows (RowId cache) → Rc<GridRow>: spans, pinned cells, fills, sprites
+     render_state_clean()
+  view: grid(cols, cell_w, cell_h, rows) + cursor / preedit overlays
+        + kitty images as image elements: below-bg ones under the grid, above-text ones over it,
+          and below-text ones only through gate 5's workaround (two grids)
+  (fallback: Compositor::render paints the same rows as instanced cells at El::effect slots)
 ```
 
-This is the same split Ghostty uses: `updateFrame` copies the render state under the lock, and
-`rebuildCells` and `rebuildRow` turn it into GPU buffers (`ghostty:src/renderer/generic.zig:1371`,
-`:2630`, `:2925`). The bg pass is a full-screen fragment shader that reads a per-cell bg buffer
-(`cell_bg_fragment`, `shaders.metal:451`, and `cell.zig:42-74` `bg_cells[row * cols + col]`).
-Text is instanced quads (`cell_text_vertex`, `shaders.metal:556`), with minimum contrast and
-cursor-cell recoloring done in the shader (`shaders.metal:653-662`). We port these as WGSL and
-run them inside Rune's pass.
+This is the split Ghostty uses: copy under the lock, then build the frame from the copy.
 
 Rune runs its UI on one thread with no render thread today (`rune:ARCHITECTURE.md` "Single-thread
 frame model"). So VT parsing must stay on our own worker thread, and the two-phase update keeps
@@ -240,19 +325,20 @@ the shared lock short.
   `ghostty_render_state_row_iterator_next_dirty`, then call `ghostty_render_state_clean` after a
   complete frame. An update only sets dirty state and never clears it (`guides/rendering.md`
   "Dirty tracking").
-- Cache per-row work (shaped runs, instance ranges) by `GHOSTTY_RENDER_STATE_ROW_DATA_ID`. Reuse
+- Cache per-row work (the built `Rc<GridRow>`, or instance ranges in the fallback pass) by `GHOSTTY_RENDER_STATE_ROW_DATA_ID`. Reuse
   an entry when the id is present and the row isn't dirty. Ids are never reused ("Row identity").
   Every row is currently marked dirty after the viewport scrolls, so smooth scrolling has to
   rebuild rows; overscan supplies the rows at the edges.
 - Our own invalidations: font, scale or theme change (full), selection or search overlay change,
   focus (hollow cursor), cursor blink, IME preedit, hover link.
-- Damage-based redraw means doing no work when nothing changed. If no pane is dirty, the
-  compositor reports `animating() == false` and Rune lets the display link go idle
-  (`rune:crates/rune/src/compose.rs:71-76`). Otherwise only changed rows are rebuilt and
-  uploaded. On macOS, Rune submits one drawable per display tick from a CVDisplayLink. That's
-  120 Hz on ProMotion, and it paces at the cap in Low Power Mode
+- Damage-based redraw means doing no work when nothing changed. If nothing changed, the view
+  hands back the same `Rc<GridRow>`s, and Rune redraws their last instances (0.30 ms at 200×60)
+  or goes idle. A custom-pass compositor would report `animating() == false` so the display link
+  can rest (`rune:crates/rune/src/compose.rs:71-76`). Otherwise only changed rows are rebuilt.
+  On macOS, Rune submits one drawable per display tick from a CVDisplayLink. That's 120 Hz on
+  ProMotion, and it paces at the cap in Low Power Mode
   (`rune:crates/rune/src/platform/display_link.rs:1-11`). The 120 Hz budget comes from per-row
-  caching and instancing, not from partial-surface presents.
+  caching, not from partial-surface presents.
 - Render holds: register `RENDER_HOLD`, capture the frame at the start of a hold, stop updating
   while it lasts, and give up after 1 s. That matches Ghostty's `sync_reset_ms = 1000`
   (`ghostty:src/termio/Thread.zig:38`). herdr-app already does this (`vt.rs:619-628`, `:1534-1546`).
@@ -264,9 +350,10 @@ emoji. They're packed by `ghostty:src/font/Atlas.zig` and synced only when modif
 (`generic.zig:1891-1899`). A `SharedGrid` is ref-counted per font configuration and shared by
 every surface (`ghostty:src/font/SharedGridSet.zig:89-96`).
 
-We do the same: one atlas pair per (font configuration, device scale), shared by all panes and
-keyed by (face, glyph id, render options). Sprites are rasterized into the grayscale atlas once
-per (codepoint, cell size).
+On `rune::grid`, Rune's text system owns the atlas, and every pane shares it. The custom-pass
+fallback would do what Ghostty does: one atlas pair per (font configuration, device scale),
+shared by all panes and keyed by (face, glyph id, render options), with sprites rasterized into
+the grayscale atlas once per (codepoint, cell size).
 
 ### Font fallback and shaping
 
@@ -294,10 +381,12 @@ per (codepoint, cell size).
   - on Apple platforms, CoreText does font fallback and family lookups
     (`fonts/system_fonts/core_text.rs`), the same system fallback Ghostty uses.
 
-  But we need glyph-level output: glyph ids, clusters and advances for a run, plus raw face
-  metrics. Ticket 004 must confirm rune-text exposes them, including its fallback result per
-  codepoint. If it doesn't, call skrifa and swash directly and keep rune-text's font discovery
-  and fallback.
+  On `rune::grid`, Rune does the shaping. What we always need is the raw face metrics (hhea,
+  OS/2, post, and the ASCII advances) for `Metrics.calc`, plus each codepoint's fallback face, to
+  decide which cells to pin. skrifa can read the metrics from the same font file. The
+  custom-pass fallback would also need glyph-level output: glyph ids, clusters and advances for
+  a run. Ticket 004 should confirm what rune-text exposes. If it isn't enough, call skrifa and
+  swash directly and keep rune-text's font discovery and fallback.
 
 ### Cell metrics identical to Ghostty
 
@@ -347,10 +436,14 @@ The same sprite face draws all five underline styles and the cursor shapes:
 `underline_dashed`, `underline_curly`, `cursor_rect`, `cursor_hollow_rect`, `cursor_bar`,
 `cursor_underline`).
 
-Port these to Rust and rasterize on the CPU into the grayscale atlas, once per (codepoint, cell
-metrics). tiny-skia is already in Rune's tree, and Ghostty's canvas is a plain path rasterizer.
-Pre-rasterizing keeps lines joined between cells at any scale. opencode-rune instead rebuilds
-these as vector `Shape`s for each cell on each row rebuild (`opencode-rune:features/terminal-surface/src/draw.rs`).
+Port Ghostty's geometry to Rust: the arm weights, the thicknesses from `box_thickness`, and the
+corner, diagonal and Powerline paths. On `rune::grid`, emit them into the row's `shape` layer
+with edges on whole device pixels, as opencode-rune does
+(`opencode-rune:features/terminal-surface/src/draw.rs`). That's gate 3 in
+[Where the renderer draws](#where-the-renderer-draws). If vector output doesn't match Ghostty's
+raster pixels, rasterize each sprite once per (codepoint, cell metrics) with tiny-skia, which is
+already in Rune's tree. Ghostty's canvas is a plain path rasterizer. Then draw the result as an
+image cell, or in the custom pass's grayscale atlas.
 
 ### Cursor
 
@@ -358,10 +451,14 @@ The render state gives the cursor's position, visual style (block, bar, underlin
 block), `visible`, `blinking`, `wide_tail` and `password_input`. It also gives an explicit cursor
 color if the program set one (`render.h`, `GhosttyRenderStateCursor`).
 
-Draw the cursor as a sprite instance. For a block cursor, recolor the glyph under it in the text
-shader, as Ghostty does with its `cursor_pos`, `cursor_color` and `cursor_wide` uniforms
-(`shaders.metal:20-23,659-662`). Draw a hollow block when the pane is unfocused. Run the blink
-timer only when `blinking` is set and the pane is focused.
+Draw the cursor as a sibling element over the grid, at the cell's whole-pixel rectangle, in
+Ghostty's shapes. Set `grid_caret(col, row)` on the grid so screen readers see the caret, since
+it draws nothing itself (`rune:crates/rune/src/el/grid.rs:172`).
+Ghostty recolors the glyph under a block cursor in its text shader, with the `cursor_pos`,
+`cursor_color` and `cursor_wide` uniforms (`shaders.metal:20-23,659-662`). On grid, do the same
+by drawing that cell's glyph again above the block in the cursor-text color. Draw a hollow block
+when the pane is unfocused. Run the blink timer only when `blinking` is set and the pane is
+focused.
 
 ### Selection overlay
 
@@ -385,7 +482,8 @@ when to re-read the list, and each image's `IMAGE_GENERATION` keys its texture c
 
 Draw each placement in its layer, ordered by z within the layer. The three layers are below the
 cell backgrounds, between backgrounds and text, and above text (`types.h:380-407`,
-`render.h:197-375`, `guides/images.md`). Clip fixed and relative placements to the viewport. Pixel values are in the
+`render.h:197-375`, `guides/images.md`). On `rune::grid`, the middle layer needs gate 5's
+two-grid workaround. Clip fixed and relative placements to the viewport. Pixel values are in the
 cell size passed to `ghostty_terminal_resize`. Because our cell is whole pixels, no extra scaling
 is needed.
 
@@ -620,23 +718,33 @@ reference dies"). Never keep one across a `vt_write`.
 - **Model** (`crates/terminal/src/render_extract.rs`): each frame it updates the render state and
   produces an immutable `TerminalSnapshot`, reusing `Arc<TerminalRow>` for clean rows.
 - **Drawing** (`features/terminal-surface/src/grid/`, `draw.rs`):
-  - draws through Rune's element tree, not its own GPU pipeline.
-  - each row is a `rich` text element, with letter tracking that forces each glyph's advance to
-    the cell width (`cell_tracking`, `grid/mod.rs:117-121`).
-  - box drawing, blocks, braille and Powerline are vector `Shape`s on a canvas, with edges snapped
-    to device pixels (`draw.rs`).
-  - draws all five underline styles as strokes.
+  - draws each terminal as one `rune::grid` element (`grid/mod.rs:409`), not a pipeline of its
+    own.
+  - builds an `Rc<GridRow>` per row and caches it by (row id, content hash, font and cell key,
+    theme), so unchanged rows go back to Rune as the same `Rc` (`grid/rows.rs:14-55`).
+  - lays out the narrow cells as one line, with tracking that forces each glyph's advance to the
+    cell width (`cell_tracking`, `grid/mod.rs:117-121`). Wide and other-width cells go into
+    `GridRow::cell` (`rows.rs:172`), and backgrounds and selection into `fill`
+    (`rows.rs:165-168`).
+  - puts box drawing, blocks, braille, Powerline and the special underline styles in the row's
+    vector `shape`, with edges snapped to device pixels (`draw.rs`, `rows.rs:93-103`).
+  - draws the cursor, find hits, link underlines and IME preedit as sibling elements over the
+    grid (`grid/mod.rs`).
 - **Metrics** (`grid/mod.rs:106-151`):
   - width is `round(advance("M"…) × scale) / scale`, a whole number of device pixels.
   - height is special-cased for JetBrains Mono and otherwise uses the style's line height. It's
     documented as matching ghostty-web's `measureFont`, not Ghostty's `Metrics.calc`.
   - turns ligatures off (`'calt' 0, 'liga' 0`, `grid/mod.rs:101-102`).
 
-**What to take from it.** It proves libghostty-vt on Rune works, including on the web, and its
-build caching and checksum verification are worth copying. But we shouldn't copy its renderer.
-Putting every changed terminal row through Rune's general text layout and vector shapes is fine
-for one OpenCode terminal tab. It's the wrong cost model for a multiplexer with many visible
-panes at 120 Hz, and its metrics aren't Ghostty's.
+**What to take from it.** It proves libghostty-vt on `rune::grid` works, including on the web.
+Its build caching and checksum verification are worth copying, and so is its row cache. We
+should replace three things:
+
+- its metrics, with Ghostty's `Metrics.calc` (§2).
+- its ligatures-off policy, with Ghostty's (gate 2).
+- its pre-1.0 FFI, with 1.0.2 bindings.
+
+Then check grid against the gates in [§2](#where-the-renderer-draws).
 
 ## 8. Risks and staged plan
 
@@ -644,9 +752,9 @@ panes at 120 Hz, and its metrics aren't Ghostty's.
 
 | Risk | Mitigation |
 | --- | --- |
-| Our rasterizer doesn't match Ghostty's CoreText output, and fidelity is the goal. | rune-text claims CoreGraphics-matched smoothing. Build a pixel-diff harness against Ghostty.app (same font, size and scale) early, in stage 3. Fall back to CoreText rasterization on macOS if diffs remain. |
-| rune-text may not expose glyph-level shaping or raw font tables. | Ticket 004 checks. If not, use skrifa, swash and harfrust directly, keeping rune-text's discovery and its CoreText fallback on Apple. |
-| The Rune `Compositor` takes over frame encoding for the whole app. | Confirm with ticket 004 that other compositor users (effects, office) can coexist, or own the app's compositor and delegate. |
+| Our rasterizer doesn't match Ghostty's CoreText output, and fidelity is the goal. | rune-text claims CoreGraphics-matched smoothing. Build a pixel-diff harness against Ghostty.app (same font, size and scale) early, in stage 4. Fall back to CoreText rasterization on macOS if diffs remain. |
+| rune-text may not expose raw face metrics, per-codepoint fallback, or (for the fallback pass) glyph-level shaping. | Ticket 004 checks. If not, read the font tables with skrifa, and use swash and harfrust directly for the pass, keeping rune-text's discovery and its CoreText fallback on Apple. |
+| `rune::grid` fails a fidelity gate (glyph centering, ligatures, sprite pixels, layering) or the many-pane budget. | Gates in §2, measured in stage 4. The fallback is the custom `Compositor` pass, which needs its own rasterizer and atlas and takes over frame encoding for the whole app. |
 | Single-threaded Rune UI with heavy output from many panes. | Parse on worker threads, use two-phase updates, cap the bytes per frame per pane, and use render holds. |
 | Multi-viewer size and duplicate replies need herdr-core decisions. | Raise them in ticket 001 (§4). Until then, use `resize_notifications` and a letterboxed grid. |
 | Ghostty's renderer keeps changing upstream, and our port drifts. | Pin the Ghostty revision the port came from (`vt-1.0.2` here), keep a parity corpus, and re-port on purpose. |
@@ -666,9 +774,10 @@ Each stage ends with tests in `cargo test` plus a fixture or screenshot check.
 3. **Metrics and grid:** port face-metric extraction and `Metrics.calc`, plus grid and padding
    math. Golden tests against Ghostty's numbers for several fonts, sizes and scales. Wire up
    `RESIZE` and `FACTS`.
-4. **Renderer MVP:** a Rune `Compositor` with `El::effect` panes, bg and text passes, the atlas,
-   cursor, selection, dirty rows and the row-id cache. One pane, then many. Start the pixel-diff
-   harness against Ghostty.app.
+4. **Renderer MVP on `rune::grid`:** a `GridRow` builder from the render state (runs, colors,
+   fills, pinned cells), the row-id cache, cursor and selection. One pane, then many. Start the
+   pixel-diff harness against Ghostty.app, and measure the §2 gates. If a gate fails, decide
+   here whether to move to the `Compositor` pass.
 5. **Fidelity:** port the sprites (`sprite/draw/*.zig`), underline styles and colors, Nerd Font
    icon constraints, the color emoji atlas, fallback, and the ligature policy. Neovim checklist:
    splits, floats, undercurl, statusline icons, CJK.
