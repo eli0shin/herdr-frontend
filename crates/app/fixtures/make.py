@@ -110,9 +110,31 @@ def boxes():
     return "".join(out)
 
 
+def styles():
+    """The terminal font's four styles, the same text in each: what Ghostty draws with the face
+    each style names (scripts/ghostty-diff styles)."""
+    out = [CSI + "H" + CSI + "2J"]
+    out.append("Regular, bold, italic and bold italic, each its own face:\r\n\r\n")
+    lines = (
+        "The quick brown fox jumps over the lazy dog.",
+        "SPHINX OF BLACK QUARTZ, JUDGE MY VOW 0123456789",
+        "~!@#$%^&*()_+-={}[]|\\:;\"'<>,.?/ fi fl ffi",
+        "fn main() { let x = a->b; if x != y && z <= 2 {} }",
+    )
+    for codes, name in (((), "regular"), ((1,), "bold"), ((3,), "italic"), ((1, 3), "bold italic")):
+        for line in lines:
+            out.append(f"{name:<12} " + sgr(*codes) + line + RESET + "\r\n")
+        out.append("\r\n")
+    out.append("Mixed: plain " + sgr(1) + "bold" + RESET + " " + sgr(3) + "italic" + RESET + " ")
+    out.append(sgr(1, 3) + "bold italic" + RESET + " plain " + sgr(1) + "b" + sgr(3) + "bi" + sgr(22) + "i" + RESET)
+    out.append(" " + sgr(1, 31) + "bold red" + RESET + " " + sgr(3, 32) + "italic green" + RESET + "\r\n")
+    out.append(CSI + "29;1H")
+    return "".join(out)
+
+
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    for name, screen in (("colors", colors()), ("boxes", boxes())):
+    for name, screen in (("colors", colors()), ("boxes", boxes()), ("styles", styles())):
         path = os.path.join(here, name + ".bin")
         with open(path, "wb") as f:
             f.write(screen.encode())

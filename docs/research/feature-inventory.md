@@ -194,6 +194,9 @@ link_handlers: [nvim-links]    toast: eli-toast    preview: layouts/eli.svg
   Italic are used only when a program asks for them (`cfg/README.md`).
   - 0.1.18 has `font_weight` and `font_weight_bold` settings (`cfg/AGENTS.md`), but Eli still
     relies on the prepared family.
+  - herdr-frontend doesn't carry this over (ticket 039): it draws the installed Operator Mono's
+    Book, Bold and their italics, each style its own face, as Ghostty does
+    (`docs/settings.md` "Fonts").
 - [ ] **[Eli] Program look** (`cfg/programs.json`): Pi is purple `#a78bfa`. Neovim uses the
   full-color logo `program-icons/neovim.svg` (`tint: false`). The tab bar draws one-color
   glyphs in their program's color instead of gray (§4).

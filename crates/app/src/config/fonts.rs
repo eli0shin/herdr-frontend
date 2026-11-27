@@ -1,208 +1,290 @@
-//! Finding a font family by name among font files: the home's `fonts/`, then Herdr app's
-//! (`$HERDR_APP_HOME/fonts`, where Eli's prepared Operator Mono Book Herdr lives, read only), as
-//! herdr-app loads its home's `fonts/` (`app:src/settings.rs` `load_home_fonts`).
+//! The terminal font, found by name among the installed fonts the way Ghostty finds its
+//! `font-family` (`ghostty:src/font/SharedGridSet.zig` `Key.init` and `collection`, at `v1.4.0`,
+//! `83fb9562`):
 //!
-//! Fonts installed on the system aren't searched: a terminal font needs its file for Ghostty's
-//! cell metrics. A family found nowhere falls back to the bundled JetBrains Mono, as herdr-app's
-//! terminals do.
+//! - Each of the four styles asks CoreText for the family (`glyph::discovery`): the regular style
+//!   with its `font_style` name if one is set; bold, italic and bold italic with theirs, or, with
+//!   none, the bold and italic traits. The best face by Ghostty's `Score` draws the style.
+//! - A family name is what CoreText matches: a typographic family ("Operator Mono") or a legacy
+//!   one, which can name one weight ("Operator Mono Book").
+//! - A regular style found nowhere means the family isn't installed: the terminals fall back to
+//!   the bundled JetBrains Mono, as Ghostty falls back to the one it embeds.
+//!
+//! Each face found is read (never written) from its file and given to Rune as a private family
+//! ([`sfnt`] says why). A style with no face is drawn from the faces there are: bold from the
+//! regular face, italic as Rune's oblique of it. Ghostty synthesizes those
+//! (`Collection.completeStyles`, `font-synthetic-style`); herdr-frontend doesn't yet.
 
-use std::path::{Path, PathBuf};
+pub mod sfnt;
+
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use skrifa::raw::FileRef;
-use skrifa::string::StringId;
-use skrifa::{FontRef, MetadataProvider};
+/// A terminal text style: regular, bold, italic or bold italic (Ghostty's `font.Style`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    Regular,
+    Bold,
+    Italic,
+    BoldItalic,
+}
 
-/// One face in a font file.
+impl Slot {
+    pub const ALL: [Slot; 4] = [Slot::Regular, Slot::Bold, Slot::Italic, Slot::BoldItalic];
+
+    pub fn bold(self) -> bool {
+        matches!(self, Slot::Bold | Slot::BoldItalic)
+    }
+
+    pub fn italic(self) -> bool {
+        matches!(self, Slot::Italic | Slot::BoldItalic)
+    }
+
+    /// The settings key that names this style's face.
+    pub fn key(self) -> &'static str {
+        match self {
+            Slot::Regular => "font_style",
+            Slot::Bold => "font_style_bold",
+            Slot::Italic => "font_style_italic",
+            Slot::BoldItalic => "font_style_bold_italic",
+        }
+    }
+}
+
+/// A face as found: its installed file, the file's bytes and the face's index in it (a
+/// collection holds several).
+pub type Source = (PathBuf, Arc<[u8]>, u32);
+
+/// One face a style draws with.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FaceFile {
+    /// The installed file it came from, and its PostScript name.
     pub path: PathBuf,
-    /// The whole file; `index` is the face's in a collection.
+    pub postscript: String,
+    /// The face as a font of its own in the family's private name, tagged with its style.
     pub bytes: Arc<[u8]>,
-    pub index: u32,
-    pub weight: f32,
-    pub italic: bool,
 }
 
-/// A family's faces, the regular one first: the one CSS font matching picks for weight 400
-/// upright, which is the face Rune draws normal text with and the cell is measured from.
+/// A terminal font family: the face each style draws with.
 #[derive(Clone, Debug, PartialEq)]
-pub struct FamilyFiles {
+pub struct Family {
+    /// The family the settings name.
     pub name: String,
-    pub faces: Vec<FaceFile>,
+    /// The name its faces are registered under with Rune: theirs alone, so two families (or the
+    /// same one with other faces) never mix.
+    pub private: String,
+    /// Regular, bold, italic and bold italic, as [`Slot::ALL`]; the regular face is always there.
+    pub faces: [Option<FaceFile>; 4],
 }
 
-/// The `.ttf`, `.otf` and `.ttc` files in `dirs`, each directory sorted by name. A folder that
-/// doesn't exist is skipped.
-pub fn files(dirs: &[PathBuf]) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            continue;
-        };
-        let mut found: Vec<PathBuf> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| is_font(p))
-            .collect();
-        found.sort();
-        out.extend(found);
-    }
-    out
-}
-
-fn is_font(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "ttf" | "otf" | "ttc"))
-}
-
-/// The family named `name` (case-insensitive, by its typographic or legacy family name) among
-/// the font files in `dirs`, the first folder that has it winning.
-pub fn find(name: &str, dirs: &[PathBuf]) -> Option<FamilyFiles> {
-    let want = name.trim().to_lowercase();
-    for dir in dirs {
-        let mut faces = Vec::new();
-        for path in files(std::slice::from_ref(dir)) {
-            let Ok(bytes) = std::fs::read(&path) else {
+impl Family {
+    /// The family made of these faces, one [`Source`] a style. `None` without a regular face, or
+    /// when one isn't a font.
+    pub fn from_faces(name: &str, faces: [Option<Source>; 4]) -> Option<Family> {
+        faces[0].as_ref()?;
+        let mut hasher = DefaultHasher::new();
+        name.hash(&mut hasher);
+        faces.hash(&mut hasher);
+        let private = format!("{name} herdr-frontend {:016x}", hasher.finish());
+        let mut made: [Option<FaceFile>; 4] = Default::default();
+        for (slot, (face, out)) in Slot::ALL.into_iter().zip(faces.iter().zip(&mut made)) {
+            let Some((path, data, index)) = face else {
                 continue;
             };
-            let bytes: Arc<[u8]> = Arc::from(bytes);
-            for (index, font) in fonts_in(&bytes) {
-                if names(&font).iter().any(|n| n.to_lowercase() == want) {
-                    let attributes = font.attributes();
-                    faces.push(FaceFile {
-                        path: path.clone(),
-                        bytes: bytes.clone(),
-                        index,
-                        weight: attributes.weight.value(),
-                        italic: attributes.style != skrifa::attribute::Style::Normal,
-                    });
-                }
-            }
-        }
-        if !faces.is_empty() {
-            let regular = regular(&faces);
-            let first = faces.remove(regular);
-            faces.insert(0, first);
-            return Some(FamilyFiles {
-                name: name.trim().to_owned(),
-                faces,
+            let postscript = postscript(data, *index).unwrap_or_default();
+            let bytes = sfnt::private_face(data, *index, &private, slot.bold(), slot.italic())?;
+            *out = Some(FaceFile {
+                path: path.clone(),
+                postscript,
+                bytes: Arc::from(bytes),
             });
         }
+        Some(Family {
+            name: name.to_owned(),
+            private,
+            faces: made,
+        })
     }
+
+    /// The regular face, which the cell is measured from.
+    pub fn regular(&self) -> &FaceFile {
+        self.faces[0]
+            .as_ref()
+            .expect("a family has its regular face")
+    }
+
+    pub fn face(&self, slot: Slot) -> Option<&FaceFile> {
+        self.faces[slot as usize].as_ref()
+    }
+}
+
+fn postscript(data: &[u8], index: u32) -> Option<String> {
+    use skrifa::MetadataProvider;
+    let font = skrifa::FontRef::from_index(data, index).ok()?;
+    let name = font
+        .localized_strings(skrifa::string::StringId::POSTSCRIPT_NAME)
+        .english_or_first()?;
+    Some(name.to_string())
+}
+
+/// What looking a family up found.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Found {
+    /// `None` when the family isn't installed (no regular face).
+    pub family: Option<Family>,
+    /// The styles whose style name no face of the family has.
+    pub unmatched: Vec<Slot>,
+}
+
+/// The installed faces of `family` for each style, `styles` naming them as [`Slot::ALL`]
+/// (`None` finds a style by its traits).
+pub fn find(family: &str, styles: [Option<&str>; 4]) -> Found {
+    let family = family.trim();
+    let mut unmatched = Vec::new();
+    let mut faces: [Option<Source>; 4] = Default::default();
+    for (slot, out) in Slot::ALL.into_iter().zip(&mut faces) {
+        let style = styles[slot as usize].map(str::trim);
+        *out = discover(family, style, slot);
+        if out.is_none() && style.is_some() {
+            unmatched.push(slot);
+        }
+    }
+    Found {
+        family: Family::from_faces(family, faces),
+        unmatched,
+    }
+}
+
+/// The face Ghostty's discovery takes for one style: the first of the sorted matches
+/// (`DiscoverIterator.next`), read from its file.
+#[cfg(target_os = "macos")]
+fn discover(family: &str, style: Option<&str>, slot: Slot) -> Option<Source> {
+    use crate::view::terminal::glyph::discovery::{self, Descriptor};
+    // An explicit style name replaces the traits: with both, a font-style-bold of "Italic" would
+    // find nothing (`Key.init`).
+    let want = Descriptor {
+        family: Some(family),
+        style,
+        bold: style.is_none() && slot.bold(),
+        italic: style.is_none() && slot.italic(),
+        ..Descriptor::default()
+    };
+    let (descriptor, font) = discovery::discover(&want).into_iter().next()?;
+    // SAFETY: CoreText getters on a live descriptor and font; the URL attribute is a CFURL.
+    let (path, name) = unsafe {
+        let url = descriptor.attribute(objc2_core_text::kCTFontURLAttribute)?;
+        let url = url.downcast::<objc2_core_foundation::CFURL>().ok()?;
+        (url.to_file_path()?, font.post_script_name().to_string())
+    };
+    let data: Arc<[u8]> = Arc::from(std::fs::read(&path).ok()?);
+    let index = (0..face_count(&data)).find(|&i| postscript(&data, i).as_deref() == Some(&name))?;
+    Some((path, data, index))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn discover(_: &str, _: Option<&str>, _: Slot) -> Option<Source> {
     None
 }
 
-/// Every face in a file, with its index.
-fn fonts_in(bytes: &[u8]) -> Vec<(u32, FontRef<'_>)> {
-    match FileRef::new(bytes) {
-        Ok(FileRef::Font(font)) => vec![(0, font)],
-        Ok(FileRef::Collection(collection)) => collection
-            .iter()
-            .enumerate()
-            .filter_map(|(i, f)| Some((i as u32, f.ok()?)))
-            .collect(),
-        Err(_) => Vec::new(),
+/// How many faces a font file holds: a collection's count, else 1.
+#[cfg(target_os = "macos")]
+fn face_count(data: &[u8]) -> u32 {
+    match skrifa::raw::FileRef::new(data) {
+        Ok(skrifa::raw::FileRef::Collection(c)) => c.len(),
+        _ => 1,
     }
-}
-
-/// A face's family names: typographic (name ID 16) and legacy (1).
-fn names(font: &FontRef) -> Vec<String> {
-    [StringId::TYPOGRAPHIC_FAMILY_NAME, StringId::FAMILY_NAME]
-        .into_iter()
-        .filter_map(|id| font.localized_strings(id).english_or_first())
-        .map(|s| s.to_string())
-        .collect()
-}
-
-/// The face CSS font matching picks for weight 400 upright: an upright face before an italic
-/// one; then 400 to 500, the lightest first; then the heaviest below 400; then the lightest
-/// above 500.
-fn regular(faces: &[FaceFile]) -> usize {
-    let rank = |f: &FaceFile| {
-        let w = f.weight;
-        let band = if (400.0..=500.0).contains(&w) {
-            (0, w)
-        } else if w < 400.0 {
-            (1, -w)
-        } else {
-            (2, w)
-        };
-        (f.italic, band.0, band.1)
-    };
-    (0..faces.len())
-        .min_by(|&a, &b| {
-            let (a, b) = (rank(&faces[a]), rank(&faces[b]));
-            a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "herdr-frontend-fonts-{name}-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    fn face(path: &str, weight: f32, italic: bool) -> FaceFile {
-        FaceFile {
-            path: path.into(),
-            bytes: Arc::from(&[][..]),
-            index: 0,
-            weight,
-            italic,
-        }
+    fn file(path: &str) -> Source {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
+        let data = Arc::from(std::fs::read(&path).unwrap());
+        (path, data, 0)
     }
 
     #[test]
-    fn the_regular_face_is_the_one_css_picks_for_400() {
-        // Eli's prepared Operator Mono: Book is 500, Bold 700, and their italics.
-        let faces = [
-            face("BoldItalic", 700.0, true),
-            face("Bold", 700.0, false),
-            face("Italic", 500.0, true),
-            face("Book", 500.0, false),
-        ];
-        assert_eq!(faces[regular(&faces)].path, Path::new("Book"));
-        let faces = [face("Light", 300.0, false), face("Semi", 600.0, false)];
-        assert_eq!(faces[regular(&faces)].path, Path::new("Light"));
-        let faces = [face("Semi", 600.0, false), face("Bold", 700.0, false)];
-        assert_eq!(faces[regular(&faces)].path, Path::new("Semi"));
+    fn a_family_needs_its_regular_face_and_names_itself_by_its_faces() {
+        let regular = file("../../assets/fonts/JetBrainsMono-Variable.ttf");
+        let italic = file("../../assets/fonts/JetBrainsMono-Italic-Variable.ttf");
+        assert!(Family::from_faces("Mono", [None, None, Some(italic.clone()), None]).is_none());
+        let both =
+            Family::from_faces("Mono", [Some(regular.clone()), None, Some(italic), None]).unwrap();
+        assert_eq!(both.regular().postscript, "JetBrainsMono-Regular");
+        assert_eq!(
+            both.face(Slot::Italic).map(|f| f.postscript.as_str()),
+            Some("JetBrainsMono-Italic")
+        );
+        assert!(both.face(Slot::Bold).is_none());
+        let alone = Family::from_faces("Mono", [Some(regular), None, None, None]).unwrap();
+        assert!(both.private.starts_with("Mono herdr-frontend "));
+        assert_ne!(both.private, alone.private);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
-    fn a_family_is_found_by_name_in_the_first_folder_that_has_it() {
-        let (a, b) = (scratch("a"), scratch("b"));
-        let fonts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts");
-        std::fs::copy(
-            fonts.join("JetBrainsMono-Italic-Variable.ttf"),
-            b.join("JetBrainsMono-Italic-Variable.ttf"),
-        )
-        .unwrap();
-        std::fs::copy(
-            fonts.join("JetBrainsMono-Variable.ttf"),
-            b.join("JetBrainsMono-Variable.ttf"),
-        )
-        .unwrap();
-        std::fs::write(b.join("notes.txt"), "not a font").unwrap();
-        std::fs::write(b.join("broken.otf"), "not a font either").unwrap();
+    fn menlo_is_found_by_traits_and_a_missing_family_isnt() {
+        let found = find("Menlo", [None; 4]);
+        let family = found.family.expect("Menlo ships with macOS");
+        let names: Vec<&str> = Slot::ALL
+            .iter()
+            .map(|s| family.face(*s).unwrap().postscript.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "Menlo-Regular",
+                "Menlo-Bold",
+                "Menlo-Italic",
+                "Menlo-BoldItalic"
+            ]
+        );
+        assert!(found.unmatched.is_empty());
+        // Menlo is one collection: each face is its own font now.
+        assert!(
+            family
+                .faces
+                .iter()
+                .flatten()
+                .all(|f| !f.bytes.starts_with(b"ttcf"))
+        );
 
-        let dirs = [a.join("missing"), a.clone(), b.clone()];
-        let family = find("jetbrains mono", &dirs).expect("found in b");
-        assert_eq!(family.faces.len(), 2);
-        assert!(!family.faces[0].italic, "the upright face first");
-        assert!(family.faces[1].italic);
-        assert!(find("Operator Mono Book Herdr", &dirs).is_none());
-        let _ = std::fs::remove_dir_all(&a);
-        let _ = std::fs::remove_dir_all(&b);
+        let none = find("No Such Family Anywhere", [None; 4]);
+        assert!(none.family.is_none());
+        let styled = find("Menlo", [None, Some("Heavy"), None, None]);
+        assert_eq!(styled.unmatched, [Slot::Bold]);
+        assert!(styled.family.unwrap().face(Slot::Bold).is_none());
+    }
+
+    /// Eli's default, when Operator Mono is installed (`~/Library/Fonts`): Book and its own
+    /// Bold, found by style name, nothing synthesized.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn operator_mono_is_book_and_bold_by_style_name() {
+        let settings = super::super::settings::Settings::default();
+        let found = find(&settings.font, settings.font_styles());
+        let Some(family) = found.family else {
+            eprintln!("skipping: Operator Mono isn't installed");
+            return;
+        };
+        let names: Vec<&str> = Slot::ALL
+            .iter()
+            .map(|s| family.face(*s).map_or("", |f| f.postscript.as_str()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "OperatorMono-Book",
+                "OperatorMono-Bold",
+                "OperatorMono-BookItalic",
+                "OperatorMono-BoldItalic"
+            ]
+        );
+        assert!(found.unmatched.is_empty());
     }
 }

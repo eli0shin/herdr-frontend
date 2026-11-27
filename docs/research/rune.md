@@ -681,7 +681,8 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   whole and renamed; close and quit write at once. A saved place whose display is gone opens
   centered.
 - **Look and settings** (ticket 017, `docs/settings.md`). `config::Config` is what the home's
-  `settings.json`, theme, `programs.json` and font folders say, defaulting to Eli's look; a
+  `settings.json`, theme and `programs.json` say, with the installed fonts `font` and `ui_font`
+  name, defaulting to Eli's look; a
   watcher thread reloads it when they change and `State::configure` applies it live. The view
   calls `Cx::zoom(settings.zoom)` every run, so terminals, panels and layout sizes scale as a
   page zoom does and cells stay whole device pixels. Panels use the theme's `Chrome` colors and

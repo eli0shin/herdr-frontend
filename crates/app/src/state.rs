@@ -593,7 +593,7 @@ impl State {
         let s = &config.settings;
         if font {
             let base = match &config.font {
-                Some(files) => Font::from_files(files, s.font_size).unwrap_or_else(|e| {
+                Some(family) => Font::from_family(family, s.font_size).unwrap_or_else(|e| {
                     eprintln!("herdr-frontend: font {:?}: {e}", s.font);
                     Font::jetbrains_mono(s.font_size)
                 }),
@@ -604,7 +604,7 @@ impl State {
         }
         if ui {
             self.ui_family = match &config.ui_font {
-                Some(files) => Font::from_files(files, UI_FONT_SIZE)
+                Some(family) => Font::from_family(family, UI_FONT_SIZE)
                     .ok()
                     .map(|f| f.family()),
                 None if s

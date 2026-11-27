@@ -6,6 +6,9 @@ use std::sync::Arc;
 
 use terminal::{Config, Row, Snapshot, Theme, Vt};
 
+use crate::config::settings::Settings;
+use crate::view::terminal::font::Font;
+
 /// A fixture: its name and the bytes a program wrote to a `COLS` × `ROWS` terminal.
 pub struct Fixture {
     pub name: &'static str,
@@ -77,6 +80,38 @@ pub fn screen_file() -> Option<(Vec<u8>, u16, u16)> {
         .and_then(|(c, r)| Some((c.parse().ok()?, r.parse().ok()?)))
         .unwrap_or((COLS, ROWS));
     Some((bytes, cols, rows))
+}
+
+/// The settings the `screen-file` scene draws with, from `HERDR_FRONTEND_SETTINGS` (a
+/// `settings.json`), `None` when it's unset or empty: how the Ghostty pixel diff draws a screen in another
+/// font than Ghostty's default (`scripts/ghostty-diff styles`).
+pub fn screen_settings() -> Result<Option<Settings>, String> {
+    let Some(path) = std::env::var_os("HERDR_FRONTEND_SETTINGS").filter(|p| !p.is_empty()) else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("{}: {e}", std::path::Path::new(&path).display()))?;
+    let (settings, problems) = Settings::parse(&text)?;
+    match problems.is_empty() {
+        true => Ok(Some(settings)),
+        false => Err(problems.join("; ")),
+    }
+}
+
+/// The terminal font the `screen-file` scene draws with: [`screen_settings`]' installed family,
+/// else Ghostty's default, JetBrains Mono at 14 pt.
+pub fn screen_font() -> Result<Font, String> {
+    let Some(settings) = screen_settings()? else {
+        return Ok(Font::jetbrains_mono(crate::TERMINAL_POINTS));
+    };
+    let config = crate::config::Config::with_fonts(settings);
+    let s = &config.settings;
+    let family = config
+        .font
+        .as_ref()
+        .ok_or_else(|| config.problems.join("; "))?;
+    let font = Font::from_family(family, s.font_size).map_err(|e| e.to_string())?;
+    Ok(font.adjusted(s.terminal_line_height, s.terminal_cell_width))
 }
 
 /// `snapshot` with columns `start..=end` of rows `rows` selected, as the terminal reports a

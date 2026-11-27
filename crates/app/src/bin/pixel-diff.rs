@@ -7,7 +7,8 @@
 //! tall. A negative `ROW` counts from the grid's bottom, so `-1` is the last row.
 //!
 //! Both images are 2x captures with the grid at their top left: Ghostty's window and our
-//! `--snap`. The screen is replayed into a terminal to tell each cell's kind, so the report can
+//! `--snap`. The cell is JetBrains Mono's at 14 pt, or the font of the settings file
+//! `HERDR_FRONTEND_SETTINGS` names, as the snap's `screen-file` scene drew it. The screen is replayed into a terminal to tell each cell's kind, so the report can
 //! say how text, decorated text, sprites and backgrounds each compare, and how each sprite
 //! character does on its own. For text it also measures where the ink sits in each cell, which
 //! is what the glyph placement gate asks. The diff image shows Ghostty's pixels dimmed, with
@@ -18,7 +19,6 @@ use std::io::BufWriter;
 use std::process::ExitCode;
 
 use herdr_frontend::fixtures;
-use herdr_frontend::view::terminal::font::Font;
 use herdr_frontend::view::terminal::look;
 use herdr_frontend::view::terminal::rows;
 use herdr_frontend::view::terminal::sprite;
@@ -292,7 +292,8 @@ fn run(args: &[String]) -> Result<(), String> {
     }
     let g = Image::read(ghostty)?;
     let o = Image::read(ours)?;
-    let face = Font::jetbrains_mono(herdr_frontend::TERMINAL_POINTS)
+    // The font the snap drew with: `HERDR_FRONTEND_SETTINGS`' or JetBrains Mono at 14 pt.
+    let face = fixtures::screen_font()?
         .at(2.0)
         .map_err(|e| e.to_string())?;
     let (cw, ch) = (

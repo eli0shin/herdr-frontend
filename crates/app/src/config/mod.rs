@@ -5,8 +5,8 @@
 //! - [`theme`]: the theme it names, arctic built in or the home's `themes/<name>.json`.
 //! - [`programs`]: program names, icons and colors: the built-in table, then the home's
 //!   `programs.json` and icon files.
-//! - [`fonts`]: the terminal and panel font families, found in the home's `fonts/` and then
-//!   Herdr app's (read only).
+//! - [`fonts`]: the terminal and panel font families, found among the installed fonts as Ghostty
+//!   finds its `font-family`.
 //!
 //! [`Config::load`] reads them all; it does file I/O, so the window calls it at start and then
 //! only on the [`Watcher`]'s thread, which looks for changes twice a second and hands each new
@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, SystemTime};
 
-use self::fonts::FamilyFiles;
+use self::fonts::{Family, Slot};
 use self::programs::Programs;
 use self::settings::Settings;
 use self::theme::Theme;
@@ -32,43 +32,27 @@ use self::theme::Theme;
 pub const SETTINGS: &str = "settings.json";
 pub const PROGRAMS: &str = "programs.json";
 pub const THEMES: &str = "themes";
-pub const FONTS: &str = "fonts";
 /// The home's icon folders, as `programs.json` names their files (`icons/pi.svg`).
 pub const ICON_DIRS: [&str; 2] = ["icons", "program-icons"];
 
 /// How often the watcher looks at the files.
 pub const WATCH_EVERY: Duration = Duration::from_millis(500);
 
-/// Where the files are: herdr-frontend's home, and Herdr app's, whose fonts it also uses.
+/// Where the files are: herdr-frontend's home, the only folder they're read from.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Sources {
     pub home: Option<PathBuf>,
-    /// Herdr app's home (`$HERDR_APP_HOME`, else `$XDG_CONFIG_HOME/herdr-app`, else
-    /// `~/.config/herdr-app`): only its `fonts/` is read, never written.
-    pub herdr_app: Option<PathBuf>,
 }
 
 impl Sources {
-    /// herdr-frontend's home and the Herdr app home the environment names.
+    /// herdr-frontend's home.
     pub fn new(home: Option<PathBuf>) -> Sources {
-        Sources {
-            home,
-            herdr_app: Some(herdr_app_home()),
-        }
+        Sources { home }
     }
 
     /// No files at all: the built-in defaults (scenes and tests).
     pub fn none() -> Sources {
         Sources::default()
-    }
-
-    /// The folders fonts are looked for in, the home's first.
-    pub fn font_dirs(&self) -> Vec<PathBuf> {
-        [&self.home, &self.herdr_app]
-            .into_iter()
-            .flatten()
-            .map(|dir| dir.join(FONTS))
-            .collect()
     }
 
     /// What the watcher compares: every file a load reads (or would read, were it there), with
@@ -86,10 +70,6 @@ impl Sources {
                 paths.extend(listing(&home.join(dir)));
             }
         }
-        for dir in self.font_dirs() {
-            paths.push(dir.clone());
-            paths.extend(fonts::files(&[dir]));
-        }
         paths
             .into_iter()
             .map(|p| {
@@ -103,20 +83,6 @@ impl Sources {
 
 /// [`Sources::stamp`]: each watched path with its modification time and length.
 pub type Stamp = Vec<(PathBuf, Option<(SystemTime, u64)>)>;
-
-/// Herdr app's home, as herdr-app finds it (`app:src/mods.rs` `app_dir`).
-pub fn herdr_app_home() -> PathBuf {
-    let var = |k: &str| {
-        std::env::var_os(k)
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    };
-    var("HERDR_APP_HOME").unwrap_or_else(|| {
-        var("XDG_CONFIG_HOME")
-            .unwrap_or_else(|| var("HOME").unwrap_or_default().join(".config"))
-            .join("herdr-app")
-    })
-}
 
 /// A folder's files, sorted; none when it isn't there.
 fn listing(dir: &Path) -> Vec<PathBuf> {
@@ -141,9 +107,9 @@ pub struct Config {
     /// came from one rather than the built-in arctic.
     pub theme_file: Option<String>,
     pub programs: Programs,
-    /// The families `font` and `ui_font` name, when the font folders have them.
-    pub font: Option<FamilyFiles>,
-    pub ui_font: Option<FamilyFiles>,
+    /// The families `font` and `ui_font` name, when they're installed.
+    pub font: Option<Family>,
+    pub ui_font: Option<Family>,
     /// What's wrong with the files, for `status`'s `errors`.
     pub problems: Vec<String>,
 }
@@ -223,34 +189,91 @@ impl Config {
             }
         };
 
-        let dirs = sources.font_dirs();
-        let font = fonts::find(&settings.font, &dirs);
-        if font.is_none() && !is_bundled(&settings.font) {
-            problems.push(format!(
-                "font {:?} isn't in {}; terminals use JetBrains Mono",
-                settings.font,
-                folders(&dirs)
-            ));
-        }
-        let ui_font = fonts::find(&settings.ui_font, &dirs);
-        if ui_font.is_none() && !is_bundled(&settings.ui_font) {
-            problems.push(format!(
-                "ui_font {:?} isn't in {}; the panels use the system font",
-                settings.ui_font,
-                folders(&dirs)
-            ));
-        }
-
-        Config {
+        let mut config = Config {
             settings,
             settings_text,
             theme,
             theme_file,
             programs,
-            font,
-            ui_font,
+            font: None,
+            ui_font: None,
             problems,
+        };
+        config.find_fonts();
+        config
+    }
+
+    /// `settings` with the built-in theme and programs, and its fonts looked up among the
+    /// installed ones as [`Config::load`] does (the Ghostty pixel diff's screens).
+    pub fn with_fonts(settings: Settings) -> Config {
+        let mut config = Config::from_settings(settings);
+        config.find_fonts();
+        config
+    }
+
+    /// Looks up the families `font` and `ui_font` name, saying in [`Config::problems`] what
+    /// can't be had. The panels' family takes the terminal's style names when it's the same one,
+    /// Operator Mono's own when it's Operator Mono (found by traits, its Bold would be taken for
+    /// its regular face), and none otherwise.
+    fn find_fonts(&mut self) {
+        let s = &self.settings;
+        let found = fonts::find(&s.font, s.font_styles());
+        say_missing(
+            "font",
+            &s.font,
+            &found,
+            "terminals use JetBrains Mono",
+            &mut self.problems,
+        );
+        let named = |family: &str| s.ui_font.trim().eq_ignore_ascii_case(family.trim());
+        let same = named(&s.font);
+        let ui = if same {
+            found.clone()
+        } else if named(settings::FONT) {
+            fonts::find(&s.ui_font, Settings::default().font_styles())
+        } else {
+            fonts::find(&s.ui_font, [None; 4])
+        };
+        if !same {
+            say_missing(
+                "ui_font",
+                &s.ui_font,
+                &ui,
+                "the panels use the system font",
+                &mut self.problems,
+            );
         }
+        self.font = found.family;
+        self.ui_font = ui.family;
+    }
+}
+
+/// What `key`'s family `name` lacks: the whole family, which `fallback` replaces, or a face a
+/// style name asks for.
+fn say_missing(
+    key: &str,
+    name: &str,
+    found: &fonts::Found,
+    fallback: &str,
+    problems: &mut Vec<String>,
+) {
+    if found.family.is_none() {
+        if !is_bundled(name) {
+            problems.push(format!("{key} {name:?} isn't installed; {fallback}"));
+        }
+        return;
+    }
+    for slot in &found.unmatched {
+        let instead = match slot {
+            Slot::Regular => "the family's regular face is used",
+            Slot::Bold => "bold text draws the regular face",
+            Slot::Italic => "italic text leans the regular face",
+            Slot::BoldItalic => "bold italic text draws the italic or regular face",
+        };
+        problems.push(format!(
+            "{} has no face of {name:?} with that style name; {instead}",
+            slot.key()
+        ));
     }
 }
 
@@ -259,16 +282,6 @@ fn is_bundled(family: &str) -> bool {
     family
         .trim()
         .eq_ignore_ascii_case(crate::view::terminal::font::JETBRAINS_MONO_FAMILY)
-}
-
-fn folders(dirs: &[PathBuf]) -> String {
-    if dirs.is_empty() {
-        return "any font folder".into();
-    }
-    dirs.iter()
-        .map(|d| d.display().to_string())
-        .collect::<Vec<_>>()
-        .join(" or ")
 }
 
 /// The theme `settings` names: the home's file first (so a home can change arctic too), then
@@ -384,24 +397,98 @@ mod tests {
     }
 
     fn sources(home: &Path) -> Sources {
-        Sources {
-            home: Some(home.to_owned()),
-            herdr_app: Some(home.join("herdr-app")),
-        }
+        Sources::new(Some(home.to_owned()))
     }
 
     #[test]
-    fn an_empty_home_is_elis_look_with_the_missing_font_said() {
+    fn an_empty_home_is_elis_look() {
         let home = scratch("empty");
         let config = Config::load(&sources(&home), None);
         assert_eq!(config.settings, Settings::default());
         assert_eq!(config.theme, Theme::arctic());
         assert_eq!(config.theme_file, None, "the built-in arctic");
         assert!(config.settings_text.is_none());
-        assert!(config.font.is_none());
-        assert_eq!(config.problems.len(), 2, "{:?}", config.problems);
-        assert!(config.problems[0].starts_with("font \"Operator Mono Book Herdr\" isn't in"));
+        // Operator Mono, if this Mac has it; status says so if it doesn't.
+        match &config.font {
+            Some(font) => {
+                assert_eq!(font.name, "Operator Mono");
+                assert_eq!(config.ui_font.as_ref(), Some(font));
+                assert!(config.problems.is_empty(), "{:?}", config.problems);
+            }
+            None => assert_eq!(
+                config.problems,
+                ["font \"Operator Mono\" isn't installed; terminals use JetBrains Mono"]
+            ),
+        }
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_family_that_isnt_installed_is_said_and_jetbrains_mono_needs_none() {
+        let home = scratch("missing");
+        std::fs::write(
+            home.join(SETTINGS),
+            r#"{"font": "No Such Mono", "ui_font": "No Such Sans"}"#,
+        )
+        .unwrap();
+        let config = Config::load(&sources(&home), None);
+        assert!(config.font.is_none() && config.ui_font.is_none());
+        assert_eq!(
+            config.problems,
+            [
+                "font \"No Such Mono\" isn't installed; terminals use JetBrains Mono",
+                "ui_font \"No Such Sans\" isn't installed; the panels use the system font"
+            ]
+        );
+        // The bundled JetBrains Mono needs no install.
+        std::fs::write(
+            home.join(SETTINGS),
+            r#"{"font": "JetBrains Mono", "ui_font": "JetBrains Mono"}"#,
+        )
+        .unwrap();
+        let config = Config::load(&sources(&home), None);
+        assert!(config.problems.is_empty(), "{:?}", config.problems);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Operator Mono for the panels beside another terminal family keeps its style names: found
+    /// by traits, its Bold would be taken for its regular face.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn operator_mono_for_the_panels_alone_is_still_book() {
+        let config = Config::with_fonts(Settings {
+            font: "Menlo".into(),
+            ui_font: settings::FONT.into(),
+            ..Settings::fixture()
+        });
+        let Some(ui) = config.ui_font else {
+            eprintln!("skipping: Operator Mono isn't installed");
+            return;
+        };
+        assert_eq!(ui.regular().postscript, "OperatorMono-Book");
+        assert_eq!(
+            ui.face(fonts::Slot::Bold).map(|f| f.postscript.as_str()),
+            Some("OperatorMono-Bold")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_style_name_the_family_lacks_is_said() {
+        let config = Config::with_fonts(Settings {
+            font: "Menlo".into(),
+            font_style_bold: Some("Heavy".into()),
+            ui_font: "Menlo".into(),
+            ..Settings::fixture()
+        });
+        assert!(config.font.is_some());
+        assert_eq!(
+            config.problems,
+            [
+                "font_style_bold has no face of \"Menlo\" with that style name; bold text draws \
+                 the regular face"
+            ]
+        );
     }
 
     #[test]
@@ -426,16 +513,6 @@ mod tests {
         .unwrap();
         std::fs::create_dir_all(home.join("program-icons")).unwrap();
         std::fs::write(home.join("program-icons/mine.svg"), "<svg/>").unwrap();
-        // Herdr app's fonts are found too.
-        let herdr_fonts = home.join("herdr-app").join(FONTS);
-        std::fs::create_dir_all(&herdr_fonts).unwrap();
-        std::fs::copy(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../assets/fonts/JetBrainsMono-Variable.ttf"),
-            herdr_fonts.join("JetBrainsMono-Variable.ttf"),
-        )
-        .unwrap();
-
         let config = Config::load(&sources(&home), None);
         assert!(config.problems.is_empty(), "{:?}", config.problems);
         assert_eq!(config.theme.name, "mine");
@@ -454,10 +531,6 @@ mod tests {
                 .icon("program-icons/neovim.svg")
                 .map(|b| &b[..]),
             Some(&b"<svg/>"[..])
-        );
-        assert_eq!(
-            config.font.as_ref().map(|f| f.faces[0].path.clone()),
-            Some(herdr_fonts.join("JetBrainsMono-Variable.ttf"))
         );
         let _ = std::fs::remove_dir_all(&home);
     }

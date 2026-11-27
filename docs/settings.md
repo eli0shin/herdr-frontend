@@ -3,7 +3,8 @@
 herdr-frontend reads its look and preferences from files in its home (`$HERDR_FRONTEND_HOME`,
 else `$XDG_CONFIG_HOME/herdr-frontend`, else `~/.config/herdr-frontend`). With no files at all it
 looks like Eli's Herdr app (`docs/research/feature-inventory.md` §2): the arctic theme,
-Operator Mono Book Herdr at 17 pt, zoom 1.1. The code is `crates/app/src/config/`.
+Operator Mono's Book weight (and its own Bold) at 17 pt, zoom 1.1. The code is
+`crates/app/src/config/`.
 
 | File | What it is |
 | --- | --- |
@@ -11,7 +12,6 @@ Operator Mono Book Herdr at 17 pt, zoom 1.1. The code is `crates/app/src/config/
 | `themes/<name>.json` | A theme in Herdr app's format; `arctic` is built in |
 | `programs.json` | Program names, icons and colors over the built-in table |
 | `icons/`, `program-icons/` | Icon files `programs.json` names, by path relative to the home |
-| `fonts/` | `.ttf`, `.otf` and `.ttc` files the font settings can name |
 
 ## Live reload
 
@@ -38,14 +38,18 @@ else Neovim; the window follows the saved file. It edits no values itself (`docs
 ## `settings.json`
 
 The keys are Herdr app's (`~/.config/herdr-app/settings.json`), so a line copied from one works in
-the other. Every key is optional; a missing one takes the default, which is Eli's current value.
+the other, except the four `font_style*` keys, which are Ghostty's. Every key is optional; a missing one takes the default, which is Eli's current value.
 
 | Key | Default | What it does |
 | --- | --- | --- |
 | `zoom` | `1.1` | Scales the whole window: terminals, panels and the layout's sizes (0.5 to 3). Rune's page zoom (`Cx::zoom`): the view lays out in `1 / zoom` as many points at `zoom` times the display scale, so cells stay whole device pixels. |
-| `font` | `"Operator Mono Book Herdr"` | The terminals' font family. |
+| `font` | `"Operator Mono"` | The terminals' font family, an installed one (Ghostty's `font-family`; see [Fonts](#fonts)). |
+| `font_style` | `"Book"` | The style name of the face regular text draws with (Ghostty's `font-style`). `null` finds the family's regular face by its traits. |
+| `font_style_bold` | `"Bold"` | The same for bold text (`font-style-bold`); `null` finds the family's bold face. |
+| `font_style_italic` | `"Book Italic"` | The same for italic text (`font-style-italic`). |
+| `font_style_bold_italic` | `"Bold Italic"` | The same for bold italic text (`font-style-bold-italic`). |
 | `font_size` | `17` | The terminals' size in points at zoom 1 (6 to 72). |
-| `ui_font` | `"Operator Mono Book Herdr"` | The panels' font family. Their text is 13 pt at zoom 1. |
+| `ui_font` | `"Operator Mono"` | The panels' font family. Their text is 13 pt at zoom 1. |
 | `terminal_line_height` | `1` | Row height multiplier, clamped to 0.8..2 (Ghostty's `adjust-cell-height` as a factor; text stays centered). |
 | `terminal_cell_width` | `1` | Column width multiplier, clamped to 0.8..2 (Ghostty's `adjust-cell-width`). |
 | `terminal_scroll_speed` | `1` | Wheel and trackpad multiplier, clamped to 0.1..5. Read once terminal scrolling lands. |
@@ -96,22 +100,54 @@ views of the result:
 
 ## Fonts
 
-A font setting names a family. herdr-frontend looks for its files in the home's `fonts/`, then in
-Herdr app's (`$HERDR_APP_HOME/fonts`, else `~/.config/herdr-app/fonts`), which is where
-`dot/scripts/prepare-herdr-fonts.py` puts Eli's Operator Mono Book Herdr. Herdr app's folder is
-only read. Fonts installed on the system aren't searched: a terminal font needs its file for
-Ghostty's cell metrics. A family found nowhere falls back to the bundled JetBrains Mono, with an
-error in `status`.
+The terminal font is found among the fonts installed on the Mac (`~/Library/Fonts`,
+`/Library/Fonts`, the system's), the way Ghostty finds its `font-family`
+(`crates/app/src/config/fonts.rs`, a port of `ghostty:src/font/SharedGridSet.zig` `Key.init` and
+`collection` and `src/font/discovery.zig` at `v1.4.0`, `83fb9562`). To use a font, install it;
+herdr-frontend reads no font folder of its own and never reads Herdr app's home or its fonts.
+Fonts are looked up again whenever the home's files change, so a font installed while the window
+runs is found at the next edit to `settings.json`.
 
-The regular face, which the cell is measured from, is the one CSS font matching picks for weight
-400 upright: Book (500) in Eli's prepared family. Bold cells ask for 700.
+- **Four styles, four faces.** Regular, bold, italic and bold italic each ask CoreText for the
+  `font` family. With a `font_style*` name the face must have that style name; without one, bold
+  and italic ask for the bold and italic traits. CoreText's matches are sorted by Ghostty's
+  `Score` (monospace, the exact style name, italic and bold as asked, the closest style name, the
+  most glyphs) and the best one draws the style.
+- **A family or a face.** `font` is matched as CoreText matches a family name: a typographic
+  family (`"Operator Mono"`) or a legacy one, which can name a single weight
+  (`"Operator Mono Book"`).
+- **Eli's default** is Operator Mono by style name: Book for regular, Book Italic for italic, and
+  the family's own Bold and Bold Italic. Operator Mono has to be named this way: its Bold face
+  carries weight class 400 and no bold flag, so a search by traits finds no bold face (Ghostty
+  would then synthesize one). The style keys' defaults go with the default family: a file that
+  names another `font` and none of the `font_style*` keys gets that family's faces by trait, as
+  Ghostty does with no `font-style`.
+- **Not installed.** A family with no regular face falls back to the bundled JetBrains Mono (the
+  panels to the system font), and `herdr-frontend status` lists it in `errors`:
+  `font "<name>" isn't installed; terminals use JetBrains Mono`. A `font_style*` name the family
+  has no face for is listed too. JetBrains Mono itself needs no install.
+- **A style with no face** is drawn from the faces there are: bold from the regular face, italic
+  as Rune's oblique of it. Ghostty synthesizes them (`font-synthetic-style`); herdr-frontend
+  doesn't yet.
+
+The regular face is the one the cell is measured from. The panels' `ui_font` is found the same
+way: with the terminal's style names when it's the same family, with Operator Mono's own when it's
+Operator Mono, and by traits otherwise. The panels draw with its regular and bold faces.
+
+**Why the faces are registered as a private family.** Rune can't name a face for a span: a bold
+span asks its family for weight 700 and fontique picks the face whose `OS/2` weight class is
+closest. Operator Mono's weight classes collide (Book is 325, Bold is 400), so a 400 request would
+draw Bold. So each face Ghostty's discovery chose is read from its installed file and handed to
+Rune, in memory, as a font of its own in a family named for those faces alone, tagged 400 or 700,
+upright or italic (`config/fonts/sfnt.rs`). Only the `name` table and those tags change; the
+outlines and metrics are the face's own, and nothing is written to disk.
 
 A terminal font other than JetBrains Mono keeps Ghostty's fallback order: its own faces, then the
 JetBrains Mono Ghostty embeds as its backup (`ghostty:src/font/SharedGridSet.zig:260-316`), then
-what the system finds. The text style names `"<font>", "JetBrains Mono"`, so Rune tries them in
-that order before its own fallback, and the glyph atlas (cells the font lacks) tries JetBrains
-Mono, resized by its ideograph width as Ghostty resizes a fallback, before the Symbols Nerd Font,
-Apple Color Emoji and CoreText's discovery.
+what the system finds. The text style names the font's private family, then `"JetBrains Mono"`,
+so Rune tries them in that order before its own fallback, and the glyph atlas (cells the font
+lacks) tries JetBrains Mono, resized by its ideograph width as Ghostty resizes a fallback, before
+the Symbols Nerd Font, Apple Color Emoji and CoreText's discovery.
 
 ## Programs
 
