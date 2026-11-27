@@ -36,7 +36,10 @@ and runs `tickets lint`. Only the orchestrator runs `tickets done`.
 
 - Commit messages: lowercase conventional commits, single line, no AI co-author lines.
 - Work on a branch via `repos`, open a PR to the landing branch, CI must pass, squash merges.
-- `cargo fmt`, `cargo clippy --all-targets -- -D warnings` and `cargo test` must pass.
+- Run checks through the `justfile`, the way Eli does: `just test` before every push, plus the
+  recipes your change touches (`just run`, `just snap`, `just e2e`, `just bundle`, …). Never report
+  a recipe as passing unless you ran that recipe and it passed; if a tool is missing, say so and
+  stop instead of substituting other commands. A recipe you add or change must be run in the PR.
 - Research and design docs go in `docs/`; keep them current with the code they describe.
 
 ## Safety
