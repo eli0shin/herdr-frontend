@@ -41,6 +41,8 @@ pub struct Shown {
     pub id: u64,
     pub toast: Toast,
     pub due: f64,
+    /// Its Copy button was pressed: it reads "Copied".
+    pub copied: bool,
 }
 
 /// The toasts on screen, oldest first.
@@ -59,6 +61,7 @@ impl Toasts {
             id: self.next,
             toast,
             due,
+            copied: false,
         });
         if self.shown.len() > MOST {
             self.shown.remove(0);
@@ -76,6 +79,13 @@ impl Toasts {
     /// When the next one goes.
     pub fn next_due(&self) -> Option<f64> {
         self.shown.iter().map(|t| t.due).reduce(f64::min)
+    }
+
+    /// Its Copy button was pressed: the command it copies, which the button now says it did.
+    pub fn copied(&mut self, id: u64) -> Option<String> {
+        let shown = self.shown.iter_mut().find(|t| t.id == id)?;
+        shown.copied = true;
+        shown.toast.copy.clone()
     }
 
     /// Takes one away now (it was clicked); what it was.
@@ -117,8 +127,27 @@ pub fn view(s: &crate::State) -> Option<El> {
                 .key(format!("toast-{id}-body"))
                 .font(s.ui_font(12.0, 400.0))
                 .color(chrome.muted)
+                .grow(1.0)
+                .min_w(0.0)
                 .truncate()
         });
+        // A command to run, with Copy beside it (eli-toast's login card).
+        let copy = t.toast.copy.as_ref().map(|_| {
+            el().key(format!("toast-{id}-copy"))
+                .px(6.0)
+                .py(3.0)
+                .radius(4.0)
+                .fill(chrome.raised)
+                .hover_fill(chrome.hover)
+                .cursor(Cursor::Pointer)
+                .on_press_tx(move |s: &mut crate::State, tx| s.copy_from_toast(id, tx))
+                .child(
+                    text(if t.copied { "Copied" } else { "Copy" })
+                        .font(s.ui_font(12.0, 400.0))
+                        .color(chrome.foreground),
+                )
+        });
+        let body = body.map(|body| row().gap(8.0).items_center().child(body).children(copy));
         row()
             .key(format!("toast-{id}"))
             .w(WIDTH)

@@ -3,7 +3,7 @@
 //! answers back as [`crate::Event`]s, as `rune::machine` transitions do.
 
 use herdr_proto::methods::{
-    MachineExec, TerminalGet, TerminalKeep, TerminalKill, TerminalLabel, TerminalRun,
+    MachineExec, TerminalGet, TerminalKeep, TerminalKill, TerminalLabel, TerminalRead, TerminalRun,
 };
 use herdr_shared::{Raise, Round};
 
@@ -26,6 +26,8 @@ pub enum Request {
     Label(TerminalLabel),
     /// A command on a machine, without a terminal; answered with [`crate::Event::Executed`].
     Exec(MachineExec),
+    /// A terminal's screen and history as text; answered with [`crate::Event::Read`].
+    Read(TerminalRead),
 }
 
 /// A command for one terminal's view (its worker, selection and find bar).
@@ -72,6 +74,8 @@ pub struct Toast {
     pub body: String,
     /// What a click runs before the toast goes (an agent's alert: [`Action::FocusAgent`]).
     pub action: Option<Action>,
+    /// A command the body shows, with a Copy button beside it (`eli-toast`'s login card).
+    pub copy: Option<String>,
 }
 
 impl Toast {
@@ -81,6 +85,21 @@ impl Toast {
             title: title.into(),
             body: body.into(),
             action: None,
+            copy: None,
+        }
+    }
+
+    /// `eli-toast`'s card for a machine that needs a login: "<machine> needs a login: run" over
+    /// `hc machine login <machine>` and a Copy button.
+    pub fn login(machine: &str) -> Toast {
+        let command = format!("hc machine login {}", crate::machines::shell_arg(machine));
+        Toast {
+            copy: Some(command.clone()),
+            ..Toast::new(
+                Level::Error,
+                format!("{machine} needs a login: run"),
+                command,
+            )
         }
     }
 

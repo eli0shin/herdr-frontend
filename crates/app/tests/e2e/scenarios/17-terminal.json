@@ -25,7 +25,7 @@
       "keys": "enter",
       "herdr-app": {"skip": "typing goes to herdr-frontend only"}
     },
-    {"name": "close the find bar", "keys": "escape", "herdr-app": {"do": "overlay.close"}},
+    {"name": "close the find bar", "keys": "escape", "herdr-app": {"skip": "Esc closes the find bar, and no command does"}},
     {
       "name": "the palette, for select all",
       "keys": "cmd-shift-p",

@@ -90,15 +90,22 @@ pub fn view(s: &State, cx: &Cx<State>) -> El {
         .window_drag()
         .on_wheel(wheel)
         .child(
+            // The pills sit in a row of their own: a scroll viewport's lone child is its
+            // content and stretches to the viewport's width, which would stretch a lone pill.
             row()
                 .key("tab-scroll")
                 .grow(1.0)
                 .min_w(0.0)
                 .h_full()
-                .gap(3.0)
-                .items_center()
                 .scroll_x()
-                .children(pills),
+                .child(
+                    row()
+                        .key("tab-pills")
+                        .h_full()
+                        .gap(3.0)
+                        .items_center()
+                        .children(pills),
+                ),
         )
         .children(prefix(s))
         .children(space.map(|space| machine(s, space)))

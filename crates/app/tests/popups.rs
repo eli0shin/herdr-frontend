@@ -130,9 +130,27 @@ fn doc_tab_names(fake: &Fake, space: &str) -> Vec<String> {
 #[test]
 fn the_palette_filters_runs_a_command_and_remembers_it() {
     let (mut rt, _) = runtime();
+    // Whether the focused pane draws as focused (a solid cursor).
+    let pane_focused = |rt: &Runtime<State>| {
+        let address = rt
+            .state
+            .model
+            .focused_terminal()
+            .expect("a focused terminal");
+        rt.state.viewers[address]
+            .pane
+            .as_ref()
+            .is_some_and(|p| p.focused)
+    };
+    let before = pane_focused(&rt);
+    assert!(before, "the focused pane shows focus");
     ch(&mut rt, "⌘⇧", 'p');
     frames(&mut rt, 2);
     assert_eq!(list(&rt).popup, Popup::Palette);
+    assert!(
+        !pane_focused(&rt),
+        "under a popup the pane's cursor goes hollow"
+    );
     let palette = element(&rt, "palette").expect("the palette");
     assert_eq!(palette.rect[2], 620.0);
     assert_eq!(palette.rect[1], 60.0, "60 from the top");
@@ -175,6 +193,8 @@ fn the_palette_filters_runs_a_command_and_remembers_it() {
     assert!(element(&rt, "palette-empty").is_some());
     press(&mut rt, "", Key::Escape);
     assert_eq!(*rt.state.model.mode(), Mode::Normal);
+    frames(&mut rt, 2);
+    assert_eq!(pane_focused(&rt), before, "and solid again once it closes");
 }
 
 #[test]
@@ -281,6 +301,17 @@ fn the_picker_goes_to_tabs_closes_them_and_unfolds_quiet_spaces() {
     // dotfiles: review (0), shell (1); repos: fix (2), docs (3); earlier (4); new tab (5)…
     assert_eq!(list(&rt).rows, 7);
     assert_eq!(list(&rt).cursor, 0);
+    // The working agent's tab spins, as the shipped picker's glyph does.
+    let spinner = rt
+        .elements()
+        .into_iter()
+        .find(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|k| k.starts_with("picker-working-"))
+        })
+        .expect("a working tab's spinner");
+    assert!(spinner.loop_phase.is_some(), "it turns");
 
     // "earlier" unfolds the quiet spaces and stays open on it.
     for _ in 0..4 {

@@ -17,7 +17,7 @@ use herdr_client::{
 };
 use herdr_proto::methods::{
     DocGetResult, DocSetResult, ExecResult, MachineAdd, MachineConnect, MachineRename, MachineRm,
-    RemoveResult, RunResult, TerminalAttach, TerminalPut,
+    ReadResult, RemoveResult, RunResult, TerminalAttach, TerminalPut,
 };
 use herdr_proto::types::{Machine, MachineView};
 use herdr_proto::{CloseReason, RpcError, Terminal};
@@ -56,6 +56,7 @@ enum CallAnswer {
     Run(Pending<RunResult>),
     Record(Pending<Terminal>),
     Exec(Pending<ExecResult>),
+    Read(Pending<ReadResult>),
 }
 
 enum MachineAnswer {
@@ -201,6 +202,10 @@ impl Link for Live {
                     token,
                     result: r.map_err(rpc),
                 }),
+                CallAnswer::Read(p) => p.try_take().map(|r| Event::Read {
+                    token,
+                    result: r.map_err(rpc),
+                }),
             };
             let Some(event) = event else { return true };
             news.push(News::Event(event));
@@ -269,6 +274,10 @@ impl Link for Live {
                     token,
                     result: Err(error),
                 },
+                Request::Read(_) => Event::Read {
+                    token,
+                    result: Err(error),
+                },
                 _ => Event::Reply {
                     token,
                     result: Err(error),
@@ -283,6 +292,7 @@ impl Link for Live {
             Request::Keep(keep) => CallAnswer::Record(connection.call(keep)),
             Request::Label(label) => CallAnswer::Record(connection.call(label)),
             Request::Exec(exec) => CallAnswer::Exec(connection.call(exec)),
+            Request::Read(read) => CallAnswer::Read(connection.call(read)),
         };
         self.calls.push((token, answer));
     }

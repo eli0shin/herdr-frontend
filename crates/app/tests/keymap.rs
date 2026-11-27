@@ -227,6 +227,9 @@ fn unbuilt_actions_show_a_not_yet_toast_that_goes() {
     }
     assert!(rt.state.toasts.shown.is_empty());
     assert!(element(&rt, "toasts").is_none());
+    // `eli` is the only layout: switching to the next one stays on it, without a toast.
+    ch(&mut rt, "⌘⇧", 'l');
+    assert!(rt.state.toasts.shown.is_empty());
 }
 
 #[test]
@@ -242,6 +245,10 @@ fn the_keys_help_lists_the_bindings_filters_and_closes() {
     assert_eq!(help.rect[2..], [640.0, 520.0]);
     assert_eq!(focused(&rt).as_deref(), Some("popup-filter"));
     assert!(element(&rt, "help-group-tabs").is_some());
+    // The help mod's header: "Keybinds", and Esc at its end.
+    let title = element(&rt, "help-title").expect("the title");
+    assert_eq!(title.text.as_deref(), Some("Keybinds"));
+    assert!(element(&rt, "popup-esc").is_some());
     let all = list.rows;
     assert!(all > 50, "{all} rows");
 

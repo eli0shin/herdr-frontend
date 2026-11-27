@@ -565,3 +565,31 @@ fn the_palette_reaches_the_machine_dialogs() {
     open(&mut rt, Popup::MachineAdd);
     assert_eq!(list(&rt).popup, Popup::MachineAdd);
 }
+
+#[test]
+fn a_new_space_on_a_machine_that_needs_a_login_says_what_to_run_with_copy() {
+    let (mut rt, _fake, _dir) = runtime("login-card");
+    let board = rune::clipboard::memory();
+    rt.use_clipboard(&board);
+    rt.state
+        .step(0.0, model::Action::SpaceNew(Some("omarchy".into())));
+    frames(&mut rt, 2);
+    let shown = rt.state.toasts.shown.last().expect("a toast").clone();
+    assert_eq!(shown.toast.title, "omarchy needs a login: run");
+    assert_eq!(shown.toast.body, "hc machine login omarchy");
+    let copy = format!("toast-{}-copy", shown.id);
+    let (x, y) = rt.find(&copy).expect("its Copy button");
+    rt.pointer_down(x, y);
+    rt.frame(1.0 / 60.0);
+    rt.pointer_up(x, y);
+    frames(&mut rt, 2);
+    assert_eq!(
+        board.text().as_deref().map(String::as_str),
+        Some("hc machine login omarchy")
+    );
+    let after = rt.state.toasts.shown.iter().find(|t| t.id == shown.id);
+    assert!(
+        after.is_some_and(|t| t.copied),
+        "the card stays and says Copied"
+    );
+}

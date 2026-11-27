@@ -118,6 +118,32 @@ fn the_strip_shows_the_shown_tabs_as_eli_tabs_draws_them() {
 }
 
 #[test]
+fn a_lone_tab_is_a_pill_as_wide_as_its_contents() {
+    use herdr_frontend::fixtures;
+    use herdr_frontend::link::Fake;
+    let doc = serde_json::json!({"spaces": [{
+        "id": "sp-1", "name": "solo", "folder": "/tmp",
+        "tabs": [fixtures::tab("tb-1", "", fixtures::split("tb-1", "row", vec![fixtures::pane("pn-1", "t1")]))],
+    }]});
+    let fake = Fake::new(doc, vec![fixtures::terminal("t1", 80, 24)]);
+    let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
+    rt.state.with_settings(Settings::fixture());
+    rt.state.connect(Box::new(fake));
+    rt.state.settle();
+    frames(&mut rt, 3);
+    let pill = element(&rt, "tab-tb-1").expect("the pill");
+    let close = inside(&rt, "tab-tb-1/tab-close").expect("its ×");
+    // The pill ends 10 pt past its ×, as eli-tabs' pill does, not at the strip's end.
+    assert_eq!(
+        pill.rect[0] + pill.rect[2],
+        close.rect[0] + close.rect[2] + 10.0,
+        "{:?}",
+        pill.rect
+    );
+    assert!(pill.rect[2] < 100.0, "{:?}", pill.rect);
+}
+
+#[test]
 fn a_zoomed_tab_reads_z() {
     let (mut rt, _) = runtime();
     rt.state.step(0.0, model::Action::PaneZoom);

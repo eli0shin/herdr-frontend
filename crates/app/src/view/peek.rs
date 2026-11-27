@@ -23,7 +23,7 @@ use terminal::{Snapshot, Width};
 use crate::State;
 use crate::state::{PEEK, PEEK_KEY};
 use crate::view::overlay::status_color;
-use crate::view::shell::{pane_input, program_icon};
+use crate::view::shell::{icon_in, pane_input};
 use crate::view::terminal::look::color;
 
 /// The bar's height (`peek_terminal`'s `{ "px": 34 }` block).
@@ -142,7 +142,7 @@ fn bar_view(s: &State, bar: &model::peek::PeekBar, cx: &Cx<State>) -> El {
     });
     let icon = program
         .as_ref()
-        .and_then(|p| program_icon(s, p, 14.0, c.foreground, cx));
+        .and_then(|p| icon_in(s, p, 14.0, c.foreground, cx));
     let go = bar.go.as_ref().map(|go| {
         let label = match go {
             Go::Pane(_) => "↗ go to",

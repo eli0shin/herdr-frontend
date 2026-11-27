@@ -10,11 +10,11 @@
 use herdr_shared::Displayed;
 use model::mode::ListPopup;
 use model::popups::{self, PickerRow};
-use rune::{Color, El, col, el, row, text};
+use rune::{Color, El, LoopSpec, col, el, icon, row, text};
 
 use crate::State;
 use crate::config::theme::Rgba;
-use crate::view::icons::SEARCH;
+use crate::view::icons::{SEARCH, SPINNER};
 use crate::view::list::{self, Item, More};
 use crate::view::overlay::{self, Place};
 
@@ -119,11 +119,19 @@ pub fn view(s: &State, list: &ListPopup) -> El {
                     team,
                     ..
                 } => {
+                    // Working spins, as the shipped picker's `glyph` does; the rest are marks.
                     let glyph = match status {
-                        Some(Displayed::Idle) => "○",
-                        Some(Displayed::Working) => "◐",
-                        Some(_) => "●",
-                        None => "·",
+                        Some(Displayed::Working) => icon(&SPINNER, 12.0)
+                            .key(format!("picker-working-{i}"))
+                            .color(c.working)
+                            .looping(LoopSpec::rotation(0.9)),
+                        _ => text(match status {
+                            Some(Displayed::Idle) => "○",
+                            Some(_) => "●",
+                            None => "·",
+                        })
+                        .font(s.ui_font(13.0, 400.0))
+                        .color(overlay::status_color(s, *status)),
                     };
                     let flag = match status {
                         Some(Displayed::Blocked) => Some(small("needs you".into(), c.blocked)),
@@ -135,24 +143,18 @@ pub fn view(s: &State, list: &ListPopup) -> El {
                     } else {
                         who.clone()
                     };
-                    base.child(
-                        el().w(12.0).child(
-                            text(glyph)
-                                .font(s.ui_font(13.0, 400.0))
-                                .color(overlay::status_color(s, *status)),
-                        ),
-                    )
-                    .child(
-                        text(name.clone())
-                            .key(format!("picker-name-{i}"))
-                            .font(s.ui_font(13.0, if *here { 600.0 } else { 400.0 }))
-                            .color(c.foreground)
-                            .grow(1.0)
-                            .min_w(0.0)
-                            .truncate(),
-                    )
-                    .children(flag)
-                    .child(small(who, c.dim))
+                    base.child(el().w(12.0).child(glyph))
+                        .child(
+                            text(name.clone())
+                                .key(format!("picker-name-{i}"))
+                                .font(s.ui_font(13.0, if *here { 600.0 } else { 400.0 }))
+                                .color(c.foreground)
+                                .grow(1.0)
+                                .min_w(0.0)
+                                .truncate(),
+                        )
+                        .children(flag)
+                        .child(small(who, c.dim))
                 }
                 PickerRow::Earlier { count, open } => {
                     let label = format!(

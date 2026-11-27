@@ -359,12 +359,31 @@ impl Drop for App {
     }
 }
 
-/// Copies Eli's Herdr app config into `home`, minus what belongs to his running window: its
-/// socket, its view, its window place and its seen marks. The window opens at 1200 × 800, as
-/// herdr-frontend's does. The source is only read.
+/// Copies Eli's Herdr app config into `home`, minus what belongs to his running window (its
+/// socket, its view, its window place and its seen marks) and what his use of it left behind:
+/// the mods' stores (`data/`: the Agents list's times, the palette's recent commands) and the
+/// shared state, which starts from his tracked `shared.defaults.json` as a fresh `dot stow`
+/// leaves it (so his hidden machines and space colors stay out). Both apps then start from
+/// their defaults. The window opens at 1200 × 800, as herdr-frontend's does. The source is only
+/// read.
 fn copy_config(config: &Path, home: &Path) -> Result<(), String> {
-    const SKIP: [&str; 4] = ["herdr-app.sock", "view.json", "window.json", "seen.json"];
+    const SKIP: [&str; 7] = [
+        "herdr-app.sock",
+        "view.json",
+        "window.json",
+        "seen.json",
+        "data",
+        "shared.json",
+        "shared.defaults.json",
+    ];
     copy_dir(config, home, &SKIP)?;
+    let defaults = config.join("shared.defaults.json");
+    if defaults.is_file() {
+        std::fs::copy(&defaults, home.join("shared.json"))
+            .map_err(|e| format!("{}: {e}", defaults.display()))?;
+        std::fs::copy(&defaults, home.join("shared.defaults.json"))
+            .map_err(|e| format!("{}: {e}", defaults.display()))?;
+    }
     let window = json!({"state": "windowed", "bounds": [120.0, 60.0, 1200.0, 800.0]});
     std::fs::write(home.join("window.json"), window.to_string()).map_err(|e| e.to_string())
 }

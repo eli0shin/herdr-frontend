@@ -8,12 +8,13 @@
 //! or the view needs saving.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 use herdr_proto::methods::{
-    DocGetResult, DocSetResult, ExecResult, TerminalGet, TerminalKeep, TerminalKill, TerminalLabel,
-    TerminalRun,
+    DocGetResult, DocSetResult, ExecResult, ReadResult, TerminalGet, TerminalKeep, TerminalKill,
+    TerminalLabel, TerminalRead, TerminalRun,
 };
-use herdr_proto::types::{CoreInfo, MachineView};
+use herdr_proto::types::{CoreInfo, MachineState, MachineView};
 use herdr_proto::{Changes, CloseReason, RpcError, Terminal, TerminalSet};
 use herdr_shared::attention::Seen;
 use herdr_shared::{Alert, Raise};
@@ -158,6 +159,11 @@ pub enum Event {
         token: Token,
         result: Result<ExecResult, RpcError>,
     },
+    /// The reply to an [`Effect::Call`] of [`Request::Read`].
+    Read {
+        token: Token,
+        result: Result<ReadResult, RpcError>,
+    },
     /// A pane's attach stream ended.
     StreamClosed {
         address: String,
@@ -266,6 +272,11 @@ pub(crate) enum Pending {
         pane: String,
         local: bool,
         lookup: crate::links::Lookup,
+    },
+    /// The last lines of a terminal this screen started that exited with `code` right away,
+    /// for the "Terminal failed to start" notice.
+    LaunchFailed {
+        code: i32,
     },
 }
 
@@ -656,7 +667,23 @@ impl Model {
     /// when there is no such machine.
     fn refused_on(&self, machine: Option<&str>) -> Option<Toast> {
         let m = self.world.machine(machine)?;
-        (*m.mirror.layout() != Layout::Ready).then(|| unavailable(m.mirror.layout()))
+        (*m.mirror.layout() != Layout::Ready)
+            .then(|| self.login_or(machine, unavailable(m.mirror.layout())))
+    }
+
+    /// `toast` about something that failed on `machine`, unless that machine needs a login: then
+    /// the login card that says what to run, with Copy (Herdr app's failed New space toast, as
+    /// `eli-toast` draws it).
+    pub(crate) fn login_or(&self, machine: Option<&str>, toast: Toast) -> Toast {
+        let needs_login = self
+            .world
+            .machine(machine)
+            .and_then(|m| m.status.as_ref())
+            .is_some_and(|v| v.state == MachineState::NeedsLogin);
+        match machine {
+            Some(name) if needs_login => Toast::login(name),
+            _ => toast,
+        }
     }
 
     /// Why the layout holding `id` (a node, tab or space) can't take an edit now, as the toast
@@ -815,11 +842,23 @@ impl Model {
             }
             Event::Reply { token, result } => self.reply(token, result, fx),
             Event::Executed { token, result } => self.executed(token, result, fx),
+            Event::Read { token, result } => {
+                if let Some(Pending::LaunchFailed { code }) = self.pending.remove(&token) {
+                    let output = result.map(|r| r.text).unwrap_or_default();
+                    fx.push(Effect::Toast(Toast::new(
+                        Level::Error,
+                        "Terminal failed to start",
+                        closed::launch_failure_body(code, &output),
+                    )));
+                }
+            }
             Event::StreamClosed { address, reason } => {
-                if closed::stream_closed(&reason)
-                    && let Some(pane) = self.world.pane_of(&address)
-                {
-                    self.edit(Intent::RemovePane { pane }, fx);
+                if closed::stream_closed(&reason) {
+                    let created = self.world.terminal(&address).map(|t| t.created_ms);
+                    self.launch_failed(&address, &reason, created, fx);
+                    if let Some(pane) = self.world.pane_of(&address) {
+                        self.edit(Intent::RemovePane { pane }, fx);
+                    }
                 }
             }
             Event::WindowActive(active) => self.window_active = active,
@@ -1011,11 +1050,11 @@ impl Model {
                     if let Some(id) = answer {
                         answer_call(fx, id, Err(error.message.clone()));
                     }
-                    fx.push(Effect::Toast(Toast::new(
-                        Level::Error,
-                        "Couldn't start a terminal",
-                        error.message,
-                    )));
+                    let toast = self.login_or(
+                        machine.as_deref(),
+                        Toast::new(Level::Error, "Couldn't start a terminal", error.message),
+                    );
+                    fx.push(Effect::Toast(toast));
                 }
             },
             Pending::Adopt(orphan) => {
@@ -1071,6 +1110,15 @@ impl Model {
             Pending::CheckClosed { pane, address } => {
                 self.busy.remove(&address);
                 if closed::closed_by_lookup(result.as_deref()) {
+                    if let Ok(record) = &result {
+                        let reason = CloseReason {
+                            reason: record.reason.clone(),
+                            exit_code: record.exit_code,
+                            finished_ms: record.finished_ms,
+                            ..Default::default()
+                        };
+                        self.launch_failed(&address, &reason, Some(record.created_ms), fx);
+                    }
                     self.edit(Intent::RemovePane { pane }, fx);
                 } else {
                     self.not_closed.insert(address);
@@ -1090,7 +1138,10 @@ impl Model {
             }
             Pending::Keep(keep) => self.kept(keep, result, fx),
             // Exec calls answer with `Event::Executed`.
-            Pending::Navigate { .. } | Pending::Folders { .. } | Pending::Link { .. } => {}
+            Pending::Navigate { .. }
+            | Pending::Folders { .. }
+            | Pending::Link { .. }
+            | Pending::LaunchFailed { .. } => {}
         }
     }
 
@@ -1127,8 +1178,40 @@ impl Model {
             | Pending::CheckClosed { .. }
             | Pending::Park { .. }
             | Pending::Seen(_)
-            | Pending::Keep(_) => {}
+            | Pending::Keep(_)
+            | Pending::LaunchFailed { .. } => {}
         }
+    }
+
+    /// A terminal ended (`reason`, started at `created`): when this screen started it and it
+    /// exited failing within two seconds, its last lines are read for a "Terminal failed to
+    /// start" notice (`app:src/window.rs` `notify_launch_failure`). Told once per terminal.
+    fn launch_failed(
+        &mut self,
+        address: &str,
+        reason: &CloseReason,
+        created: Option<u64>,
+        fx: &mut Effects,
+    ) {
+        let Some(born) = self.births.remove(address) else {
+            return;
+        };
+        // From the core's times, else (no record left) from when this screen started it.
+        let ran = closed::ran_for(reason, created)
+            .or_else(|| Duration::try_from_secs_f64(self.now - born).ok());
+        let Some(code) = closed::launch_failure(reason, ran) else {
+            return;
+        };
+        let read = TerminalRead {
+            terminal: address.to_owned(),
+            lines: 5,
+            ..Default::default()
+        };
+        self.call(
+            fx,
+            Request::Read(read),
+            Some(Pending::LaunchFailed { code }),
+        );
     }
 
     /// Shares what the person is looking at as `herdr.seen` (`app:src/window.rs` `share_seen`):

@@ -94,28 +94,19 @@ pub fn view(s: &State, list: &ListPopup) -> El {
                 .py(8.0),
         );
     }
+    // The help mod's header: "Keybinds" and Esc, then the filter field.
     col()
         .w_full()
         .h_full()
-        .padding(12.0)
-        .gap(10.0)
-        .child(
-            row()
-                .w_full()
-                .items_center()
-                .gap(10.0)
-                .child(
-                    text("Keys")
-                        .key("help-title")
-                        .font(s.ui_font(14.0, 600.0))
-                        .color(c.foreground),
-                )
-                .child(
-                    rune::el()
-                        .grow(1.0)
-                        .child(overlay::field(s, "Filter keys", None, None)),
-                ),
-        )
+        .padding(18.0)
+        .gap(14.0)
+        .child(overlay::title(
+            s,
+            "help-title",
+            "Keybinds",
+            Some(overlay::esc(s)),
+        ))
+        .child(overlay::field(s, "Type to filter\u{2026}", None, None))
         .child(
             col()
                 .key("help-rows")

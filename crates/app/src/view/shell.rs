@@ -69,8 +69,26 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
 }
 
 /// A program's icon at `size` points: a one-color glyph in the program's color (else `ink`), or
-/// a picture in its own colors. `None` when it has none, or before the images can be made.
+/// a picture in its own colors, as the tab bar draws it (`eli-tabs`). `None` when it has none,
+/// or before the images can be made.
 pub fn program_icon(
+    s: &State,
+    program: &Program,
+    size: f32,
+    ink: rune::Color,
+    cx: &Cx<State>,
+) -> Option<El> {
+    let tint = program
+        .color
+        .as_deref()
+        .and_then(Rgba::parse)
+        .map_or(ink, Rgba::color);
+    icon_in(s, program, size, tint, cx)
+}
+
+/// [`program_icon`] with a one-color glyph always in `ink`, as the Agents list, the PR finder
+/// and the peek draw it (their mods' `icon(p, size, t.foreground)`).
+pub fn icon_in(
     s: &State,
     program: &Program,
     size: f32,
@@ -85,12 +103,7 @@ pub fn program_icon(
         .pixels(image.pixels())
         .a11y_hidden();
     Some(if program.tint {
-        let tint = program
-            .color
-            .as_deref()
-            .and_then(Rgba::parse)
-            .map_or(ink, Rgba::color);
-        icon.pixels_tint(tint)
+        icon.pixels_tint(ink)
     } else {
         icon
     })
