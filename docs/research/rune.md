@@ -132,6 +132,31 @@ and `opt-level = 3` for `rune`, `rune-text`, `rune-image` and `parley_engine`
 ([opencode-rune `Cargo.toml`][ocr-cargo]). Otherwise text shaping and painting make debug runs
 sluggish.
 
+### The release profile as built
+
+`just bundle` and `just install` ship `[profile.release]` in the root `Cargo.toml`: opencode-rune's
+release profile, `lto = "fat"`, `codegen-units = 1`, `incremental = false`
+([opencode-rune `Cargo.toml`][ocr-cargo]). Symbols stay: Cargo strips only debug info, so a
+panic's backtrace still names functions, which matters while a view panic kills the process
+(rune#1003). The app crate turns on Rune's `tooling`, so the release binary keeps `--snap`,
+`--tree` and `--script`. Without it, Rune parses none of its flags in release, and
+`herdr-frontend --snap` would open a window on the real core. `embedded-fonts` stays on: the shell
+UI's labels draw with Rune's bundled Inter until the theme ticket registers the UI font.
+
+Measured on the M1 Pro, the herdr-frontend binary alone, dependencies already fetched. The sizes
+are without `tooling`, which adds 1.5 MB (30.0 MB with fat LTO):
+
+| Profile | Cold build | Rebuild after an app-crate edit | Binary |
+| --- | --- | --- | --- |
+| Cargo's default release | 1 m 53 s | 7 s | 36.6 MB |
+| `lto = "thin"` | 3 m 00 s | not measured | 36.8 MB |
+| `lto = "fat"`, `codegen-units = 1` (shipped) | 5 m 52 s | 2 m 17 s | 28.5 MB |
+
+On `just pane-budget`, fat LTO cut the UI's p50 frame time by 10-15% on the heavy loads (a
+200×60 pane scrolling a screenful: 4.13 ms to 3.51 ms) and was level on the light ones. Its p95 and
+p99 were noisier in that run, on a machine busy with other builds. Thin LTO cost a minute and
+saved nothing, so it isn't used. `just pane-budget` builds with the shipped profile.
+
 ## 2. App architecture on Rune
 
 ### State model and view functions

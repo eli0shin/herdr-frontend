@@ -56,3 +56,13 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.memchr]
 opt-level = 3
+
+# What `just bundle` and `just install` ship: opencode-rune's release profile, the whole program
+# optimised as one (fat LTO, one codegen unit). Against Cargo's default it builds slower (5 m 52 s
+# cold and 2 m 17 s after an app-crate edit, against 1 m 53 s and 7 s) for a smaller binary and
+# 10-15% less UI time a frame on `just pane-budget`'s heavy loads (docs/research/rune.md §1).
+# Symbols stay (Cargo strips only debug info), so a panic's backtrace still names functions.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+incremental = false

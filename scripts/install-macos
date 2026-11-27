@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Builds herdr-frontend.app (scripts/bundle-macos), installs it to ~/Applications and links the CLI
+# into ~/.local/bin. HERDR_FRONTEND_APP_DIR and HERDR_FRONTEND_BIN_DIR move either place.
+set -euo pipefail
+
+[[ $(uname -s) == Darwin ]] || { echo 'install-macos needs macOS.' >&2; exit 1; }
+cd "$(dirname "$0")/.."
+
+apps=${HERDR_FRONTEND_APP_DIR:-$HOME/Applications}
+bin=${HERDR_FRONTEND_BIN_DIR:-$HOME/.local/bin}
+
+built=$(scripts/bundle-macos)
+app="$apps/herdr-frontend.app"
+mkdir -p "$apps" "$bin"
+
+# Copy beside the old bundle, then swap: a running window keeps its open executable, and the
+# installed bundle is the one bundle-macos signed and verified.
+rm -rf "$app.new" "$app.old"
+ditto "$built" "$app.new"
+if [[ -e $app ]]; then mv "$app" "$app.old"; fi
+mv "$app.new" "$app"
+rm -rf "$app.old"
+codesign --verify --strict "$app"
+
+ln -sfn "$app/Contents/MacOS/herdr-frontend" "$bin/herdr-frontend"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"
+
+echo "Installed $app and $bin/herdr-frontend."
+case ":$PATH:" in
+    *":$bin:"*) ;;
+    *) echo "note: $bin is not on PATH; add it to use the herdr-frontend command." ;;
+esac
+echo "Quit and reopen herdr-frontend to use the new build."

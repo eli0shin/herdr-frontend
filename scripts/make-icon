@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Regenerates assets/icon/herdr-frontend.icns from assets/icon/herdr-frontend.svg. Run it after
+# editing the SVG and commit both. Needs ImageMagick (`magick`) and Xcode's `iconutil`; the bundle
+# itself only copies the committed .icns.
+set -euo pipefail
+
+[[ $(uname -s) == Darwin ]] || { echo 'make-icon needs macOS (iconutil).' >&2; exit 1; }
+command -v magick >/dev/null || { echo 'make-icon needs ImageMagick: brew install imagemagick' >&2; exit 1; }
+cd "$(dirname "$0")/.."
+
+svg=assets/icon/herdr-frontend.svg
+icns=assets/icon/herdr-frontend.icns
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+set="$work/herdr-frontend.iconset"
+mkdir "$set"
+
+# The sizes iconutil wants: each base size at 1x and 2x.
+for size in 16 32 128 256 512; do
+    for scale in 1 2; do
+        px=$((size * scale))
+        name="icon_${size}x${size}"
+        [[ $scale == 2 ]] && name="${name}@2x"
+        # Render at the SVG's own 1024 px, then scale down, so small sizes stay sharp.
+        magick -background none "$svg" -resize "${px}x${px}" -define png:color-type=6 \
+            "$set/$name.png"
+    done
+done
+
+iconutil --convert icns --output "$icns" "$set"
+echo "$icns"

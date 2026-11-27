@@ -35,6 +35,18 @@ snap scene="hello" *args: build
 ghostty-diff *screens:
     scripts/ghostty-diff {{screens}}
 
+# Build target/release/herdr-frontend.app: the release build, icon and Info.plist, signed ad hoc.
+bundle:
+    scripts/bundle-macos
+
+# Install herdr-frontend.app to ~/Applications and the herdr-frontend command to ~/.local/bin.
+install:
+    scripts/install-macos
+
+# Regenerate assets/icon/herdr-frontend.icns from its SVG (needs ImageMagick).
+icon:
+    scripts/make-icon
+
 # Time N terminal panes all changing at once against the 120 Hz frame (renderer gate 3).
 pane-budget:
     cargo run --release -p herdr-frontend --example pane-budget
