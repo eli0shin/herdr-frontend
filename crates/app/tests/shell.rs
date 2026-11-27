@@ -2,6 +2,7 @@
 //! regions, the shown tab's live panes, the viewer policy (`herdr-core-protocol.md` §4), plain
 //! typing, and that the layout document is only read.
 
+use herdr_frontend::config::settings::Settings;
 use herdr_frontend::fixtures::{self, demo_core};
 use herdr_frontend::link::{Fake, Out};
 use herdr_frontend::state::Attach;
@@ -12,6 +13,7 @@ use rune::{ElementInfo, Env, Key, KeyEvent, Mods, Runtime};
 fn runtime() -> (Runtime<State>, Fake) {
     let fake = demo_core();
     let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
+    rt.state.with_settings(Settings::fixture());
     rt.state.connect(Box::new(fake.clone()));
     rt.state.settle();
     frames(&mut rt, 3);
@@ -333,6 +335,7 @@ fn a_failed_layout_read_is_tried_again_when_the_model_asks() {
     let fake = demo_core();
     fake.core().docs_down = true;
     let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
+    rt.state.with_settings(Settings::fixture());
     rt.state.connect(Box::new(fake.clone()));
     frames(&mut rt, 2);
     assert!(rt.state.model.shown_tab().is_none(), "nothing read yet");

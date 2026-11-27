@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use herdr_frontend::config::settings::Settings;
 use herdr_frontend::fixtures::demo_core;
 use herdr_frontend::home::Home;
 use herdr_frontend::link::{Fake, Out};
@@ -27,6 +28,8 @@ fn runtime_with(home: Option<Home>) -> (Runtime<State>, Fake) {
         rt.state = s;
         State::setup(&mut rt.state, std::sync::Arc::new(|| {}));
     }
+    // At zoom 1 and Ghostty's 14 pt, which the geometry here is measured at.
+    rt.state.with_settings(Settings::fixture());
     rt.state.connect(Box::new(fake.clone()));
     rt.state.settle();
     frames(&mut rt, 3);

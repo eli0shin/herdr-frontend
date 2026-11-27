@@ -18,7 +18,7 @@ use terminal::Metrics;
 
 use super::constraint::{self, Constraint, GlyphBox};
 use super::{Presentation, SYMBOLS_NERD_FONT};
-use crate::view::terminal::font::Face;
+use crate::view::terminal::font::{Face, FaceKey};
 
 /// A glyph's pixels and place, as `renderGlyph` returns them.
 pub(super) struct Rendered {
@@ -33,6 +33,9 @@ pub(super) struct Rendered {
 
 /// The faces one terminal font falls back to, at its size.
 struct Faces {
+    /// The embedded JetBrains Mono behind another terminal font, resized as Ghostty resizes a
+    /// fallback face (`default_fallback_adjustment`, the ideograph width).
+    backup: Option<CFRetained<CTFont>>,
     nerd: CFRetained<CTFont>,
     emoji: Option<CFRetained<CTFont>>,
     /// The terminal font, which CoreText's fallback is asked from.
@@ -43,7 +46,7 @@ struct Faces {
 }
 
 thread_local! {
-    static FACES: RefCell<HashMap<(usize, u32, u32), Faces>> = RefCell::new(HashMap::new());
+    static FACES: RefCell<HashMap<FaceKey, Faces>> = RefCell::new(HashMap::new());
 }
 
 /// A font from a font file's bytes at `px` pixels.
@@ -91,7 +94,14 @@ impl Faces {
         // SAFETY: a CoreText constructor.
         let emoji = unsafe { CTFont::with_name(&name, px, std::ptr::null()) };
         let emoji = is_color(&emoji).then_some(emoji);
+        let backup = face.backup().and_then(|data| {
+            let found = from_data(data, px)?;
+            let scale = scale_factor(face, &found);
+            // SAFETY: a CoreText constructor from a live font.
+            Some(unsafe { found.copy_with_attributes(px * scale, std::ptr::null(), None) })
+        });
         Some(Faces {
+            backup,
             nerd,
             emoji,
             primary,
@@ -113,6 +123,12 @@ impl Faces {
             Presentation::Text => false,
             Presentation::Default => super::is_emoji_presentation(c),
         };
+        if !emoji_wanted
+            && let Some(backup) = &self.backup
+            && let Some(g) = glyph(backup, c)
+        {
+            return Some((backup.clone(), g));
+        }
         if !emoji_wanted && let Some(g) = glyph(&self.nerd, c) {
             return Some((self.nerd.clone(), g));
         }

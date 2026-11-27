@@ -11,6 +11,7 @@ mod support;
 use std::time::{Duration, Instant};
 
 use herdr_client::{ConnectOptions, Connection};
+use herdr_frontend::config::settings::Settings;
 use herdr_frontend::fixtures::{pane, split, tab};
 use herdr_frontend::link::Live;
 use herdr_frontend::{SIZE, State, app};
@@ -107,6 +108,7 @@ fn the_app_draws_and_types_into_live_core_terminals_and_leaves_the_layout_alone(
         .version;
 
     let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
+    rt.state.with_settings(Settings::fixture());
     rt.state.connect(Box::new(Live::new(core.transport())));
 
     until(&mut rt, "both panes to draw their terminals", |rt| {
@@ -205,6 +207,7 @@ fn a_parser_behind_the_output_holds_the_core_to_the_credit_window() {
     .expect("doc.set");
 
     let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
+    rt.state.with_settings(Settings::fixture());
     rt.state.connect(Box::new(Live::new(core.transport())));
     until(&mut rt, "the flood to show", |rt| {
         text_of(rt, &flood).contains("flood-line")

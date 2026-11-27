@@ -107,7 +107,7 @@ herdr-app's shape (herdr-app `src/window.rs` `world`):
 {
   "space": "sp1", "tab": "tb1", "focused_pane": "p2", "layout": "eli", "agent": "t2",
   "floats": {}, "overlays": [], "errors": ["layout devbox: <why>"],
-  "zoom": 1.0, "font_size": 14.0, "ui_font_size": 13.0
+  "zoom": 1.1, "font_size": 17.0, "ui_font_size": 13.0
 }
 ```
 
@@ -119,7 +119,8 @@ herdr-app's shape (herdr-app `src/window.rs` `world`):
   `copy-mode`.
 - `errors`: the window's own errors (settings, keys) first, then `layout <machine|local>: <why>`
   for each machine whose layout can't be read or written.
-- `zoom`, `font_size` and `ui_font_size` come from the window, not the model.
+- `zoom`, `font_size` and `ui_font_size` come from the window, not the model
+  (`State::window_status`, with the settings files' errors; `docs/settings.md`).
 
 ## `do` commands
 

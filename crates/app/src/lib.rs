@@ -5,6 +5,7 @@
 //! (`view::shell`) around the shown tab's live terminals.
 
 pub mod chord;
+pub mod config;
 pub mod control;
 pub mod fixtures;
 pub mod home;
@@ -17,7 +18,6 @@ pub mod toast;
 pub mod view;
 pub mod window;
 
-use rune::tok;
 use rune::{App, AppSpec, Cx, El, FontSmoothing, col, el, row, text};
 
 pub use state::{State, TERMINAL_POINTS};
@@ -87,14 +87,15 @@ pub fn spec() -> AppSpec<State> {
     }
 }
 
-/// The whole window: the shell around the shown tab's terminals ([`view::shell`]), or, in the
-/// renderer's fixture scenes, their panes alone; the open popup and the toasts over it. Its
-/// root previews every key for the keymap ([`State::preview_key`]).
+/// The whole window, at the settings' zoom: the shell around the shown tab's terminals
+/// ([`view::shell`]), or, in the renderer's fixture scenes, their panes alone; the open popup
+/// and the toasts over it. Its root previews every key for the keymap ([`State::preview_key`]).
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
+    cx.zoom(s.zoom());
     let content = if !s.panes.is_empty() {
         fixture_panes(s, cx)
     } else if s.status == state::Status::Offline && s.model.shown_tab().is_none() {
-        hello()
+        hello(s, cx)
     } else {
         view::shell::view(s, cx)
     };
@@ -104,7 +105,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         }
         _ => None,
     };
-    let toasts = toast::view(&s.toasts, &s.chrome);
+    let toasts = toast::view(s);
     el().key("window")
         .w_full()
         .h_full()
@@ -114,22 +115,34 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .children(toasts)
 }
 
+/// Rune's tokens in the theme's colors.
+fn tokens(s: &State, cx: &Cx<State>) -> rune::tok::Theme {
+    s.config
+        .theme
+        .tokens(s.config.settings.dark(cx.system_dark()))
+}
+
 /// The app's name in the middle, before any core: the hello window.
-fn hello() -> El {
-    let t = tok::theme(true);
+fn hello(s: &State, cx: &mut Cx<State>) -> El {
+    let t = tokens(s, cx);
     col()
         .key("root")
         .w_full()
         .h_full()
         .center()
         .fill(t.bg)
-        .child(text(TITLE).key("title").color(t.text_secondary))
+        .child(
+            text(TITLE)
+                .key("title")
+                .font(s.ui_font(13.0, 400.0))
+                .color(t.text_secondary),
+        )
 }
 
 /// Fixture panes in a square-ish grid (two, four and nine panes are 2 × 1, 2 × 2 and 3 × 3)
 /// with a 1 px gap, nothing around them: what the Ghostty pixel diff compares.
 fn fixture_panes(s: &State, cx: &mut Cx<State>) -> El {
-    let t = tok::theme(true);
+    let t = tokens(s, cx);
     let face = s.face(cx.env().scale);
     let gap = 1.0 / face.scale;
     let pane = |p: &TerminalPane| el().grow(1.0).h_full().child(p.view(&face, &s.look));
