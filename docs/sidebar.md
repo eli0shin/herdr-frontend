@@ -26,7 +26,8 @@ state in `crates/app/src/state.rs`. `crates/app/tests/sidebar.rs` and the `shell
   sub-agents), the status and the jump label. Line 2 has the space in its color (without a space
   header above), an orchestrator's ticket, "N workers" and PR chips, the machine of a remote
   agent, and the time since the last change. Live rows have a status-colored left edge. The
-  focused row gets a faint working-blue wash and outline.
+  focused row gets a faint working-blue wash and outline, and an idle agent's title brightens
+  while it's focused; both move to another row at once when the focus does.
 - **Status marks.** Working is a spinner that turns every 900 ms. Blocked is "Needs you", or a
   compact "!" under a priority header. Done is a dot, idle a ring.
 - **Titles.** A named tab's name. For an unnamed tab, or one named after its program, the agent's

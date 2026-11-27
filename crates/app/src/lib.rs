@@ -134,7 +134,17 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let peek = view::peek::view(s, cx);
     let toasts = toast::view(s);
     let zoom = s.zoom();
-    el().key("window")
+    let window = el().key("window");
+    // A space switch lands in one frame: the strip's pills, the panes, the sidebar and the
+    // picker it was chosen in, each as it is after, with no fade or slide. Colours keep their
+    // springs, so what a switch recolours lands on its own (the pills' row, the Agents list's
+    // selected row).
+    let window = if s.space_switched() {
+        window.instant_changes()
+    } else {
+        window
+    };
+    window
         .w_full()
         .h_full()
         .on_key_preview(State::preview_key)
