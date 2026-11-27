@@ -655,6 +655,12 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   core. The `shell*` scenes run on `Fake`; `State::settle` makes every pump wait on the
   terminals (`Terminal::snapshot_now`) so a frame never races a worker. While the screen is
   locked, macOS reports the real window covered and Rune draws no frames.
+- **End-to-end harness** (`docs/e2e.md`). A real window started with `HERDR_FRONTEND_E2E=1`
+  takes keys from its control socket through `Tx::send_key` (delivered in `poll`'s turn, as
+  typed keys). It keeps the last drawn frame's tree from `App::on_frame_drawn`
+  (`Runtime::elements`, since Rune's `--tree` writer is crate-private). It reports
+  `WindowHandle::window_number` for `screencapture -l`. Rune has no API to read a live window's
+  pixels back.
 
 [rune]: https://github.com/anomalyco/rune/tree/4918969f04dce020f63b34e024368a86e5e1857d
 [rune-readme]: https://github.com/anomalyco/rune/blob/4918969f04dce020f63b34e024368a86e5e1857d/README.md

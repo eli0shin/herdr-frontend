@@ -1,0 +1,15 @@
+{
+  "title": "Panes, splits and zoom",
+  "inventory": "§5",
+  "notes": "Splitting, focus by direction, zoom and closing a pane, on the w1 | (w2 / w3) tab.",
+  "steps": [
+    {"name": "the split tab", "do": "space.select", "args": {"index": 1}},
+    {"name": "focus right", "keys": "ctrl-l", "herdr-app": {"do": "navigator-status.right"}},
+    {"name": "focus down", "keys": "cmd-alt-down", "herdr-app": {"do": "pane.go", "args": {"direction": "down"}}},
+    {"name": "split right", "keys": "cmd-d", "herdr-app": {"do": "pane.split", "args": {"direction": "right"}}},
+    {"name": "zoom", "keys": "cmd-shift-enter", "herdr-app": {"do": "pane.zoom"}},
+    {"name": "unzoom", "keys": "cmd-shift-enter", "herdr-app": {"do": "pane.zoom"}},
+    {"name": "resize", "keys": "alt-shift-h", "herdr-app": {"do": "pane.resize", "args": {"direction": "left"}}},
+    {"name": "close w2", "do": "pane.close", "args": {"pane": "{{p:w2}}"}}
+  ]
+}

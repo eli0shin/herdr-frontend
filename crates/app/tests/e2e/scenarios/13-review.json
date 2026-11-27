@@ -1,0 +1,9 @@
+{
+  "title": "Review view",
+  "inventory": "§13",
+  "notes": "Cmd+R starts the review terminal in the shown space (running `review` from PATH in a seeded folder) and Cmd+R again goes back.",
+  "steps": [
+    {"name": "review", "keys": "cmd-r", "herdr-app": {"do": "navigator-status.review"}, "wait": 1.0},
+    {"name": "back", "keys": "cmd-r", "herdr-app": {"do": "navigator-status.review"}}
+  ]
+}

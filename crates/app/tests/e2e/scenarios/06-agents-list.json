@@ -1,0 +1,12 @@
+{
+  "title": "Agents list",
+  "inventory": "§6",
+  "notes": "The sidebar lists agents only: pi (working, with the explore sub-agent), done, blocked and idle, in priority sections.",
+  "steps": [
+    {"name": "focus pi", "do": "agent.focus", "args": {"terminal": "{{t:pi}}"}},
+    {"name": "idle starts working", "status": {"agent": "idle", "to": "state=working:app=pi"}, "wait": 0.5},
+    {"name": "pi needs you", "status": {"agent": "pi", "to": "state=blocked:kind=question:app=pi"}, "wait": 0.5},
+    {"name": "look at done", "do": "agent.focus", "args": {"terminal": "{{t:done}}"}},
+    {"name": "leave done", "do": "agent.focus", "args": {"terminal": "{{t:blocked}}"}}
+  ]
+}

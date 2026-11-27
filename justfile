@@ -31,6 +31,11 @@ snap scene="hello" *args: build
     {{bin}} --snap target/snap/{{scene}}.png --scene {{scene}} {{args}}
     echo target/snap/{{scene}}.png
 
+# Run the full app and Herdr app through the scenarios on isolated cores, screenshot each step
+# into target/e2e/<run>/ (opens windows on your display; docs/e2e.md).
+e2e *args:
+    HERDR_E2E=1 cargo test -p herdr-frontend --test e2e -- {{args}}
+
 # Compare the terminal renderer with Ghostty.app, pixel by pixel (opens a Ghostty window per screen).
 ghostty-diff *screens:
     scripts/ghostty-diff {{screens}}

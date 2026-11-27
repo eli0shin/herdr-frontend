@@ -79,5 +79,9 @@ The tracker holds the dependency graph. These are the stages:
   an isolated herdr-frontend home.
 - UI is checked headlessly: Rune scenes, `--snap`, `--tree`, `--script`, and
   `App::headless_runtime` tests. Never drive input on Eli's real display.
+- The end-to-end harness (`just e2e`, `docs/e2e.md`) is the one exception that opens windows on
+  his display. It runs the full app and Herdr app on isolated cores and homes. It sends keys to
+  herdr-frontend through its control socket, never OS-level input. Feature tickets add their
+  steps to `crates/app/tests/e2e/scenarios/`.
 - `cargo fmt`, `cargo clippy --all-targets -- -D warnings` and `cargo test` pass in CI on the
   `xcode-27` (macOS 27) runner.

@@ -1,0 +1,9 @@
+{
+  "title": "PR finder",
+  "inventory": "§12",
+  "notes": "No seeded agent watches a PR, so the finder shows its empty state.",
+  "steps": [
+    {"name": "PR finder", "keys": "ctrl-g f", "herdr-app": {"do": "mod.open", "args": {"name": "pr-finder"}}},
+    {"name": "close it", "keys": "escape", "herdr-app": {"do": "overlay.close"}}
+  ]
+}

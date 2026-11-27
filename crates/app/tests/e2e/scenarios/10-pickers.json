@@ -1,0 +1,13 @@
+{
+  "title": "Pickers, palette, prompt, confirm and help",
+  "inventory": "§10",
+  "steps": [
+    {"name": "tab picker", "keys": "cmd-p", "herdr-app": {"do": "mod.open", "args": {"name": "picker"}}},
+    {"name": "close the picker", "keys": "escape", "herdr-app": {"do": "overlay.close"}},
+    {"name": "command palette", "keys": "cmd-shift-p", "herdr-app": {"do": "app.palette"}},
+    {"name": "type in the palette", "type": "split", "herdr-app": {"skip": "typing goes to herdr-frontend only"}},
+    {"name": "close the palette", "keys": "escape", "herdr-app": {"do": "overlay.close"}},
+    {"name": "keys help", "keys": "cmd-/", "herdr-app": {"do": "app.help"}},
+    {"name": "close help", "keys": "escape", "herdr-app": {"do": "overlay.close"}}
+  ]
+}

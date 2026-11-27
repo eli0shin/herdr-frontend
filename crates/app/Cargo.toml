@@ -34,3 +34,10 @@ png = "0.18.1"
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFData", "CFString", "CFCGTypes"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGBitmapContext", "CGContext", "CGColorSpace", "CGImage", "CGFont"] }
 objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFont", "CTFontDescriptor", "CTFontManager", "CTFontTraits", "objc2-core-graphics"] }
+
+# The end-to-end harness (`docs/e2e.md`): real windows on the person's display, so it runs only
+# under `just e2e` (`HERDR_E2E=1`); plain `cargo test` builds it and skips.
+[[test]]
+name = "e2e"
+path = "tests/e2e/main.rs"
+harness = false

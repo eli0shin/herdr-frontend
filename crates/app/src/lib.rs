@@ -7,6 +7,7 @@
 pub mod chord;
 pub mod config;
 pub mod control;
+pub mod e2e;
 pub mod fixtures;
 pub mod home;
 pub mod keyfile;
@@ -42,8 +43,16 @@ pub fn app() -> App<State> {
 }
 
 /// The app on a live core, with its home: the window opens where it was, borderless (Eli's
-/// Ghostty frame, [`window`]), and saves its place and view as it goes.
+/// Ghostty frame, [`window`]), and saves its place and view as it goes. Started by the
+/// end-to-end harness (`HERDR_FRONTEND_E2E=1`), it also serves the harness's requests.
 pub fn live(link: Live, home: Option<Home>) -> App<State> {
+    live_with(link, home, e2e::enabled())
+}
+
+/// [`live`], serving the end-to-end harness's requests (`e2e`) when `harness`: keys sent to the
+/// app, the last drawn frame's tree and the window number.
+pub fn live_with(link: Live, home: Option<Home>, harness: bool) -> App<State> {
+    let tap = harness.then(e2e::Tap::default);
     let keeper = window::Keeper::new(home.clone());
     let saved = keeper.saved();
     let placed = saved.clone();
@@ -63,11 +72,20 @@ pub fn live(link: Live, home: Option<Home>) -> App<State> {
         })
         .on_close(State::on_close)
         .on_quit(State::on_close)
-        .init(move || {
-            let mut s = State::new(Box::new(link::Offline), home, keeper);
-            s.connect(Box::new(link));
-            s
+        .init({
+            let tap = tap.clone();
+            move || {
+                let mut s = State::new(Box::new(link::Offline), home, keeper);
+                if let Some(tap) = tap {
+                    s.serve_harness(tap);
+                }
+                s.connect(Box::new(link));
+                s
+            }
         });
+    if let Some(tap) = tap {
+        app = app.on_frame_drawn(move |rt| tap.record(rt));
+    }
     if let Some(saved) = &saved {
         app = app
             .maximized(saved.maximized)

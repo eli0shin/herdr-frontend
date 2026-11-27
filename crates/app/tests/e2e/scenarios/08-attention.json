@@ -1,0 +1,12 @@
+{
+  "title": "Agent status, attention and toasts",
+  "inventory": "§8",
+  "notes": "From the notes space, agents elsewhere finish and get blocked: in-app toasts only, never OS notifications or sounds.",
+  "steps": [
+    {"name": "look elsewhere", "do": "space.select", "args": {"index": 3}},
+    {"name": "pi finishes", "status": {"agent": "pi", "to": "state=done:app=pi"}, "wait": 0.8},
+    {"name": "explore needs you", "note": "Sub-agents never alert.", "status": {"agent": "explore", "to": "state=blocked:kind=question:app=claude"}, "wait": 0.8},
+    {"name": "done needs you", "status": {"agent": "done", "to": "state=blocked:kind=permission:app=claude"}, "wait": 0.8},
+    {"name": "go to pi", "note": "Looking at a done agent makes it idle on every client.", "do": "agent.focus", "args": {"terminal": "{{t:pi}}"}}
+  ]
+}

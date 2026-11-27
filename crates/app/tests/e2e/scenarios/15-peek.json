@@ -1,0 +1,9 @@
+{
+  "title": "Peek",
+  "inventory": "§15",
+  "notes": "Peeking the explore sub-agent, which has no pane.",
+  "steps": [
+    {"name": "peek explore", "do": "terminal.peek", "args": {"terminal": "{{t:explore}}"}},
+    {"name": "close the peek", "keys": "escape", "herdr-app": {"do": "overlay.close"}}
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "title": "Terminal behavior",
+  "inventory": "§17",
+  "notes": "Typing into the focused terminal through the app, colors, and the Cmd+F find bar.",
+  "steps": [
+    {"name": "the split tab", "do": "space.select", "args": {"index": 1}},
+    {
+      "name": "type a command",
+      "type": "printf '\\033[31mred\\033[0m \\033[1mbold\\033[0m https://example.com\\n'\n",
+      "herdr-app": {"skip": "typing goes to herdr-frontend only"}
+    },
+    {
+      "name": "the same through the core",
+      "send": {"terminal": "{{t:w1}}", "text": "printf '\\033[32mgreen\\033[0m \\033[4munder\\033[0m\\n'"},
+      "wait": 0.3
+    },
+    {"name": "find bar", "keys": "cmd-f", "herdr-app": {"do": "terminal.search"}},
+    {"name": "close the find bar", "keys": "escape", "herdr-app": {"do": "overlay.close"}}
+  ]
+}

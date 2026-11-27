@@ -1,0 +1,35 @@
+{
+  "title": "Interop contract",
+  "inventory": "§0",
+  "notes": "The shared layout, adoption labels and the CLI Eli's tools drive. Both apps sit on the same seeded core layout; edits made through one app's CLI land in the shared document.",
+  "steps": [
+    {
+      "name": "adopt a labeled worker",
+      "note": "spawn-worker starts an agent labeled herdr.space/herdr.tab for a space nobody knows: it becomes a new space without taking focus.",
+      "adopt": {"name": "worker", "space": "worker-space", "tab": "worker-tab", "status": "state=working:app=pi"},
+      "wait": 1.0
+    },
+    {
+      "name": "repos makes a space without focus",
+      "note": "repos: space.new {focus: false} keeps the shown space.",
+      "do": "space.new",
+      "args": {"name": "repo@branch", "folder": "{{folder:notes}}", "focus": false}
+    },
+    {
+      "name": "spawn-worker renames the space",
+      "do": "space.rename",
+      "args": {"id": "{{sp:worker-space}}", "name": "ENG-42 worker"}
+    },
+    {
+      "name": "Pi names its tab",
+      "note": "auto-session-name.ts: tab.rename from the tab's first Pi pane.",
+      "do": "tab.rename",
+      "args": {"id": "{{tb:work-2}}", "name": "fix-login"}
+    },
+    {
+      "name": "dot stow switches to eli",
+      "do": "layout.switch",
+      "args": {"name": "eli"}
+    }
+  ]
+}
