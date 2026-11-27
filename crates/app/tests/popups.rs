@@ -409,6 +409,18 @@ fn menus_open_where_the_right_click_was_and_run_their_items() {
     rt.state.step(0.0, model::Action::TabMenu("tb-work".into()));
     press(&mut rt, "", Key::Escape);
     assert_eq!(*rt.state.model.mode(), Mode::Normal);
+
+    // "Rename" opens the prompt with the keyboard in its field: no key is lost.
+    rt.state.step(0.0, model::Action::TabMenu("tb-work".into()));
+    frames(&mut rt, 2);
+    assert_eq!(focused(&rt).as_deref(), Some("menu"));
+    press(&mut rt, "", Key::Enter);
+    frames(&mut rt, 2);
+    assert_eq!(focused(&rt).as_deref(), Some("popup-filter"));
+    type_text(&mut rt, "zz");
+    press(&mut rt, "", Key::Enter);
+    rt.state.settle();
+    assert_eq!(doc_tab_names(&fake, "sp-1")[0], "zz");
 }
 
 #[test]

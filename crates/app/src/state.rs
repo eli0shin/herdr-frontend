@@ -382,6 +382,19 @@ pub fn wall_ms() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
+/// Whether one kind of popup replaced another (both with a field: the help gave way to the
+/// prompt, say), whose field is drawn anew.
+fn box_changed(before: &model::Mode, now: &model::Mode) -> bool {
+    use std::mem::discriminant;
+    match (before, now) {
+        (model::Mode::Popup(a), model::Mode::Popup(b)) => match (a, b) {
+            (PopupState::List(a), PopupState::List(b)) => a.popup != b.popup,
+            (a, b) => discriminant(a) != discriminant(b),
+        },
+        _ => false,
+    }
+}
+
 /// The person's home folder, for the model's names and new spaces.
 fn user_home() -> String {
     std::env::var("HOME").unwrap_or_default()
@@ -797,6 +810,14 @@ impl State {
     /// with its name in the field, selected.
     fn mode_changed(&mut self, before: &model::Mode) {
         let mode = self.model.mode().clone();
+        // One popup replacing another in a step (a menu's "Rename" opening the prompt) is no
+        // focus change to the model, but the keyboard must move to the new one's field or box.
+        if let (model::Mode::Popup(_), model::Mode::Popup(_)) = (before, &mode) {
+            let key = crate::view::popup::focus_key(&mode);
+            if crate::view::popup::focus_key(before) != key || box_changed(before, &mode) {
+                self.ui.focus = Some(Focus::Popup);
+            }
+        }
         match &mode {
             model::Mode::Popup(PopupState::List(list)) if crate::view::popup::drawn(list.popup) => {
                 let was = match before {

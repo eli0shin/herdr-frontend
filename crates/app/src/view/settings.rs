@@ -30,8 +30,8 @@ pub enum Row {
     Reveal(PathBuf),
 }
 
-/// The home's files: settings, keys, programs, and the theme file when the settings name one
-/// that isn't built in.
+/// The home's files: settings, keys, programs, and the theme's file when the theme came from
+/// one, or the settings name a theme that isn't built in (its file is to be made).
 pub fn rows(s: &State) -> Vec<Row> {
     let home = s.home_dir();
     let mut files = vec![
@@ -39,9 +39,12 @@ pub fn rows(s: &State) -> Vec<Row> {
         (model::KEY_FILE.to_owned(), "The keymap"),
         (PROGRAMS.to_owned(), "Program names, icons and colors"),
     ];
-    let theme = &s.config.settings.theme;
-    if !theme.eq_ignore_ascii_case(crate::config::theme::ARCTIC) {
-        files.push((format!("{THEMES}/{theme}.json"), "The theme"));
+    let theme = s.config.settings.theme.trim();
+    let theme_file = s.config.theme_file.clone().or_else(|| {
+        (theme != crate::config::theme::ARCTIC).then(|| format!("{THEMES}/{theme}.json"))
+    });
+    if let Some(file) = theme_file {
+        files.push((file, "The theme"));
     }
     let mut out: Vec<Row> = files
         .into_iter()

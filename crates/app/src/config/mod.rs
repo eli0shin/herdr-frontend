@@ -137,6 +137,9 @@ pub struct Config {
     /// `settings.json` as read, which the zoom keys edit; `None` with no file.
     pub settings_text: Option<String>,
     pub theme: Theme,
+    /// The home's theme file the theme came from (`themes/<name>.json`, home-relative), when it
+    /// came from one rather than the built-in arctic.
+    pub theme_file: Option<String>,
     pub programs: Programs,
     /// The families `font` and `ui_font` name, when the font folders have them.
     pub font: Option<FamilyFiles>,
@@ -161,6 +164,7 @@ impl Config {
             settings,
             settings_text: None,
             theme,
+            theme_file: None,
             programs: Programs::default(),
             font: None,
             ui_font: None,
@@ -188,7 +192,7 @@ impl Config {
             }
         };
 
-        let theme = load_theme(home, &settings, &mut problems);
+        let (theme, theme_file) = load_theme(home, &settings, &mut problems);
 
         let programs_text = read(PROGRAMS);
         // The home's icons by home-relative path: every file in its icon folders (so one named
@@ -241,6 +245,7 @@ impl Config {
             settings,
             settings_text,
             theme,
+            theme_file,
             programs,
             font,
             ui_font,
@@ -268,11 +273,17 @@ fn folders(dirs: &[PathBuf]) -> String {
 
 /// The theme `settings` names: the home's file first (so a home can change arctic too), then
 /// the built-in arctic; a theme that can't be had falls back to arctic, with the problem said.
-/// The settings' `colors` go over it, each bad one skipped and said.
-fn load_theme(home: Option<&Path>, settings: &Settings, problems: &mut Vec<String>) -> Theme {
+/// The settings' `colors` go over it, each bad one skipped and said. Also the home-relative
+/// path of the home's file it came from, if it did.
+fn load_theme(
+    home: Option<&Path>,
+    settings: &Settings,
+    problems: &mut Vec<String>,
+) -> (Theme, Option<String>) {
     let name = settings.theme.trim();
-    let file = home
-        .and_then(|h| std::fs::read_to_string(h.join(THEMES).join(format!("{name}.json"))).ok());
+    let path = format!("{THEMES}/{name}.json");
+    let file = home.and_then(|h| std::fs::read_to_string(h.join(&path)).ok());
+    let from_file = file.is_some().then_some(path);
     let loaded = match (file, name == theme::ARCTIC) {
         (Some(text), _) => Theme::from_file(name, &text),
         (None, true) => Theme::from_file(name, theme::ARCTIC_JSON),
@@ -285,7 +296,7 @@ fn load_theme(home: Option<&Path>, settings: &Settings, problems: &mut Vec<Strin
         Theme::arctic()
     });
     problems.extend(theme.apply(&settings.colors));
-    theme
+    (theme, from_file)
 }
 
 /// Looks for changed files on its own thread and loads them there.
@@ -385,6 +396,7 @@ mod tests {
         let config = Config::load(&sources(&home), None);
         assert_eq!(config.settings, Settings::default());
         assert_eq!(config.theme, Theme::arctic());
+        assert_eq!(config.theme_file, None, "the built-in arctic");
         assert!(config.settings_text.is_none());
         assert!(config.font.is_none());
         assert_eq!(config.problems.len(), 2, "{:?}", config.problems);
@@ -427,6 +439,7 @@ mod tests {
         let config = Config::load(&sources(&home), None);
         assert!(config.problems.is_empty(), "{:?}", config.problems);
         assert_eq!(config.theme.name, "mine");
+        assert_eq!(config.theme_file.as_deref(), Some("themes/mine.json"));
         assert_eq!(config.theme.get("canvas").unwrap().hex(), "#101010");
         assert_eq!(config.theme.get("accent").unwrap().hex(), "#123456");
         assert!(config.programs.icon("program-icons/mine.svg").is_some());
@@ -446,6 +459,21 @@ mod tests {
             config.font.as_ref().map(|f| f.faces[0].path.clone()),
             Some(herdr_fonts.join("JetBrainsMono-Variable.ttf"))
         );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_homes_arctic_file_replaces_the_built_in_one_and_is_said() {
+        let home = scratch("arctic");
+        std::fs::create_dir_all(home.join(THEMES)).unwrap();
+        std::fs::write(
+            home.join(THEMES).join("arctic.json"),
+            theme::ARCTIC_JSON.replace("#1e1e1e", "#101010"),
+        )
+        .unwrap();
+        let config = Config::load(&sources(&home), None);
+        assert_eq!(config.theme.get("canvas").unwrap().hex(), "#101010");
+        assert_eq!(config.theme_file.as_deref(), Some("themes/arctic.json"));
         let _ = std::fs::remove_dir_all(&home);
     }
 
