@@ -24,7 +24,7 @@
 //! pane.
 
 use model::geometry::{self, GRIP_ROW};
-use rune::{Color, Cursor, Cx, Drag, El, PointerButton, TextStyle, col, el, row, text};
+use rune::{Color, Cursor, Cx, Drag, El, PointerButton, TextStyle, Transition, col, el, row, text};
 
 use crate::State;
 use crate::config::programs::Program;
@@ -138,7 +138,12 @@ fn main(s: &State, cx: &mut Cx<State>) -> El {
         let viewer = address.as_deref().and_then(|a| s.viewers.get(a));
         let body = match viewer.and_then(|v| v.pane.as_ref()) {
             Some(terminal) => terminal.view(&face, &s.look),
-            None => el().key(pane_key(&pane)).w_full().h_full().fill(background),
+            None => el()
+                .key(pane_key(&pane))
+                .w_full()
+                .h_full()
+                .fill(background)
+                .transition(Transition::none()),
         };
         let bars = address.as_deref().map(|a| {
             let scrollbar = viewer.and_then(|v| scrollbar(s, v, a, rect.w, &face));
@@ -149,8 +154,13 @@ fn main(s: &State, cx: &mut Cx<State>) -> El {
             (scrollbar, find)
         });
         let (scrollbar, find) = bars.unwrap_or((None, None));
-        el().absolute(rect.x, rect.y)
+        // Keyed by its pane, so a pane another tab shows in its place is a new slot rather than
+        // this one sliding to the new rect, and it comes and goes at once: an exit fade would
+        // keep the old terminal on screen over the new one.
+        el().key(format!("slot-{}", pane.replace('/', ":")))
+            .absolute(rect.x, rect.y)
             .size(rect.w, rect.h)
+            .transition(Transition::none())
             .child(pane_input(body, &pane))
             .children(scrollbar)
             .children(find)

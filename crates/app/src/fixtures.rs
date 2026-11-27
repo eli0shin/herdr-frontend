@@ -386,9 +386,14 @@ pub fn agents_core() -> crate::link::Fake {
     {
         let mut core = fake.core();
         core.screens.insert("t1".into(), NVIM_SPLITS.bytes.to_vec());
-        for t in ["t10", "t11", "t12", "t13", "t14", "t15"] {
+        for t in ["t10", "t11", "t12", "t13", "t14"] {
             core.screens.insert(t.into(), b"$ ".to_vec());
         }
+        // The pinned notes agent's own screen, so showing it changes what the pane draws.
+        core.screens.insert(
+            "t15".into(),
+            b"# Meeting notes\r\n\r\n- ship the agents sidebar\r\n\r\n> ".to_vec(),
+        );
         // What a peek at the explore sub-agent shows.
         core.screens.insert(
             "t20".into(),

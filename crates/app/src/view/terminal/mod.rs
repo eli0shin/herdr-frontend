@@ -70,13 +70,24 @@ impl TerminalPane {
 
     /// The pane: the terminal's background, the grid at its top left after the padding, and the
     /// cursor.
+    ///
+    /// It shows whole the frame it comes into view and is gone the frame it leaves, grid and
+    /// cursor included: Rune's default entrance would fade it in over 0.3 s on the click or key
+    /// that shows it, and the split gap's border color behind it would flash through. Its own
+    /// frame still follows its pane's, so a resize moves both edges together.
     pub fn view(&self, face: &Face, look: &Look) -> El {
-        self.view_as(&self.key, self.focused, face, look)
+        self.draw(&self.key, self.focused, face, look, true)
+            .transition(Transition::none())
     }
 
     /// [`TerminalPane::view`] under another key, showing focus or not: the same terminal drawn
     /// a second time, as the peek draws one whose pane is on screen too.
     pub fn view_as(&self, key: &str, focused: bool, face: &Face, look: &Look) -> El {
+        self.draw(key, focused, face, look, false)
+    }
+
+    /// The terminal under `key`. `whole`: the grid and what's drawn over it mount at once.
+    fn draw(&self, key: &str, focused: bool, face: &Face, look: &Look, whole: bool) -> El {
         let snapshot = &self.snapshot;
         // Copy mode's cursor draws solid while its bar has the keyboard.
         let cursor_focused = focused || snapshot.copy.is_some();
@@ -106,14 +117,19 @@ impl TerminalPane {
             screen = screen.grid_caret(place.col, place.row);
         }
         let s = face.scale;
+        let mut at_grid = el()
+            .absolute(self.padding.left as f32 / s, self.padding.top as f32 / s)
+            .size(grid_w, grid_h);
+        if whole {
+            at_grid = at_grid.instant_changes().transition(Transition::none());
+        }
         el().key(key.to_owned())
             .w_full()
             .h_full()
             .fill(color(snapshot.colors.background))
             .clip_soft(0.0)
             .child(
-                el().absolute(self.padding.left as f32 / s, self.padding.top as f32 / s)
-                    .size(grid_w, grid_h)
+                at_grid
                     .child(screen)
                     .children(spill_view(&spill, face, grid_w, grid_h))
                     .children(atlas.iter().map(|(row, cell)| cell.view(*row, face)))
