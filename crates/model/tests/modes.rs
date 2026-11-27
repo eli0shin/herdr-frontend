@@ -3,7 +3,7 @@
 
 mod support;
 
-use herdr_proto::StatusState;
+use herdr_proto::{StatusState, Terminal};
 use herdr_shared::Displayed;
 use model::mode::{CopyState, PopupState, Visual};
 use model::{
@@ -484,6 +484,53 @@ fn agents_step_in_list_order_and_rows_select_by_number() {
     assert_eq!(m.agent_order(), ["a4", "a3", "a2"]);
     key(&mut m, &mut core, "ctrl-g shift-1", true);
     assert_eq!(m.focused_terminal(), Some("a4"));
+}
+
+#[test]
+fn a_sub_agent_in_a_pane_steps_from_its_agent() {
+    let mut core = Core::new(
+        doc(vec![space(
+            "sp1",
+            vec![
+                tab("tb1", vec![pane("p1", "a1"), pane("p5", "s5")]),
+                tab("tb2", vec![pane("p2", "a2")]),
+                tab("tb3", vec![pane("p3", "a3"), pane("p6", "t6")]),
+            ],
+        )]),
+        vec![
+            agent("a1", StatusState::Idle),
+            agent("a2", StatusState::Idle),
+            agent("a3", StatusState::Idle),
+            Terminal {
+                parent: Some("a3".into()),
+                ..agent("s5", StatusState::Working)
+            },
+            Terminal {
+                parent: Some("a3".into()),
+                ..shell("t6", "/home/me/code/x")
+            },
+        ],
+    );
+    let mut m = connected(&mut core);
+    assert_eq!(m.agent_order(), ["a1", "s5", "a2", "a3"]);
+    drive(&mut m, &mut core, Action::FocusPane("p5".into()));
+    assert_eq!(m.focused_terminal(), Some("s5"));
+    key(&mut m, &mut core, "cmd-]", true);
+    assert_eq!(
+        m.focused_terminal(),
+        Some("a1"),
+        "after a3, its agent: wraps"
+    );
+    drive(&mut m, &mut core, Action::FocusPane("p5".into()));
+    key(&mut m, &mut core, "cmd-[", true);
+    assert_eq!(m.focused_terminal(), Some("a2"), "before a3");
+    // A terminal an agent started that isn't an agent itself is any non-agent.
+    drive(&mut m, &mut core, Action::FocusPane("p6".into()));
+    key(&mut m, &mut core, "cmd-]", true);
+    assert_eq!(m.focused_terminal(), Some("a1"), "the first agent");
+    drive(&mut m, &mut core, Action::FocusPane("p6".into()));
+    key(&mut m, &mut core, "cmd-[", true);
+    assert_eq!(m.focused_terminal(), Some("a3"), "the last agent");
 }
 
 #[test]

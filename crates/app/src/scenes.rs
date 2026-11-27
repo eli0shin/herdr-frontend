@@ -31,6 +31,7 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-agents", shell_agents),
     ("shell-agents-grouped", shell_agents_grouped),
     ("shell-sort-menu", shell_sort_menu),
+    ("shell-agent-jump", shell_agent_jump),
     ("shell-agents-empty", shell_agents_empty),
     ("shell-alerts", shell_alerts),
     ("shell-palette", shell_palette),
@@ -180,6 +181,13 @@ fn shell_alerts(s: &mut State) {
         fake.update(t);
         s.settle();
     }
+}
+
+/// [`shell_agents`] with the agent-jump bar open (`ctrl-;`): the rows' labels bright.
+fn shell_agent_jump(s: &mut State) {
+    shell_agents(s);
+    s.step(0.0, model::Action::Open(model::Popup::AgentJump));
+    s.settle();
 }
 
 /// The demo core, whose terminals report no status: the list says how agents show up.

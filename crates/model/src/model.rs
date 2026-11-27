@@ -454,6 +454,25 @@ impl Model {
         out
     }
 
+    /// The top of `address`'s chain of live parents: the agent a sub-agent belongs to, where
+    /// `agent.next` and `agent.prev` step from when it has focus (Herdr app's `root_agent`).
+    pub(crate) fn root_agent(&self, address: &str) -> String {
+        let mut at = address;
+        // A cycle of parents ends.
+        for _ in 0..32 {
+            let parent = self
+                .world
+                .terminal(at)
+                .and_then(|t| crate::agents::parent_of(&self.world, t))
+                .filter(|p| self.world.terminal(p).is_some_and(|t| t.is_live()));
+            match parent {
+                Some(p) => at = p,
+                None => break,
+            }
+        }
+        at.to_owned()
+    }
+
     /// The Agents list's rows, for row numbers and jump labels: as published, minus agents gone
     /// since; before the list publishes, [`Model::agent_order`].
     pub fn agent_rows(&self) -> Vec<String> {

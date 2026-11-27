@@ -12,8 +12,9 @@
 //! | Prompt, confirm | [`dialog`] | dialog 380 wide |
 //! | Menus | [`menu`] | at the pointer |
 //! | Sort menu | [`crate::view::sidebar`] | under the sidebar's sort button |
+//! | Agent-jump bar (`ctrl-;`) | [`jump`] | 360 × 32, 6 from the top (8 window points at least) |
 //!
-//! The new-space folder picker, the PR finder, the machine filter and the agent-jump bar come with their tickets; until then they close at once with a "not yet".
+//! The new-space folder picker, the PR finder and the machine filter come with their tickets; until then they close at once with a "not yet".
 
 use model::mode::{ListPopup, PopupState};
 use model::{Mode, Popup};
@@ -21,7 +22,7 @@ use rune::El;
 
 use crate::State;
 use crate::view::overlay;
-use crate::view::{dialog, help, menu, palette, picker, settings, space_picker};
+use crate::view::{dialog, help, jump, menu, palette, picker, settings, space_picker};
 
 /// What a list popup lists now: per item whether (and as which row) the cursor can reach it,
 /// where the cursor starts for its query, and how many items show at once.
@@ -160,7 +161,7 @@ pub fn view(s: &State) -> Option<El> {
         PopupState::Prompt(prompt) => (dialog::PLACE, dialog::prompt(s, prompt)),
         PopupState::Confirm(confirm) => (dialog::PLACE, dialog::confirm(s, confirm)),
         PopupState::Menu(m) => (menu::place(s, m), menu::view(s, m)),
-        PopupState::Jump(_) => return None,
+        PopupState::Jump(j) => (jump::place(s), jump::view(s, j)),
     };
     Some(overlay::frame(s, key, place, body))
 }

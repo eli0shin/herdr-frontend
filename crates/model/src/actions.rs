@@ -115,7 +115,10 @@ impl Model {
             Action::AgentNext | Action::AgentPrev => {
                 let by = if action == Action::AgentNext { 1 } else { -1 };
                 let order = self.agent_order();
-                let focused = self.focused_terminal().map(str::to_owned);
+                let focused = self
+                    .focused_terminal()
+                    .filter(|a| self.world.is_agent(a))
+                    .map(|a| self.root_agent(a));
                 let at = order.iter().position(|a| Some(a) == focused.as_ref());
                 if let Some(agent) = step_in(&order, at, by) {
                     self.focus_agent(&agent, fx);
