@@ -22,7 +22,7 @@ use herdr_proto::{CloseReason, RpcError, Terminal};
 use herdr_shared::Round;
 use model::{Event, Request, TerminalUpdate, Token};
 
-use super::{Link, News, Out, Upload, unavailable};
+use super::{Attachment, Link, News, Out, Upload, unavailable};
 
 /// How much of one stream's output the reader moves before it looks at the others.
 const TURN_BYTES: usize = 1 << 20;
@@ -202,9 +202,10 @@ impl Link for Live {
                 match item {
                     StreamNews::Attached { address, result } => {
                         let result = match result {
-                            Ok((record, control)) if control.generation() == self.generation => {
+                            Ok((terminal, control)) if control.generation() == self.generation => {
+                                let caps = control.caps();
                                 self.controls.insert(address.clone(), control);
-                                Ok(record)
+                                Ok(Attachment { terminal, caps })
                             }
                             Ok(_) => Err("attached on an older connection".into()),
                             Err(error) => Err(error),
@@ -293,7 +294,10 @@ impl Link for Live {
         };
         match out {
             Out::Input(bytes) => control.input(&bytes),
-            Out::Automatic(bytes) => control.automatic(&bytes),
+            // The app sends these only on a stream that allows AUTOMATIC_INPUT: anything else
+            // would go as DATA, which takes the size.
+            Out::Automatic(bytes) if control.caps().automatic_input => control.automatic(&bytes),
+            Out::Automatic(_) => {}
             Out::Resize { cols, rows } => control.resize(cols, rows),
             Out::Focus(gained) => control.focus(gained),
             Out::Facts(display) => control.facts(&display),

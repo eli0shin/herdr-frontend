@@ -18,7 +18,7 @@ pub use fake::{Fake, FakeCore};
 pub use live::Live;
 
 use herdr_proto::methods::TerminalAttach;
-use herdr_proto::{CloseReason, Display, ErrorKind, RpcError, Terminal};
+use herdr_proto::{CloseReason, Display, ErrorKind, RpcError, StreamCaps, Terminal};
 use herdr_shared::Round;
 use model::{Request, Token};
 
@@ -35,10 +35,10 @@ pub enum News {
     Event(model::Event),
     /// Kept terminals whose program came back: attach them again.
     Restarted(Vec<String>),
-    /// A [`Link::attach`] finished: the terminal's record, or why it failed.
+    /// A [`Link::attach`] finished: the stream, or why it failed.
     Attached {
         address: String,
-        result: Result<Box<Terminal>, String>,
+        result: Result<Attachment, String>,
     },
     /// An attach stream ended. `None`: the connection dropped under it.
     Ended {
@@ -50,12 +50,23 @@ pub enum News {
     Put { address: String, paths: Vec<String> },
 }
 
+/// A stream the core attached.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Attachment {
+    /// The terminal's record at attach time.
+    pub terminal: Box<Terminal>,
+    /// What the stream may use: AUTOMATIC_INPUT only when its `hello` and its attach reply both
+    /// said so (rule 9).
+    pub caps: StreamCaps,
+}
+
 /// A frame for one terminal's attach stream (`herdr-core-protocol.md` §4 and rule 9).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Out {
     /// Human input, DATA: it takes the size.
     Input(Vec<u8>),
-    /// The terminal engine's replies, AUTOMATIC_INPUT: not activity.
+    /// The terminal engine's replies, AUTOMATIC_INPUT: not activity. Only on a stream whose
+    /// [`Attachment::caps`] allow it.
     Automatic(Vec<u8>),
     /// The pane's grid: it takes the size.
     Resize {

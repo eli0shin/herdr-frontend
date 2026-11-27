@@ -6,12 +6,12 @@ use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 
 use herdr_proto::methods::{DocGetResult, DocSetResult, ExecResult, TerminalAttach};
-use herdr_proto::{ErrorKind, Reason, RpcError, Terminal, TerminalState};
+use herdr_proto::{ErrorKind, Reason, RpcError, StreamCaps, Terminal, TerminalState};
 use herdr_shared::Round;
 use model::{Event, Request, TerminalUpdate, Token};
 use serde_json::Value;
 
-use super::{Link, News, Out, Upload};
+use super::{Attachment, Link, News, Out, Upload};
 
 /// The fake core's state, open to the test that made it.
 #[derive(Default)]
@@ -25,6 +25,8 @@ pub struct FakeCore {
     pub echo: bool,
     /// Document rounds fail, as on a machine that can't be reached.
     pub docs_down: bool,
+    /// Streams can't carry AUTOMATIC_INPUT, as through a machine whose core predates it.
+    pub no_automatic_input: bool,
     /// Every attach, in order.
     pub attaches: Vec<TerminalAttach>,
     /// Every frame sent on a stream, in order.
@@ -343,7 +345,13 @@ impl Link for Fake {
                 if let Some(screen) = core.screens.get(&address) {
                     writer.write(screen.clone());
                 }
-                Ok(Box::new(t.clone()))
+                Ok(Attachment {
+                    terminal: Box::new(t.clone()),
+                    caps: StreamCaps {
+                        automatic_input: !core.no_automatic_input,
+                        resize_notifications: false,
+                    },
+                })
             }
             _ => Err("no such terminal".to_owned()),
         };

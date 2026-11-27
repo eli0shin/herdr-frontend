@@ -14,6 +14,13 @@
 //!   the size, so a program woken by it asks for the new cell). Each change of its grid sends
 //!   RESIZE again, at most every 25 ms and always the last one. When it stops being in use it
 //!   sends FOCUS(0), and takes the size again only when it is used again.
+//! - A click in the pane in use takes the size back when the core holds it at another grid
+//!   (Herdr app attached, refit or reattached it). Nothing takes it back without real use.
+//! - DATA from any other viewer (a paste into a window in the background) first reports the grid
+//!   it should hold, so the core never applies a stale one.
+//! - The engine's replies to queries go as AUTOMATIC_INPUT, which takes nothing, where the stream
+//!   carries it; where it doesn't, only the terminal in use answers, as DATA, and only while no
+//!   other viewer has moved its grid.
 //! - Each terminal is drawn at the core's grid (its record's `cols` × `rows`, which `size` events
 //!   keep current), never the pane's: a pane bigger than it shows the background around it, a
 //!   smaller one clips it.
@@ -132,7 +139,12 @@ pub struct Viewer {
     /// The FACTS, RESIZE and FOCUS this viewer last sent.
     told_facts: Option<Display>,
     told_grid: Option<GridSize>,
+    /// The core's grid changed away from `told_grid` since it was told: another viewer took the
+    /// size.
+    moved: bool,
     focus_sent: bool,
+    /// Its stream carries the engine's replies as AUTOMATIC_INPUT (rule 9).
+    automatic_input: bool,
     /// What the input method is composing in this terminal.
     pub preedit: Option<String>,
 }
@@ -1483,10 +1495,9 @@ impl State {
                 if viewer.attach != Attach::Attaching {
                     return;
                 }
-                viewer.attach = if result.is_ok() {
-                    Attach::Attached
-                } else {
-                    Attach::Failed
+                (viewer.attach, viewer.automatic_input) = match result {
+                    Ok(attachment) => (Attach::Attached, attachment.caps.automatic_input),
+                    Err(_) => (Attach::Failed, false),
                 };
                 // A new stream has told the core nothing yet.
                 viewer.told_facts = None;
@@ -1633,7 +1644,9 @@ impl State {
             vt: (cols, rows, cell.width, cell.height),
             told_facts: None,
             told_grid: None,
+            moved: false,
             focus_sent: false,
+            automatic_input: false,
             preedit: None,
         }
     }
@@ -1687,6 +1700,14 @@ impl State {
                 cell.height,
             );
             if vt != viewer.vt {
+                // Only a change counts: a size event for a RESIZE just sent may not be in yet.
+                // Each one decides afresh, so a late event for an older RESIZE is undone by the
+                // event for the grid told last.
+                if (vt.0, vt.1) != (viewer.vt.0, viewer.vt.1) {
+                    viewer.moved = viewer
+                        .told_grid
+                        .is_some_and(|g| (g.columns, g.rows) != (vt.0, vt.1));
+                }
                 viewer.vt = vt;
                 viewer.terminal.resize(vt.0, vt.1, vt.2, vt.3);
             }
@@ -1748,6 +1769,7 @@ impl State {
                     },
                 );
                 viewer.told_grid = Some(grid);
+                viewer.moved = false;
                 self.resized_at = now;
             }
         }
@@ -1775,28 +1797,27 @@ impl State {
                     }
                 }
             }
-            let mut sent = false;
+            let mut outputs = Vec::new();
             for viewer in self.viewers.values() {
                 while let Ok(output) = viewer.terminal.output().try_recv() {
-                    if let Output::Selection(text) = output {
-                        self.ui.copy = Some(text);
-                        continue;
-                    }
-                    if viewer.attach != Attach::Attached {
-                        continue;
-                    }
                     match output {
-                        Output::Reply(bytes) => {
-                            self.link.send(&viewer.address, Out::Automatic(bytes))
+                        Output::Selection(text) => self.ui.copy = Some(text),
+                        Output::Reply(_) | Output::Input(_)
+                            if viewer.attach == Attach::Attached =>
+                        {
+                            outputs.push((viewer.address.clone(), output))
                         }
-                        Output::Input(bytes) => {
-                            self.link.send(&viewer.address, Out::Input(bytes));
-                            sent = true;
-                        }
-                        Output::Selection(_) => {}
                         // Titles, bells and the clipboard come with their tickets.
-                        Output::Event(_) => {}
+                        _ => {}
                     }
+                }
+            }
+            let sent = outputs.iter().any(|(_, o)| matches!(o, Output::Input(_)));
+            for (address, output) in outputs {
+                match output {
+                    Output::Reply(bytes) => self.send_reply(&address, bytes),
+                    Output::Input(bytes) => self.send_data(&address, bytes),
+                    _ => {}
                 }
             }
             if !sent {
@@ -1814,6 +1835,73 @@ impl State {
             }
         }
         changed
+    }
+
+    /// A reply the terminal engine made to the program's query (rule 9): AUTOMATIC_INPUT, which
+    /// never takes the size, on a stream that carries it. On one that doesn't (a machine whose
+    /// core predates it), the reply would go as DATA, which takes the size. So only the terminal
+    /// in use answers, and only while the core still holds it at the grid this window told:
+    /// once another viewer moved it, a reply (the mode-2048 report its resize brings) would take
+    /// the size back with no real use, and contradict the leader's own reply. Such replies are
+    /// dropped.
+    fn send_reply(&mut self, address: &str, bytes: Vec<u8>) {
+        let Some(viewer) = self.viewers.get(address) else {
+            return;
+        };
+        if viewer.automatic_input {
+            self.link.send(address, Out::Automatic(bytes));
+        } else if self.in_use.as_deref() == Some(address) && !viewer.moved {
+            self.send_data(address, bytes);
+        }
+    }
+
+    /// Input for the program, as DATA. DATA takes the size, and the core then applies the grid
+    /// this viewer last reported (`herdr-core-protocol.md` §4), which may be stale. So a viewer
+    /// that isn't in use (a paste into a window in the background, a file landing after a
+    /// `terminal.put`) reports first the grid it should hold: its pane's, or the core's own for
+    /// a terminal no shown pane draws, which leaves the size where it is. The terminal in use
+    /// told its grid already ([`State::fit`]). Either way the core then holds the grid told
+    /// last, so the viewer is no longer `moved`.
+    fn send_data(&mut self, address: &str, bytes: Vec<u8>) {
+        let in_use = self.in_use.as_deref() == Some(address);
+        let told = self.viewers.get(address).and_then(|v| v.told_grid);
+        if !(in_use && told.is_some())
+            && let Some(grid) = self.grid_to_hold(address)
+            && told != Some(grid)
+        {
+            self.link.send(
+                address,
+                Out::Resize {
+                    cols: grid.columns,
+                    rows: grid.rows,
+                },
+            );
+            if let Some(viewer) = self.viewers.get_mut(address) {
+                viewer.told_grid = Some(grid);
+            }
+        }
+        self.link.send(address, Out::Input(bytes));
+        if let Some(viewer) = self.viewers.get_mut(address) {
+            viewer.moved = false;
+        }
+    }
+
+    /// The grid a terminal should have when this window takes its size: its shown pane's, or
+    /// the core's when no laid-out pane draws it.
+    fn grid_to_hold(&self, address: &str) -> Option<GridSize> {
+        let pane = self.area.and_then(|_| {
+            self.shown_panes()
+                .into_iter()
+                .find(|(_, _, a)| a.as_deref() == Some(address))
+                .map(|(_, rect, _)| rect)
+        });
+        match pane {
+            Some(rect) => Some(self.grid_for(rect)),
+            None => self.model.world().terminal(address).map(|t| GridSize {
+                columns: t.cols.max(1),
+                rows: t.rows.max(1),
+            }),
+        }
     }
 
     /// Settles everything at once, waiting on the terminals: for scenes and tests on a fake core,
@@ -1938,32 +2026,6 @@ impl State {
         }
     }
 
-    /// Sends a terminal that isn't in use its pane's grid, before input it must send anyway.
-    fn resize_for_input(&mut self, address: &str) {
-        let Some(rect) = self
-            .shown_panes()
-            .into_iter()
-            .find(|(_, _, a)| a.as_deref() == Some(address))
-            .map(|(_, rect, _)| rect)
-        else {
-            return;
-        };
-        let grid = self.grid_for(rect);
-        if let Some(viewer) = self.viewers.get_mut(address)
-            && viewer.attach == Attach::Attached
-            && viewer.told_grid != Some(grid)
-        {
-            self.link.send(
-                address,
-                Out::Resize {
-                    cols: grid.columns,
-                    rows: grid.rows,
-                },
-            );
-            viewer.told_grid = Some(grid);
-        }
-    }
-
     /// Makes pane `pane` the one in use before input it didn't get through the keyboard (a
     /// click, a drop): focused, so the window's in-use terminal takes its size first. True when
     /// its terminal is the one in use: only then may it send the program DATA, which would
@@ -1972,8 +2034,24 @@ impl State {
         if self.model.focused_pane().as_deref() != Some(pane) {
             self.step(tx.clock(), Action::FocusPane(pane.to_owned()));
         }
+        self.reclaim(address);
         self.pump(tx.clock());
         self.in_use() == Some(address)
+    }
+
+    /// A click in the terminal in use, after the core moved it off the grid this window told
+    /// (Herdr app attached, refit or reattached it): RESIZE again, so the click takes the size
+    /// back, as a mouse-down in Herdr app does. Typing needs no such step: its DATA applies the
+    /// grid told last. Nothing takes it back without real use.
+    fn reclaim(&mut self, address: &str) {
+        if self.in_use.as_deref() != Some(address) {
+            return;
+        }
+        if let Some(viewer) = self.viewers.get_mut(address)
+            && viewer.moved
+        {
+            viewer.told_grid = None;
+        }
     }
 
     /// A key pressed in pane `pane`: it goes to its terminal. False for keys it leaves (chords
@@ -2583,12 +2661,10 @@ impl State {
     /// Files dropped on pane `pane`: their paths typed in, quoted for the shell, as a paste.
     /// The pane takes focus first, as a click would. In a window in the background no pane is
     /// in use, and the paste goes anyway, as in Herdr app: the person asked for it. It takes
-    /// the pane's grid with it, so the core doesn't apply a stale one.
+    /// the pane's grid with it ([`State::send_data`]), so the core doesn't apply a stale one.
     pub fn pane_dropped(&mut self, pane: &str, paths: &[PathBuf], tx: &mut Tx) {
         if let Some(address) = self.model.world().address_of(pane).map(str::to_owned) {
-            if !self.use_pane(pane, &address, tx) {
-                self.resize_for_input(&address);
-            }
+            self.use_pane(pane, &address, tx);
             self.drop_files(&address, paths.to_vec());
         }
         self.after_input(tx);

@@ -11,7 +11,10 @@ use rune::{ElementInfo, Env, Key, KeyEvent, Mods, Runtime};
 
 /// A runtime on the demo core, settled and laid out.
 fn runtime() -> (Runtime<State>, Fake) {
-    let fake = demo_core();
+    runtime_on(demo_core())
+}
+
+fn runtime_on(fake: Fake) -> (Runtime<State>, Fake) {
     let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
     rt.state.with_settings(Settings::fixture());
     rt.state.connect(Box::new(fake.clone()));
@@ -190,6 +193,134 @@ fn a_size_from_another_viewer_resizes_the_local_terminal_without_taking_it_back(
         fake.sent_to("t2"),
         [],
         "an unfocused pane never sends RESIZE"
+    );
+}
+
+fn resizes(fake: &Fake, address: &str) -> Vec<Out> {
+    fake.sent_to(address)
+        .into_iter()
+        .filter(|o| matches!(o, Out::Resize { .. }))
+        .collect()
+}
+
+#[test]
+fn a_click_takes_the_size_back_from_another_viewer() {
+    let (mut rt, fake) = runtime();
+    let (cols, rows) = grid_of(&rt, "pn-1");
+    assert_eq!(resizes(&fake, "t1"), [Out::Resize { cols, rows }]);
+    // Herdr app took it (attached, refit or reattached); the window doesn't fight it.
+    fake.resize_elsewhere("t1", 50, 10);
+    frames(&mut rt, 3);
+    assert_eq!(resizes(&fake, "t1").len(), 1, "taken back without use");
+    let s = screen(&rt, "t1");
+    assert_eq!((s.cols, s.rows), (50, 10));
+
+    // A click in it is use: it takes the size back.
+    let (x, y) = rt.find("pane-pn-1").expect("pane 1");
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    frames(&mut rt, 2);
+    assert_eq!(resizes(&fake, "t1").len(), 2);
+    assert_eq!(
+        resizes(&fake, "t1").last(),
+        Some(&Out::Resize { cols, rows })
+    );
+    let s = screen(&rt, "t1");
+    assert_eq!((s.cols, s.rows), (cols, rows));
+
+    // While it holds the size, a click sends none.
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    frames(&mut rt, 2);
+    assert_eq!(resizes(&fake, "t1").len(), 2);
+}
+
+#[test]
+fn every_pane_answers_queries_as_automatic_input() {
+    let (mut rt, fake) = runtime();
+    let before = fake.sent_to("t1").len();
+    // Device status: the engine answers `CSI 0 n`.
+    fake.output("t1", b"\x1b[5n");
+    fake.output("t2", b"\x1b[5n");
+    frames(&mut rt, 3);
+    let reply = Out::Automatic(b"\x1b[0n".to_vec());
+    assert_eq!(&fake.sent_to("t1")[before..], std::slice::from_ref(&reply));
+    assert_eq!(fake.sent_to("t2"), [reply]);
+}
+
+#[test]
+fn without_automatic_input_only_the_pane_in_use_answers_queries() {
+    let fake = demo_core();
+    fake.core().no_automatic_input = true;
+    let (mut rt, fake) = runtime_on(fake);
+    let before = fake.sent_to("t1").len();
+    fake.output("t1", b"\x1b[5n");
+    fake.output("t2", b"\x1b[5n");
+    frames(&mut rt, 3);
+    // The pane in use, at the grid it told the core: its DATA takes nothing from anyone.
+    assert_eq!(
+        fake.sent_to("t1")[before..],
+        [Out::Input(b"\x1b[0n".to_vec())]
+    );
+    assert_eq!(
+        fake.sent_to("t2"),
+        [],
+        "as DATA, the reply would take the size"
+    );
+}
+
+#[test]
+fn without_automatic_input_the_pane_in_use_stops_answering_once_another_viewer_moves_it() {
+    let fake = demo_core();
+    fake.core().no_automatic_input = true;
+    let (mut rt, fake) = runtime_on(fake);
+    // The program asks for in-band size reports: one comes at once, as DATA.
+    fake.output("t1", b"\x1b[?2048h");
+    frames(&mut rt, 3);
+    let before = fake.sent_to("t1").len();
+    let data = |fake: &Fake, from: usize| -> Vec<Out> {
+        fake.sent_to("t1")[from..]
+            .iter()
+            .filter(|o| matches!(o, Out::Input(_) | Out::Automatic(_)))
+            .cloned()
+            .collect()
+    };
+
+    // Herdr app takes the size. The resize brings a mode-2048 report, and a query follows:
+    // as DATA, either would take the size back with no real use.
+    fake.resize_elsewhere("t1", 50, 10);
+    frames(&mut rt, 3);
+    fake.output("t1", b"\x1b[5n");
+    frames(&mut rt, 3);
+    assert_eq!(data(&fake, before), [], "a reply took the size back");
+    assert_eq!(resizes(&fake, "t1").len(), 1);
+
+    // Typing takes it back; replies go again.
+    type_text(&mut rt, "x");
+    let typed = fake.sent_to("t1").len();
+    fake.output("t1", b"\x1b[5n");
+    frames(&mut rt, 3);
+    assert_eq!(data(&fake, typed), [Out::Input(b"\x1b[0n".to_vec())]);
+}
+
+#[test]
+fn a_late_size_event_for_an_older_resize_doesnt_silence_the_pane_in_use() {
+    let fake = demo_core();
+    fake.core().no_automatic_input = true;
+    let (mut rt, fake) = runtime_on(fake);
+    let (cols, rows) = grid_of(&rt, "pn-1");
+    // A divider drag over a slow link: the event for an older RESIZE lands after the last one
+    // went out, then the event for the last one.
+    fake.resize_elsewhere("t1", cols - 3, rows);
+    frames(&mut rt, 2);
+    fake.resize_elsewhere("t1", cols, rows);
+    frames(&mut rt, 2);
+    let before = fake.sent_to("t1").len();
+    fake.output("t1", b"\x1b[5n");
+    frames(&mut rt, 3);
+    assert_eq!(
+        fake.sent_to("t1")[before..],
+        [Out::Input(b"\x1b[0n".to_vec())]
     );
 }
 
