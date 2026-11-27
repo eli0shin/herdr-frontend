@@ -166,6 +166,9 @@ pub enum Event {
     },
     /// How many rows the open list popup shows now.
     PopupRows(usize),
+    /// Where the open list popup's cursor goes: where it starts when it opens or its query
+    /// changes, or the row a click picked.
+    PopupCursor(usize),
 }
 
 impl Event {
@@ -226,6 +229,13 @@ pub(crate) enum Pending {
         pane: String,
         tab: Option<String>,
         direction: Direction,
+    },
+    /// "Send back to <parent>": its labels are cleared (`labelled` once that answered), then
+    /// keep is turned off, then its pane goes (`cfg/AGENTS.md`: `terminal.park`).
+    Park {
+        pane: String,
+        terminal: String,
+        labelled: bool,
     },
 }
 
@@ -587,13 +597,15 @@ impl Model {
         }
     }
 
-    /// Starts a terminal for a pane on `machine`, in `folder`, labeled for its space and tab.
-    /// `answer`: the control call to answer once the pane is placed (or the launch failed).
+    /// Starts a terminal for a pane on `machine`, in `folder`, labeled for its space and tab,
+    /// running `argv` (empty: the core's default shell). `answer`: the control call to answer
+    /// once the pane is placed (or the launch failed).
     pub(crate) fn launch(
         &mut self,
         machine: Option<String>,
         folder: &str,
         launch: Launch,
+        argv: Vec<String>,
         answer: Option<CallId>,
         fx: &mut Effects,
     ) {
@@ -626,6 +638,7 @@ impl Model {
         .map(|(k, v)| (k.to_owned(), v.to_owned()))
         .collect();
         let run = TerminalRun {
+            argv,
             cwd: (!folder.is_empty()).then(|| folder.to_owned()),
             env,
             labels: labels::for_new_pane(local(&space, m), local(&tab, m)),
@@ -719,6 +732,15 @@ impl Model {
                     list.set_rows(rows);
                 }
             }
+            Event::PopupCursor(at) => match &mut self.mode {
+                Mode::Popup(mode::PopupState::List(list)) => {
+                    list.cursor = at.min(list.rows.saturating_sub(1));
+                }
+                Mode::Popup(mode::PopupState::Menu(menu)) => {
+                    menu.cursor = at.min(menu.items.len().saturating_sub(1));
+                }
+                _ => {}
+            },
         }
     }
 
@@ -866,6 +888,33 @@ impl Model {
                 let after = self.view.spaces.get(&orphan.space).cloned();
                 self.edit(orphan.intent(folder, after), fx);
             }
+            Pending::Park {
+                pane,
+                terminal,
+                labelled,
+            } => match result {
+                Ok(_) if !labelled => self.call(
+                    fx,
+                    Request::Keep(TerminalKeep {
+                        terminal: terminal.clone(),
+                        keep: false,
+                        ..Default::default()
+                    }),
+                    Some(Pending::Park {
+                        pane,
+                        terminal,
+                        labelled: true,
+                    }),
+                ),
+                Ok(_) => {
+                    self.edit(Intent::RemovePane { pane }, fx);
+                }
+                Err(error) => fx.push(Effect::Toast(Toast::new(
+                    Level::Error,
+                    "Couldn't send it back",
+                    error.message,
+                ))),
+            },
             Pending::CheckClosed { pane, address } => {
                 self.busy.remove(&address);
                 if closed::closed_by_lookup(result.as_deref()) {

@@ -2,8 +2,8 @@
 //! [`Intent`]s; terminals start and end through core calls; everything else is this screen's view.
 //! Actions whose feature isn't built yet return [`Effect::NotYet`].
 
-use herdr_proto::methods::MachineExec;
-use herdr_shared::{Axis, Intent, Node, Size, fresh_id_on, machine_of};
+use herdr_proto::methods::{MachineExec, TerminalLabel};
+use herdr_shared::{Axis, Intent, Node, Size, fresh_id_on, labels, machine_of};
 
 use crate::action::{Action, CopyAction, Direction, Edge, Popup, PopupAction, Split};
 use crate::effect::{Effect, Effects, Level, Pick, Request, TerminalCommand, Toast};
@@ -13,6 +13,7 @@ use crate::mode::{
     Rename, Visual,
 };
 use crate::model::{EDITOR_LABEL, Launch, Model, NAVIGATE_TIMEOUT, Pending};
+use crate::popups;
 use crate::world::SpaceExt;
 
 impl Model {
@@ -173,10 +174,72 @@ impl Model {
             Action::Popup(popup) => self.popup(popup, fx),
             Action::AgentJumpKey(c) => self.jump_key(c, fx),
             Action::Copy(copy) => self.copy(copy, fx),
+            Action::TerminalMenu(pane) => {
+                if let Some(menu) = popups::terminal_menu(self, &pane) {
+                    self.close_mode(fx);
+                    self.open_popup(PopupState::Menu(menu));
+                }
+            }
+            Action::SpaceNew(machine) => self.new_space(machine, fx),
+            Action::ShowSpace(id) => {
+                let tab = self
+                    .world
+                    .space(&id)
+                    .map(|space| popups::terminal_tab(self, space));
+                match tab {
+                    Some(Some(tab)) => {
+                        self.view.select_tab(&self.world, &tab);
+                    }
+                    Some(None) => self.view.active = Some(id),
+                    None => {}
+                }
+            }
+            Action::FromPalette(action) => {
+                if let Some(name) = action.name() {
+                    self.view.remember_command(&name);
+                }
+                self.run(*action, fx);
+            }
+            Action::RightClicks {
+                terminal,
+                to_program,
+            } => {
+                if self.world.is_live(&terminal) {
+                    let to = if to_program { "program" } else { "" };
+                    let labels = [(labels::RIGHT_CLICK.to_owned(), to.to_owned())].into();
+                    self.call(
+                        fx,
+                        Request::Label(TerminalLabel {
+                            terminal,
+                            labels,
+                            ..Default::default()
+                        }),
+                        None,
+                    );
+                }
+            }
+            Action::Park(terminal) => {
+                if let Some(pane) = self.world.pane_of(&terminal) {
+                    self.call(
+                        fx,
+                        Request::Label(TerminalLabel {
+                            terminal: terminal.clone(),
+                            labels: labels::for_park(),
+                            ..Default::default()
+                        }),
+                        Some(Pending::Park {
+                            pane,
+                            terminal,
+                            labelled: false,
+                        }),
+                    );
+                }
+            }
+            Action::EditFile(path) => self.edit_file(&path, fx),
             Action::Review
+            | Action::RenamePaneOf(_)
             | Action::Peek(_)
             | Action::FoldSubagents(_)
-            | Action::TerminalMenu(_)
             | Action::OpenLink { .. } => fx.push(Effect::NotYet(action)),
         }
     }
@@ -215,7 +278,7 @@ impl Model {
                 pane: fresh_id_on("p", None),
                 focus: true,
             };
-            self.launch(None, &folder, launch, None, fx);
+            self.launch(None, &folder, launch, Vec::new(), None, fx);
             return;
         };
         let machine = machine_of(&space.id).map(str::to_owned);
@@ -229,7 +292,78 @@ impl Model {
                 .selected_tab(&self.world, space)
                 .map(|t| t.id.clone()),
         };
-        self.launch(machine, &folder, launch, None, fx);
+        self.launch(machine, &folder, launch, Vec::new(), None, fx);
+    }
+
+    /// `space.new` from the window: a space on `machine` (this computer for `None`), shown at
+    /// once, in the focused terminal's folder when that is on the same machine, else home (on
+    /// another machine, its core's default).
+    fn new_space(&mut self, machine: Option<String>, fx: &mut Effects) {
+        let m = machine.as_deref();
+        let folder = self
+            .focused_terminal()
+            .filter(|t| machine_of(t) == m)
+            .and_then(|t| self.world.folder_of(t))
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                if m.is_some() {
+                    String::new()
+                } else {
+                    self.home.clone()
+                }
+            });
+        let launch = Launch::Space {
+            space: fresh_id_on("sp", m),
+            name: String::new(),
+            folder: folder.clone(),
+            tab: fresh_id_on("tb", m),
+            tab_name: String::new(),
+            pane: fresh_id_on("p", m),
+            focus: true,
+        };
+        self.launch(machine, &folder, launch, Vec::new(), None, fx);
+    }
+
+    /// The settings dialog's files: a new tab on this computer running `$EDITOR` (else `nvim`)
+    /// on `path`, in the shown space when it is this computer's, else the first of this
+    /// computer's spaces, else a new one.
+    fn edit_file(&mut self, path: &str, fx: &mut Effects) {
+        let folder = std::path::Path::new(path)
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| self.home.clone());
+        let argv = editor_argv(path);
+        let space = self
+            .active_space()
+            .filter(|s| machine_of(&s.id).is_none())
+            .or_else(|| self.world.spaces().find(|s| machine_of(&s.id).is_none()))
+            .map(|s| s.id.clone());
+        let launch = match space {
+            Some(space) => {
+                let after = self
+                    .world
+                    .space(&space)
+                    .and_then(|s| self.view.selected_tab(&self.world, s))
+                    .map(|t| t.id.clone());
+                Launch::Tab {
+                    space,
+                    tab: fresh_id_on("tb", None),
+                    pane: fresh_id_on("p", None),
+                    after,
+                }
+            }
+            None => Launch::Space {
+                space: fresh_id_on("sp", None),
+                name: String::new(),
+                folder: folder.clone(),
+                tab: fresh_id_on("tb", None),
+                tab_name: String::new(),
+                pane: fresh_id_on("p", None),
+                focus: true,
+            },
+        };
+        self.launch(None, &folder, launch, argv, None, fx);
     }
 
     /// A split of the focused pane; the new terminal stays on that pane's machine.
@@ -250,7 +384,7 @@ impl Model {
             pane: fresh_id_on("p", m),
             container: fresh_id_on("s", m),
         };
-        self.launch(machine, &folder, launch, None, fx);
+        self.launch(machine, &folder, launch, Vec::new(), None, fx);
     }
 
     /// `pane.close`: the focused pane and its terminal. A tab's last pane closes the tab.
@@ -646,6 +780,22 @@ impl Model {
             (_, PopupAction::Close) => self.mode = Mode::Normal,
             (PopupState::List(list), PopupAction::Up) => list.step(-1),
             (PopupState::List(list), PopupAction::Down) => list.step(1),
+            (PopupState::List(list), PopupAction::PageUp) => list.step(-mode::PAGE),
+            (PopupState::List(list), PopupAction::PageDown) => list.step(mode::PAGE),
+            (PopupState::Menu(menu), PopupAction::Up) => menu.step(-1),
+            (PopupState::Menu(menu), PopupAction::Down) => menu.step(1),
+            (PopupState::Menu(menu), PopupAction::Choose) => {
+                let actions = menu
+                    .items
+                    .get(menu.cursor)
+                    .map(|item| item.actions.clone())
+                    .unwrap_or_default();
+                // Closes first, so what it runs can open a prompt of its own.
+                self.mode = Mode::Normal;
+                for action in actions {
+                    self.run(action, fx);
+                }
+            }
             (PopupState::List(list), PopupAction::Query(query)) => {
                 list.query = query;
                 list.cursor = 0;
@@ -679,16 +829,6 @@ impl Model {
                 };
                 self.mode = Mode::Normal;
                 self.edit(intent, fx);
-            }
-            (PopupState::Menu(menu), PopupAction::Up) => menu.step(-1),
-            (PopupState::Menu(menu), PopupAction::Down) => menu.step(1),
-            (PopupState::Menu(menu), PopupAction::Choose) => {
-                let item = menu.items.get(menu.cursor).map(|i| i.action.clone());
-                // Closes first, so what it runs can open a prompt of its own.
-                self.mode = Mode::Normal;
-                if let Some(action) = item {
-                    self.run(action, fx);
-                }
             }
             (PopupState::Confirm(confirm), PopupAction::Choose) => {
                 let then = confirm.then.clone();
@@ -782,6 +922,15 @@ impl Model {
 /// Whether a node's size is already `size` (no size is a weight of 1).
 fn same_size(now: Option<Size>, size: Size) -> bool {
     now == Some(size) || (now.is_none() && size == Size::Weight(1.0))
+}
+
+/// What runs `path` in the person's editor: `$EDITOR` as the core's environment has it (its words
+/// split as a shell splits them), else Neovim.
+pub(crate) fn editor_argv(path: &str) -> Vec<String> {
+    ["/bin/sh", "-c", "exec ${EDITOR:-nvim} \"$1\"", "sh", path]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
 }
 
 /// `by` places from `at` in `order`, wrapping. From outside the order (`at` is `None`), next is

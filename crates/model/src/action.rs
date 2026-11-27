@@ -204,6 +204,10 @@ pub enum PopupAction {
     Toggle,
     /// Ctrl+D in the picker: close the selected tab.
     CloseItem,
+    /// Page Up: ten rows up, stopping at the first.
+    PageUp,
+    /// Page Down: ten rows down, stopping at the last.
+    PageDown,
     /// The text field changed.
     Query(String),
 }
@@ -351,6 +355,9 @@ pub enum Action {
     JumpForward,
 
     // Spaces (§3).
+    /// `space.new`: a space on this computer (or on `Some(machine)`, from the picker's "new space
+    /// on <machine>" rows), in the focused terminal's folder on that machine, else home.
+    SpaceNew(Option<String>),
     SpaceNext,
     SpacePrev,
     /// 1-9, in space order.
@@ -410,8 +417,30 @@ pub enum Action {
     /// Click an agent's icon or fold chevron. (§22's "fold section" row has no action:
     /// sidebar sections don't collapse, `docs/plan.md`.)
     FoldSubagents(String),
-    /// Right-click a terminal (Shift+right-click when the program takes the mouse).
+    /// Right-click a pane's terminal (Shift+right-click when the program takes the mouse): the
+    /// pane's id.
     TerminalMenu(String),
+
+    // What the popups run on what they list (§10). Ids are qualified.
+    /// The space picker's Enter: show a space, on a terminal tab when its selected tab is an
+    /// agent's or the review's (`cfg/mods/space-picker/match.js` `terminalTab`).
+    ShowSpace(String),
+    /// A palette entry: remembered among its recent commands, then run.
+    FromPalette(Box<Action>),
+    /// The terminal menu's "Rename" for a pane.
+    RenamePaneOf(String),
+    /// The terminal menu's "Send right-clicks to pane" (`to_program`) and "Use Herdr right-click
+    /// menu": the terminal's `herdr.right-click` label.
+    RightClicks {
+        terminal: String,
+        to_program: bool,
+    },
+    /// The terminal menu's "Send back to <parent>" (`terminal.park`): the pane goes, the terminal
+    /// keeps running under its parent.
+    Park(String),
+    /// The settings dialog: a file of herdr-frontend's home opened in a new tab running
+    /// `$EDITOR` (else `nvim`).
+    EditFile(String),
     /// Cmd-click a path or URL in a pane.
     OpenLink {
         pane: String,
@@ -472,6 +501,7 @@ impl Action {
             Action::TabRename => "tab.rename".into(),
             Action::JumpBack => "jump.back".into(),
             Action::JumpForward => "jump.forward".into(),
+            Action::SpaceNew(None) => "space.new".into(),
             Action::SpaceNext => "space.next".into(),
             Action::SpacePrev => "space.prev".into(),
             Action::SpaceSelect(n) => format!("space.select:{n}"),
@@ -499,8 +529,17 @@ impl Action {
             Action::Popup(PopupAction::Close) => "popup.close".into(),
             Action::Popup(PopupAction::Toggle) => "popup.toggle".into(),
             Action::Popup(PopupAction::CloseItem) => "popup.close_item".into(),
+            Action::Popup(PopupAction::PageUp) => "popup.page_up".into(),
+            Action::Popup(PopupAction::PageDown) => "popup.page_down".into(),
             Action::Copy(copy) => format!("copy_mode.{}", copy.as_str()),
             Action::Popup(PopupAction::Query(_))
+            | Action::SpaceNew(Some(_))
+            | Action::ShowSpace(_)
+            | Action::FromPalette(_)
+            | Action::RenamePaneOf(_)
+            | Action::RightClicks { .. }
+            | Action::Park(_)
+            | Action::EditFile(_)
             | Action::AgentJumpKey(_)
             | Action::ShowTab(_)
             | Action::RenameTabOf(_)
@@ -565,6 +604,7 @@ impl Action {
             ("tab.rename", None) => Action::TabRename,
             ("jump.back", None) => Action::JumpBack,
             ("jump.forward", None) => Action::JumpForward,
+            ("space.new", None) => Action::SpaceNew(None),
             ("space.next", None) => Action::SpaceNext,
             ("space.prev", None) => Action::SpacePrev,
             ("space.select", Some(n)) => Action::SpaceSelect(number(n, 9)?),
@@ -592,6 +632,8 @@ impl Action {
             ("popup.close", None) => Action::Popup(PopupAction::Close),
             ("popup.toggle", None) => Action::Popup(PopupAction::Toggle),
             ("popup.close_item", None) => Action::Popup(PopupAction::CloseItem),
+            ("popup.page_up", None) => Action::Popup(PopupAction::PageUp),
+            ("popup.page_down", None) => Action::Popup(PopupAction::PageDown),
             (popup, None) if popup.starts_with("popup.") => {
                 Action::Open(Popup::parse(&popup["popup.".len()..])?)
             }
@@ -633,6 +675,7 @@ mod tests {
             Action::JumpBack,
             Action::JumpForward,
             Action::SpaceNext,
+            Action::SpaceNew(None),
             Action::SpacePrev,
             Action::SpaceRename,
             Action::SpaceClose,
@@ -654,6 +697,8 @@ mod tests {
             Action::Popup(PopupAction::Close),
             Action::Popup(PopupAction::Toggle),
             Action::Popup(PopupAction::CloseItem),
+            Action::Popup(PopupAction::PageUp),
+            Action::Popup(PopupAction::PageDown),
         ]);
         all.extend((1..=9).map(Action::TabSelect));
         all.extend((1..=9).map(Action::SpaceSelect));

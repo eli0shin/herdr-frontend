@@ -29,6 +29,12 @@ This is herdr-frontend's answer to "dotfiles-managed preferences while running":
 anyone) can write or link `settings.json`, and the running window follows. Herdr app needed
 `navigator-status.set-shared` sent to the running app instead.
 
+## The settings dialog
+
+`cmd-,` and `ctrl-g c` (and the palette's "Settings") open a dialog that lists these files with
+their paths and what is wrong with them now. Enter on one opens it in a new tab running `$EDITOR`,
+else Neovim; the window follows the saved file. It edits no values itself (`docs/popups.md`).
+
 ## `settings.json`
 
 The keys are Herdr app's (`~/.config/herdr-app/settings.json`), so a line copied from one works in

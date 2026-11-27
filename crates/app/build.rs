@@ -1,6 +1,7 @@
-//! Embeds the bundled program icons (`assets/icons/*.svg`, `assets/program-icons/*.svg`) as
+//! Embeds the bundled program icons (`assets/icons/*.svg`, `assets/program-icons/*.svg`) and the
+//! window's own glyphs (`assets/ui/*.svg`: the menus' and popups' Lucide icons) as
 //! `ICONS: &[(&str, &[u8])]`, keyed by the home-relative path `programs.json` names them by
-//! (`icons/pi.svg`), for `src/config/programs.rs`.
+//! (`icons/pi.svg`, `ui/x.svg`), for `src/config/programs.rs`.
 
 use std::path::Path;
 
@@ -8,7 +9,7 @@ fn main() {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let assets = Path::new(&manifest).join("../../assets");
     let mut lines = Vec::new();
-    for folder in ["icons", "program-icons"] {
+    for folder in ["icons", "program-icons", "ui"] {
         let dir = assets.join(folder);
         println!("cargo:rerun-if-changed={}", dir.display());
         let mut files: Vec<_> = std::fs::read_dir(&dir)

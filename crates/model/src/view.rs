@@ -23,6 +23,9 @@ pub const FOCUS_HISTORY: usize = 32;
 /// Recently closed spaces remembered.
 pub const RECENT_SPACES: usize = 20;
 
+/// How many recent palette commands are kept (the palette shows the first five).
+pub const PALETTE_RECENT: usize = 20;
+
 /// One tab's view.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -200,6 +203,8 @@ pub struct View {
     pub recent: Vec<Recent>,
     /// Attention per agent address, as last saved (see [`SeenRecord`]).
     pub seen: BTreeMap<String, SeenRecord>,
+    /// The palette's commands by name, most recent first ([`PALETTE_RECENT`] at most).
+    pub palette: Vec<String>,
     #[serde(skip)]
     pub jumps: JumpList,
 }
@@ -351,6 +356,13 @@ impl View {
         self.tabs
             .get_mut(tab)
             .is_some_and(|v| v.settled.take().is_some())
+    }
+
+    /// A command run from the palette, remembered first (`cfg/frame/palette/main.js` `go`).
+    pub fn remember_command(&mut self, name: &str) {
+        self.palette.retain(|n| n != name);
+        self.palette.insert(0, name.to_owned());
+        self.palette.truncate(PALETTE_RECENT);
     }
 
     /// A closed space, remembered first.

@@ -197,19 +197,29 @@ fn a_double_click_renames_and_a_right_click_opens_the_tab_menu() {
     }
     frames(&mut rt, 1);
     assert_eq!(shown(&rt), "tb-pi");
-    // The window draws neither the rename prompt nor menus yet (ticket 026): each opens, then
-    // says so and lets go of the keyboard.
-    assert_eq!(toasts(&rt), ["tab.rename isn't built yet"]);
-    assert_eq!(*rt.state.model.mode(), model::Mode::Normal);
+    // The rename prompt opens for that tab.
+    assert!(matches!(
+        rt.state.model.mode(),
+        model::Mode::Popup(model::PopupState::Prompt(p))
+            if p.rename == model::mode::Rename::Tab("tb-pi".into())
+    ));
+    assert!(toasts(&rt).is_empty());
+    rt.state
+        .step(0.0, model::Action::Popup(model::PopupAction::Close));
+    frames(&mut rt, 1);
     let (x, y) = rt.find("tab-tb-shell").unwrap();
     rt.secondary_down(x, y);
     rt.frame(1.0 / 60.0);
     rt.secondary_up(x, y);
     frames(&mut rt, 2);
-    assert_eq!(
-        toasts(&rt),
-        ["tab.rename isn't built yet", "tab menu isn't built yet"]
-    );
+    // The tab menu opens where the right-click was.
+    assert!(matches!(
+        rt.state.model.mode(),
+        model::Mode::Popup(model::PopupState::Menu(m))
+            if m.target == model::MenuTarget::Tab("tb-shell".into())
+    ));
+    assert!(rt.find("menu").is_some());
+    assert!(toasts(&rt).is_empty());
     assert_eq!(shown(&rt), "tb-pi", "a right-click selects nothing");
 }
 

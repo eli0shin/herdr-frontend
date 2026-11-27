@@ -36,7 +36,7 @@ use ghostty_vt_sys::{GHOSTTY_KEY_C, GHOSTTY_KEY_V};
 use herdr_proto::Display;
 use herdr_proto::methods::TerminalAttach;
 use model::agents::{self, Sort, Tracker};
-use model::mode::{PopupState, Rename};
+use model::mode::PopupState;
 use model::{
     Action, AppCommand, CopyAction, Effect, Event, Focus, Input, Level, Model, Pick, Popup,
     PopupAction, TerminalAction, TerminalCommand, Toast, View,
@@ -324,8 +324,23 @@ pub struct State {
     keys_read: Option<String>,
     /// How often that thread reads the file.
     pub keys_every: Duration,
-    /// The open popup's filter field.
-    pub help_filter: TextEdit,
+    /// The open popup's text field: its filter, or the prompt's name.
+    pub popup_field: TextEdit,
+    /// The first item the open list shows ([`crate::view::list::follow`]).
+    pub list_top: usize,
+    /// The picker's quiet spaces are unfolded ("earlier").
+    pub picker_earlier: bool,
+    /// Where the last right-click was, in view points: where a menu opens.
+    pub menu_at: Option<(f32, f32)>,
+    /// Wheel travel over the open list not yet a whole row, in points.
+    list_wheel_travel: f32,
+    /// What is wrong with `keys.json` now, for the settings dialog.
+    keys_problem: Option<String>,
+    /// Shows a folder in Finder: set for a live window only, so tests and scenes never open
+    /// one ([`State::revealed`] records what was asked).
+    pub reveal: Option<fn(&std::path::Path)>,
+    /// The folders the settings dialog asked to show.
+    pub revealed: Vec<std::path::PathBuf>,
     /// Something only the view shows changed (a toast, the prefix indicator): draw a frame.
     redraw: bool,
     /// Which Option keys act as Alt in terminals: both, as Eli's Ghostty has it
@@ -384,9 +399,11 @@ impl State {
         let mut model = Model::with_view(user_home(), view);
         let mut toasts = Toasts::default();
         let mut keys_read = None;
+        let mut keys_problem = None;
         if let Some(home) = &home {
             let start = keyfile::load(home.dir());
             model.set_keymap(start.keymap);
+            keys_problem = start.problem.clone();
             if let Some(why) = start.problem {
                 toasts.push(
                     Toast::new(Level::Error, "keys.json can't be used", why),
@@ -458,7 +475,14 @@ impl State {
             keys: None,
             keys_read,
             keys_every: keyfile::EVERY,
-            help_filter: TextEdit::default(),
+            popup_field: TextEdit::default(),
+            list_top: 0,
+            picker_earlier: false,
+            menu_at: None,
+            list_wheel_travel: 0.0,
+            keys_problem: None,
+            reveal: None,
+            revealed: Vec::new(),
             redraw: false,
             option_as_alt: OptionAsAlt::Both,
             keys_down: Vec::new(),
@@ -468,9 +492,39 @@ impl State {
             grip_drag: None,
             divider_drag: None,
         };
+        s.keys_problem = keys_problem;
         s.configure_all(config);
         s.window_sized(crate::SIZE.0, crate::SIZE.1);
         s
+    }
+
+    /// The window's size in view points (window points over the zoom).
+    pub fn view_size(&self) -> (f32, f32) {
+        let (w, h) = self.window_points;
+        let k = self.zoom();
+        (w / k, h / k)
+    }
+
+    /// The terminals' background: what text fields sit on, as Herdr app's do.
+    pub fn background(&self) -> rune::Color {
+        self.theme
+            .background
+            .map_or(self.chrome.canvas, crate::view::terminal::look::color)
+    }
+
+    /// herdr-frontend's home: where its files are, or would be with none chosen.
+    pub fn home_dir(&self) -> std::path::PathBuf {
+        match &self.home {
+            Some(home) => home.dir().to_owned(),
+            None => crate::control::home(),
+        }
+    }
+
+    /// What is wrong with the home's files now: the look's and the key file's.
+    pub fn file_problems(&self) -> Vec<String> {
+        let mut out = self.config.problems.clone();
+        out.extend(self.keys_problem.iter().map(|p| format!("keys.json: {p}")));
+        out
     }
 
     /// Runs with `settings` and the built-in theme and programs, as if a file said so: scenes and
@@ -716,33 +770,53 @@ impl State {
         let effects = self.model.step(self.now, input);
         self.agents_stale = true;
         let handled = effects.handled;
+        // A pick runs what it leads to as steps of its own, after this step's other effects:
+        // otherwise this step's focus move (back to the pane, as the list closes) would land
+        // after, and undo, the focus of a popup the pick opens.
+        let mut picks = Vec::new();
         for effect in effects {
-            self.carry_out(effect);
+            match effect {
+                Effect::Pick { .. } => picks.push(effect),
+                other => self.carry_out(other),
+            }
         }
         if *self.model.mode() != before {
             self.redraw = true;
             self.mode_changed(&before);
         }
+        for pick in picks {
+            self.carry_out(pick);
+        }
         handled
     }
 
     /// The keyboard went to a new mode. A popup or copy mode the window doesn't draw yet would
-    /// hold every key unseen, so it closes at once with a "not yet" toast; the help opens with
-    /// an empty filter and says how many rows it has.
+    /// hold every key unseen, so it closes at once with a "not yet" toast. A list popup that
+    /// opens starts with an empty field; each change tells the model its rows, and on opening
+    /// or a new query where its cursor starts; the window follows the cursor. A prompt opens
+    /// with its name in the field, selected.
     fn mode_changed(&mut self, before: &model::Mode) {
         let mode = self.model.mode().clone();
         match &mode {
-            model::Mode::Popup(PopupState::List(list)) if list.popup == Popup::Help => {
-                let opened = before
-                    .popup()
-                    .and_then(PopupState::popup)
-                    .is_none_or(|p| p != Popup::Help);
-                if opened {
-                    self.help_filter = TextEdit::default();
+            model::Mode::Popup(PopupState::List(list)) if crate::view::popup::drawn(list.popup) => {
+                let was = match before {
+                    model::Mode::Popup(PopupState::List(b)) if b.popup == list.popup => Some(b),
+                    _ => None,
+                };
+                if was.is_none() {
+                    self.popup_field = TextEdit::default();
+                    self.list_top = 0;
+                    self.list_wheel_travel = 0.0;
+                    self.picker_earlier = false;
                 }
-                let rows = crate::view::help::shown(self, list).len();
-                if rows != list.rows {
-                    self.step(self.now, Event::PopupRows(rows));
+                let new_query = was.is_none_or(|b| b.query != list.query);
+                self.relist(new_query);
+            }
+            model::Mode::Popup(PopupState::Prompt(prompt)) => {
+                if !matches!(before, model::Mode::Popup(PopupState::Prompt(_))) {
+                    let mut field = TextEdit::new(prompt.value.clone());
+                    field.set_selection(0, prompt.value.len());
+                    self.popup_field = field;
                 }
             }
             // The sort menu hangs under the sidebar's sort button: with the sidebar hidden there
@@ -758,18 +832,11 @@ impl State {
                     }
                 }
             }
+            model::Mode::Popup(PopupState::Confirm(_) | PopupState::Menu(_)) => {}
             model::Mode::Popup(state) => {
                 let action = match state {
                     PopupState::List(list) => Action::Open(list.popup),
-                    PopupState::Jump(_) => Action::Open(Popup::AgentJump),
-                    PopupState::Prompt(p) => match p.rename {
-                        Rename::Tab(_) => Action::TabRename,
-                        Rename::Space(_) => Action::SpaceRename,
-                    },
-                    PopupState::Confirm(_) => Action::SpaceClose,
-                    PopupState::Menu(menu) => match &menu.target {
-                        model::MenuTarget::Tab(tab) => Action::TabMenu(tab.clone()),
-                    },
+                    _ => Action::Open(Popup::AgentJump),
                 };
                 self.not_yet(&action);
                 self.step(self.now, Action::Popup(PopupAction::Close));
@@ -780,6 +847,141 @@ impl State {
             }
             model::Mode::Normal | model::Mode::Prefix { .. } => {}
         }
+    }
+
+    /// Tells the model what the open list shows now, and moves the window to its cursor.
+    /// `start`: the query is new (or the list just opened), so the cursor goes where it starts.
+    fn relist(&mut self, start: bool) {
+        let model::Mode::Popup(PopupState::List(list)) = self.model.mode().clone() else {
+            return;
+        };
+        let Some(listing) = crate::view::popup::listing(self, &list) else {
+            return;
+        };
+        let rows = listing.rows();
+        if rows != list.rows {
+            self.step(self.now, Event::PopupRows(rows));
+        }
+        if start {
+            let cursor = match self.model.mode() {
+                model::Mode::Popup(PopupState::List(l)) => l.cursor,
+                _ => return,
+            };
+            if listing.start != cursor {
+                self.step(self.now, Event::PopupCursor(listing.start));
+            }
+        }
+        if let model::Mode::Popup(PopupState::List(l)) = self.model.mode() {
+            self.list_top =
+                crate::view::list::follow(&listing.picks, l.cursor, self.list_top, listing.shown);
+        }
+    }
+
+    /// A list row was picked (`Effect::Pick`): run what it stands for. Enter already closed the
+    /// list; Ctrl+D closes it here first.
+    fn picked(&mut self, popup: Popup, how: model::Pick, cursor: usize, query: String) {
+        use crate::view::{palette, picker, settings, space_picker};
+        let mut list = model::mode::ListPopup::new(popup);
+        list.query = query.clone();
+        let now = self.now;
+        match (popup, how) {
+            (Popup::Palette, model::Pick::Choose) => {
+                if let Some(row) = palette::rows(self, &list).into_iter().nth(cursor) {
+                    self.step(now, Action::FromPalette(Box::new(row.action)));
+                }
+            }
+            (Popup::SpacePicker, model::Pick::Choose) => {
+                if let Some(row) = space_picker::rows(self, &list).into_iter().nth(cursor) {
+                    self.step(now, Action::ShowSpace(row.id));
+                }
+            }
+            (Popup::Picker, how) => {
+                let rows = picker::rows(self, &list);
+                let Some(row) = model::popups::pickable(&rows)
+                    .get(cursor)
+                    .map(|r| (*r).clone())
+                else {
+                    return;
+                };
+                match how {
+                    model::Pick::Choose => match row.action() {
+                        Some(action) => {
+                            self.step(now, action);
+                        }
+                        // "earlier": unfold or fold, and stay on it.
+                        None => self.toggle_earlier(cursor, query),
+                    },
+                    model::Pick::CloseItem => {
+                        if let Some(action) = row.close_item() {
+                            self.step(now, Action::Popup(PopupAction::Close));
+                            self.step(now, action);
+                        }
+                    }
+                    model::Pick::Toggle => {}
+                }
+            }
+            (Popup::Settings, model::Pick::Choose) => {
+                match settings::rows(self).into_iter().nth(cursor) {
+                    Some(settings::Row::File { path, .. }) => {
+                        self.step(now, Action::EditFile(path.to_string_lossy().into_owned()));
+                    }
+                    Some(settings::Row::Reveal(dir)) => {
+                        if let Some(reveal) = self.reveal {
+                            reveal(&dir);
+                        }
+                        self.revealed.push(dir);
+                    }
+                    None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The picker's "earlier" row: it opens again with its quiet spaces unfolded (or folded),
+    /// its query kept and its cursor still on that row.
+    fn toggle_earlier(&mut self, cursor: usize, query: String) {
+        let earlier = !self.picker_earlier;
+        let field = self.popup_field.clone();
+        self.step(self.now, Action::Open(Popup::Picker));
+        self.picker_earlier = earlier;
+        self.popup_field = field;
+        if !query.is_empty() {
+            self.step(self.now, Action::Popup(PopupAction::Query(query)));
+        }
+        self.relist(false);
+        self.step(self.now, Event::PopupCursor(cursor));
+        self.relist(false);
+    }
+
+    /// A press on row `i` of the open list or menu: the cursor goes there, then it is chosen.
+    pub fn pick_row(&mut self, i: usize, tx: &mut Tx) {
+        self.step(tx.clock(), Event::PopupCursor(i));
+        self.act(Action::Popup(PopupAction::Choose), tx);
+    }
+
+    /// The wheel over the open list: each 32 points move the cursor a row, so the window follows.
+    pub fn list_wheel(&mut self, dy: f32, tx: &mut Tx) -> bool {
+        const ROW: f32 = 32.0;
+        self.list_wheel_travel += dy;
+        let rows = (self.list_wheel_travel / ROW).trunc();
+        if rows == 0.0 {
+            return true;
+        }
+        self.list_wheel_travel -= rows * ROW;
+        // Content moving down (fingers down) shows rows above.
+        let (up, n) = (rows > 0.0, rows.abs() as usize);
+        let step = if up {
+            PopupAction::Up
+        } else {
+            PopupAction::Down
+        };
+        for _ in 0..n {
+            self.step(tx.clock(), Action::Popup(step.clone()));
+        }
+        self.pump(tx.clock());
+        self.apply_ui(tx);
+        true
     }
 
     /// Shows a toast.
@@ -828,9 +1030,14 @@ impl State {
                     self.set_sort(*sort);
                 }
             }
-            // The help has nothing to pick; the other list popups come with their tickets (and
-            // close before a pick, `State::mode_changed`). Alerts are ticket 025's.
-            Effect::Pick { .. } | Effect::Alert(_) => {}
+            Effect::Pick {
+                popup,
+                how,
+                cursor,
+                query,
+            } => self.picked(popup, how, cursor, query),
+            // Alerts are ticket 025's.
+            Effect::Alert(_) => {}
         }
     }
 
@@ -878,9 +1085,11 @@ impl State {
             match loaded {
                 Loaded::Keys(keymap) => {
                     self.model.set_keymap(keymap);
+                    self.keys_problem = None;
                     self.redraw = true;
                 }
                 Loaded::Bad(why) => {
+                    self.keys_problem = Some(why.clone());
                     self.toast(Toast::new(Level::Error, "keys.json can't be used", why))
                 }
                 Loaded::Reset(Ok(aside)) => self.toast(Toast::new(
@@ -946,7 +1155,9 @@ impl State {
     fn apply_ui(&mut self, tx: &mut Tx) {
         match self.ui.focus.take() {
             Some(Focus::Pane(pane)) => tx.focus_when_shown(pane_key(&pane), false),
-            Some(Focus::Popup) => tx.focus_when_shown(crate::view::help::FILTER, false),
+            Some(Focus::Popup) => {
+                tx.focus_when_shown(crate::view::popup::focus_key(self.model.mode()), false)
+            }
             Some(Focus::None) | None => {}
         }
         for command in std::mem::take(&mut self.ui.window) {
@@ -2047,7 +2258,8 @@ impl State {
             return false;
         };
         let terminal = focused.starts_with("pane-");
-        let in_field = focused == crate::view::help::FILTER;
+        let target = crate::view::popup::focus_key(s.model.mode());
+        let in_field = focused == crate::view::overlay::FIELD;
         let handled = s.keymap_key(ev, terminal, tx);
         if handled || !s.model.mode().holds_keyboard() {
             return handled;
@@ -2057,7 +2269,7 @@ impl State {
         if in_field && ev.key != rune::Key::Tab {
             return false;
         }
-        tx.focus(crate::view::help::FILTER, false);
+        tx.focus(target, false);
         true
     }
 
