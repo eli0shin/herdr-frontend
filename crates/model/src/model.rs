@@ -1571,6 +1571,7 @@ fn intent_machine(intent: &Intent) -> Option<&str> {
         Intent::NewSpace { space, .. } | Intent::NewTab { space, .. } => space,
         Intent::Split { target, .. } => target,
         Intent::RemovePane { pane }
+        | Intent::RenamePane { pane, .. }
         | Intent::SwapPanes { pane, .. }
         | Intent::MovePane { pane, .. } => pane,
         Intent::CloseTab { tab } | Intent::RenameTab { tab, .. } | Intent::MoveTab { tab, .. } => {

@@ -462,3 +462,84 @@ fn ctrl_l_past_a_dead_neovim_clears_its_label_and_moves_the_pane() {
     });
     drop(rt);
 }
+
+/// The terminal menu's Rename names the pane in the core's `herdr-app` document the way Herdr app
+/// 0.1.18's `pane.rename` does, which is what it reads back: the block's `title`, trimmed, and
+/// nothing else changed; an empty name takes the `title` away, leaving the document as it was
+/// (`app:src/window.rs` `pane.rename`, `app:src/layout.rs` `Node::title`).
+#[test]
+fn a_pane_renamed_here_shows_in_the_document_as_herdr_app_reads_it() {
+    let Some(core) = IsolatedCore::new() else {
+        return;
+    };
+    let conn = Connection::open(&core.transport(), &ConnectOptions::default()).expect("connect");
+    let a = run(&conn, &core, "printf 'first\\n'; exec cat", None);
+    let written = json!({"spaces": [{
+        "id": "sp-1", "name": "isolated", "folder": core.folder().display().to_string(),
+        "tabs": [tab("tb-1", "work", split("tb-1", "row", vec![pane("pn-a", &a)]))],
+    }]});
+    write_doc(&conn, written.clone());
+
+    let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
+    rt.state.connect(Box::new(Live::new(core.transport())));
+    until(&mut rt, "the pane to draw", |rt| {
+        text_of(rt, &a).contains("first")
+    });
+
+    let rename = |rt: &mut Runtime<State>, name: &str| {
+        // A right-click on the pane opens the terminal menu; Rename is its first item.
+        let (x, y) = rt.find("pane-pn-a").expect("the pane");
+        rt.secondary_down(x, y);
+        rt.button_up(x, y, rune::PointerButton::Secondary);
+        until(rt, "the terminal menu", |rt| {
+            matches!(
+                rt.state.model.mode(),
+                model::Mode::Popup(model::mode::PopupState::Menu(_))
+            )
+        });
+        press(rt, Key::Enter, Mods::default());
+        until(rt, "the prompt", |rt| {
+            matches!(
+                rt.state.model.mode(),
+                model::Mode::Popup(model::mode::PopupState::Prompt(_))
+            )
+        });
+        let shown = rt.state.popup_field.text.clone();
+        for c in name.chars() {
+            press(rt, Key::Text(c.to_string()), Mods::default());
+        }
+        if name.is_empty() {
+            press(rt, Key::Backspace, Mods::default());
+        }
+        press(rt, Key::Enter, Mods::default());
+        shown
+    };
+
+    assert_eq!(
+        rename(&mut rt, "  server "),
+        "",
+        "an unnamed pane's prompt is empty"
+    );
+    let mut doc = json!(null);
+    until(&mut rt, "the name to reach the document", |_| {
+        doc = read_doc(&conn).0;
+        doc["spaces"][0]["tabs"][0]["root"]["children"][0]
+            .get("title")
+            .is_some()
+    });
+    let mut expected = written.clone();
+    expected["spaces"][0]["tabs"][0]["root"]["children"][0]["title"] = "server".into();
+    assert_eq!(doc, expected, "only the pane's title changed");
+    assert_eq!(
+        doc["spaces"][0]["tabs"][0]["root"]["children"][0],
+        json!({"id": "pn-a", "type": "block", "title": "server", "content": {"terminal": a}}),
+    );
+
+    // The prompt shows the name; clearing it leaves the document as it was written.
+    assert_eq!(rename(&mut rt, ""), "server");
+    until(&mut rt, "the name to leave the document", |_| {
+        doc = read_doc(&conn).0;
+        doc == written
+    });
+    drop(rt);
+}

@@ -115,9 +115,11 @@ pub struct JumpPopup {
 pub enum Rename {
     Tab(String),
     Space(String),
+    /// The terminal menu's "Rename": a pane's name, its block's `title`.
+    Pane(String),
 }
 
-/// A rename prompt: "Name", the current value selected, "empty: its number".
+/// A rename prompt: "Name", the current value selected, and a hint ("empty: its number").
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Prompt {
     pub rename: Rename,

@@ -71,7 +71,7 @@ herdr-frontend reads no branches yet.
 | Command palette | `cmd-shift-p` | 620 wide, 60 from the top, ≤ 0.85 | Empty: up to 5 recent commands, then every group (Tab, Pane, Space, Layout, Terminal, Agent, Window, App), each with its first key. Typed: matches, best first, recent first among equals, each with its group. 10 show; ↑/↓ stop at the ends; Page Up/Down move 10. | Runs it (`Action::FromPalette`), remembered among the recent commands in the saved view. A command that needs a name asks in the prompt. |
 | Tab and agent picker | `cmd-p` | 640 wide, 40 from the top, ≤ 0.8 | Spaces with an agent first (one that needs you first), each under its avatar (first emoji or letter, in the space's color, as the sidebar keeps it) and its tabs: status glyph, name (semibold when shown), "needs you" / "finished", the agents' programs and "+N" sub-agents. Then "earlier: N quiet spaces ▾", then "new tab", "new space" and "new space on <machine>" per connected machine. 10 show. | Shows the tab; makes a tab or space. "earlier" unfolds and stays open. Ctrl+D closes the selected tab. |
 | Space picker | `ctrl-g s` | 520 wide, 40 from the top, ≤ 0.6 | Number (1-9), status glyph, name (semibold when shown), machine when remote, "N tabs". Opens on the shown space, and goes back to it when the field empties. 12 show, with "↑ N more" / "↓ N more". | Shows the space, on its first terminal tab when its selected tab is an agent's or the review's. |
-| Prompt | `f2`, `ctrl-g r`, `shift-f2` | 380 wide dialog | "Rename tab" / "Rename space", a "Name" field holding the name, selected, and a hint ("empty: its number" / "empty: named after its folder"), Cancel and Save. A second rename closes it. | Saves the trimmed name; empty goes back to the automatic one. |
+| Prompt | `f2`, `ctrl-g r`, `shift-f2`, the terminal menu's Rename | 380 wide dialog | "Rename tab" / "Rename space" / "Rename pane", a "Name" field holding the name, selected, and a hint ("empty: its number" / "empty: named after its folder" / "empty: unnamed"), Cancel and Save. A second rename closes it. | Saves the trimmed name; empty goes back to the automatic one (a pane: no name). |
 | Confirm | `ctrl-g x`, closing a space's last tab | 380 wide dialog | "Close space?", "<name> — N tabs, M terminals", Cancel and Confirm. | Closes the space and ends its terminals. |
 | Tab menu | right-click a tab | 200 wide menu | Rename, New tab, Close, each with its icon and key. | Runs the item. |
 | Terminal menu | right-click a pane | 220 wide menu | Rename, Split right, Split down, Zoom; "Send right-clicks to pane" or "Use Herdr right-click menu"; "Send back to <parent>" for a sub-agent kept in a pane; Close pane. Pane items are left out for a terminal outside a tab. | Runs the item on that pane. |
@@ -90,10 +90,19 @@ The settings dialog lists files instead of editing values: herdr-frontend is set
 The editor runs as `/bin/sh -c 'exec ${EDITOR:-nvim} "$1"' sh <file>` on this computer: in the
 shown space when it is this computer's, else the first of this computer's spaces, else a new one.
 
+## Pane names
+
+The terminal menu's Rename is Herdr app's `pane.rename` (since 0.1.17; read at 0.1.18). The name is
+the pane's block `title` in the shared `herdr-app` document (`app:src/layout.rs` `Node::title`),
+written as Herdr app's `pane.rename` writes it (`app:src/window.rs`): trimmed, and an empty name
+removes `title` rather than writing `""`. Each app reads a name the other one wrote, and the name
+moves with its pane on swaps and drags. Herdr app shows pane names in its stock `pane` header mod
+and gives them to mods (`panes()[].name`, `agents()[].pane_name`). Eli's layout has no pane
+headers, and none of his mods read pane names (`feature-inventory.md` §5), so herdr-frontend shows
+the name only in the rename prompt, as its starting value.
+
 ## Not yet
 
-- The terminal menu's "Rename" says "not yet": pane names need a field in the shared layout
-  document that herdr-shared doesn't model yet.
 - The picker's working spinner is a static ◐ glyph, as the space picker draws it.
 
 ## Scenes
