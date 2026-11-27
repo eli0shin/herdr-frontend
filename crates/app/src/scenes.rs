@@ -50,6 +50,9 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-tab-menu", shell_tab_menu),
     ("shell-terminal-menu", shell_terminal_menu),
     ("shell-settings", shell_settings),
+    ("shell-machine-filter", shell_machine_filter),
+    ("shell-machines", shell_machines),
+    ("shell-machine-add", shell_machine_add),
 ];
 
 /// The app on the demo core ([`fixtures::demo_core`]): the sidebar, the tab strip with `work`
@@ -330,6 +333,62 @@ fn shell_terminal_menu(s: &mut State) {
 fn shell_settings(s: &mut State) {
     shell(s);
     s.step(0.0, model::Action::Open(model::Popup::Settings));
+}
+
+/// The agents core with other machines ([`fixtures::machines_core`]).
+fn machines(s: &mut State) {
+    s.connect(Box::new(fixtures::machines_core()));
+    s.settle();
+}
+
+/// The machine filter, devbox hidden, the cursor on it.
+fn shell_machine_filter(s: &mut State) {
+    machines(s);
+    s.set_hidden_machines(["devbox".to_owned()].into());
+    s.step(0.0, model::Action::Open(model::Popup::AgentMachines));
+    s.step(0.0, model::Action::Popup(model::PopupAction::Down));
+    s.step(0.0, model::Action::Popup(model::PopupAction::Down));
+}
+
+/// The Machines dialog: devbox up, omarchy needing a login and lingering.
+fn shell_machines(s: &mut State) {
+    machines(s);
+    s.step(0.0, model::Action::Open(model::Popup::Machines));
+}
+
+/// Adding a machine: the ssh config's hosts (devbox, added already, left out), one that failed
+/// asking for a password.
+fn shell_machine_add(s: &mut State) {
+    machines(s);
+    let dir = std::env::temp_dir().join(format!("herdr-frontend-scene-ssh-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let config = dir.join("config");
+    let _ = std::fs::write(
+        &config,
+        "Host devbox
+  HostName 10.0.0.7
+Host box
+  User eli
+  HostName box.local
+Host vps-eu vps
+  User can
+",
+    );
+    s.machines.ssh_config = Some(config);
+    s.step(0.0, model::Action::Open(model::Popup::MachineAdd));
+    s.machines.failed.insert(
+        "box".into(),
+        model::machines::add_failure(
+            "box",
+            &herdr_proto::RpcError {
+                code: -32000,
+                message: "Permission denied (publickey,password)".into(),
+                kind: herdr_proto::ErrorKind::Unreachable,
+                hint: None,
+                data: Default::default(),
+            },
+        ),
+    );
 }
 
 /// `fixture` alone in a focused pane: what the Ghostty pixel diff compares, at Ghostty's

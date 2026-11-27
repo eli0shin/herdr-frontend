@@ -15,8 +15,8 @@
 //! | Menus | [`menu`] | at the pointer |
 //! | Sort menu | [`crate::view::sidebar`] | under the sidebar's sort button |
 //! | Agent-jump bar (`ctrl-;`) | [`jump`] | 360 × 32, 6 from the top (8 window points at least) |
-//!
-//! The machine filter comes with its ticket; until then it closes at once with a "not yet".
+//! | Machine filter (`ctrl-g /`) | [`machines`] | 340 wide, 40 from the top |
+//! | Machines, Add a machine | [`machines`] | dialogs 520 and 560 wide |
 
 use model::mode::{ListPopup, PopupState};
 use model::{Mode, Popup};
@@ -25,7 +25,8 @@ use rune::{Cx, El};
 use crate::State;
 use crate::view::overlay;
 use crate::view::{
-    dialog, help, jump, menu, new_space, palette, picker, pr_finder, settings, space_picker,
+    dialog, help, jump, machines, menu, new_space, palette, picker, pr_finder, settings,
+    space_picker,
 };
 
 /// What a list popup lists now: per item whether (and as which row) the cursor can reach it,
@@ -61,6 +62,9 @@ pub fn drawn(popup: Popup) -> bool {
             | Popup::NewSpace
             | Popup::PrFinder
             | Popup::Settings
+            | Popup::AgentMachines
+            | Popup::Machines
+            | Popup::MachineAdd
     )
 }
 
@@ -105,6 +109,16 @@ pub fn listing(s: &State, list: &ListPopup) -> Option<Listing> {
             let n = settings::rows(s).len();
             Listing::flat(n, 0, n)
         }
+        Popup::AgentMachines => {
+            let n = machines::filter_rows(s).len();
+            Listing::flat(n, 0, n)
+        }
+        Popup::Machines => {
+            let rows = machines::machines_rows(s);
+            let start = machines::start(s, &rows);
+            Listing::flat(rows.len(), start, machines::SHOWN)
+        }
+        Popup::MachineAdd => Listing::flat(machines::add_rows(s, list).len(), 0, machines::SHOWN),
         _ => return None,
     })
 }
@@ -112,7 +126,10 @@ pub fn listing(s: &State, list: &ListPopup) -> Option<Listing> {
 /// Whether the popup types into [`overlay::FIELD`].
 pub fn has_field(state: &PopupState) -> bool {
     match state {
-        PopupState::List(list) => !matches!(list.popup, Popup::Settings | Popup::SortMenu),
+        PopupState::List(list) => !matches!(
+            list.popup,
+            Popup::Settings | Popup::SortMenu | Popup::AgentMachines | Popup::Machines
+        ),
         PopupState::Prompt(_) => true,
         PopupState::Jump(_) | PopupState::Confirm(_) | PopupState::Menu(_) => false,
     }
@@ -138,6 +155,9 @@ fn box_key(state: &PopupState) -> &'static str {
             Popup::PrFinder => "pr-finder",
             Popup::Settings => "settings",
             Popup::SortMenu => "sort-menu",
+            Popup::AgentMachines => "agent-machines",
+            Popup::Machines => "machines",
+            Popup::MachineAdd => "machine-add",
             _ => "popup",
         },
         PopupState::Prompt(_) => "prompt",
@@ -172,6 +192,9 @@ pub fn view(s: &State, cx: &Cx<State>) -> Option<El> {
             Popup::NewSpace => (new_space::PLACE, new_space::view(s, list)),
             Popup::PrFinder => (pr_finder::PLACE, pr_finder::view(s, list, cx)),
             Popup::Settings => (settings::PLACE, settings::view(s, list)),
+            Popup::AgentMachines => (machines::FILTER_PLACE, machines::filter_view(s, list)),
+            Popup::Machines => (machines::MACHINES_PLACE, machines::machines_view(s, list)),
+            Popup::MachineAdd => (machines::ADD_PLACE, machines::add_view(s, list)),
             _ => return None,
         },
         PopupState::Prompt(prompt) => (dialog::PLACE, dialog::prompt(s, prompt)),

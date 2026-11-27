@@ -1,8 +1,8 @@
 # Popups: the palette, the pickers, dialogs and menus
 
-The popups of `research/feature-inventory.md` §3, §10, §11 and §12, as herdr-frontend draws them.
-They share one frame and one list, so the popups later tickets add (the machine filter) are a row
-builder and a body, not a new overlay.
+The popups of `research/feature-inventory.md` §3, §9, §10, §11 and §12, as herdr-frontend draws
+them. They share one frame and one list, so a popup is a row builder and a body, not a new
+overlay. The machine popups are described in `docs/machines.md`.
 
 ## How a popup works
 
@@ -105,10 +105,13 @@ The new-space picker and the PR finder keep their mods' own matching:
 | Confirm | `ctrl-g x`, closing a space's last tab | 380 wide dialog | "Close space?", "<name> — N tabs, M terminals", Cancel and Confirm. | Closes the space and ends its terminals. |
 | Tab menu | right-click a tab | 200 wide menu | Rename, New tab, Close, each with its icon and key. | Runs the item. |
 | Terminal menu | right-click a pane | 220 wide menu | Rename, Split right, Split down, Zoom; "Send right-clicks to pane" or "Use Herdr right-click menu"; "Send back to <parent>" for a sub-agent kept in a pane; Close pane. Pane items are left out for a terminal outside a tab. | Runs the item on that pane. |
-| Settings | `cmd-,`, `ctrl-g c` | 520 wide dialog | `settings.json`, `keys.json`, `programs.json` and the theme's file (when the theme came from the home's `themes/`, or the settings name one that isn't built in), each with its path; what is wrong with the files now; "Show the home folder". | Opens the file in a new tab running `$EDITOR`, else Neovim; the window follows the saved file. The last row shows the home in Finder. |
+| Settings | `cmd-,`, `ctrl-g c` | 520 wide dialog | `settings.json`, `keys.json`, `programs.json` and the theme's file (when the theme came from the home's `themes/`, or the settings name one that isn't built in), each with its path; what is wrong with the files now; "Machines"; "Show the home folder". | Opens the file in a new tab running `$EDITOR`, else Neovim; the window follows the saved file. "Machines" opens the Machines dialog. The last row shows the home in Finder. |
 | Keys help | `cmd-/` | 640 × 520 dialog | `docs/keys.md` "Keys help". | — |
 | Sort menu | the sidebar's sort button | under that button, in the sidebar's own frame (`view::sidebar`) | The sorts, the current one checked. | Sorts the Agents list. |
 | Agent-jump bar | `ctrl-;` | 360 × 32, 6 from the top (8 window points at least) | No rows: "JUMP", the labels it takes ("1–9 · 0 · a s d · Esc"), the letter typed so far; the sidebar's rows show their labels, bright (`docs/sidebar.md`). | No Enter: a whole label focuses its row. |
+| Machine filter | `ctrl-g /`, the sidebar's monitor button | 340 wide, 40 from the top, ≤ 0.5 | "All machines", this computer, each machine: a checkbox, "offline", the agent count, "⏎ only" on the cursor's row. J/K move too; Space or a click shows or hides one. | Shows only that machine (or all) and closes. |
+| Machines | the palette, the settings dialog's Machines row | 520 wide dialog | This computer and each machine: its line, hc version and what it needs run; "Add a machine". | Opens the machine's menu (Connect now, Copy <command>, Rename, Remove), or the add dialog. |
+| Add a machine | the palette, the Machines dialog | 560 wide dialog | A `user@host` field over the ssh config's hosts not added yet, then "Add <typed>". A row says when it's connecting and what went wrong. | Adds the machine and stays open; copies `hc machine add <target>` when it needs a terminal. |
 
 Menus show each item's `global` key, as the keys help lists it (single keys before sequences).
 "Send right-clicks to pane" sets the terminal's `herdr.right-click=program` label, which Herdr
@@ -141,7 +144,8 @@ the name only in the rename prompt, as its starting value.
 `just snap <scene>`: `shell-palette`, `shell-palette-typed`, `shell-picker`,
 `shell-picker-earlier`, `shell-space-picker`, `shell-space-picker-typed`, `shell-new-space`,
 `shell-new-space-typed`, `shell-pr-finder`, `shell-pr-finder-typed`, `shell-prompt`,
-`shell-confirm`, `shell-tab-menu`, `shell-terminal-menu`, `shell-settings`, `shell-keys-help`.
+`shell-confirm`, `shell-tab-menu`, `shell-terminal-menu`, `shell-settings`, `shell-keys-help`,
+`shell-machine-filter`, `shell-machines`, `shell-machine-add`.
 The picker scenes run on `fixtures::busy_core`: agents in other spaces, one that needs you, a
 working one with a sub-agent, and a quiet space. The new-space scenes run on
 `fixtures::folders_core`, whose machine answers the folder lookups; the PR finder's on

@@ -15,6 +15,8 @@ use crate::view::overlay;
 pub struct Item {
     pub el: El,
     pub pick: Option<usize>,
+    /// A press shows or hides the row (Space) instead of choosing it (the machine filter).
+    pub toggles: bool,
 }
 
 impl Item {
@@ -22,11 +24,24 @@ impl Item {
         Item {
             el,
             pick: Some(pick),
+            toggles: false,
+        }
+    }
+
+    /// A row a press toggles.
+    pub fn toggle(el: El, pick: usize) -> Item {
+        Item {
+            toggles: true,
+            ..Item::row(el, pick)
         }
     }
 
     pub fn head(el: El) -> Item {
-        Item { el, pick: None }
+        Item {
+            el,
+            pick: None,
+            toggles: false,
+        }
     }
 }
 
@@ -84,11 +99,19 @@ pub fn view(s: &State, key: &str, items: Vec<Item>, shown: usize, more: More) ->
         .skip(top)
         .take(shown)
         .map(|item| match item.pick {
-            Some(i) => item
-                .el
-                .cursor(rune::Cursor::Pointer)
-                .hover(Color::WHITE.alpha(0.04))
-                .on_press_tx(move |s: &mut State, tx| s.pick_row(i, tx)),
+            Some(i) => {
+                let toggles = item.toggles;
+                item.el
+                    .cursor(rune::Cursor::Pointer)
+                    .hover(Color::WHITE.alpha(0.04))
+                    .on_press_tx(move |s: &mut State, tx| {
+                        if toggles {
+                            s.toggle_row(i, tx)
+                        } else {
+                            s.pick_row(i, tx)
+                        }
+                    })
+            }
             None => item.el,
         });
     col()

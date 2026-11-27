@@ -9,6 +9,7 @@ use crate::action::{Action, CopyAction, Direction, Edge, Popup, PopupAction, Spl
 use crate::effect::{Effect, Effects, Level, Pick, Request, TerminalCommand, Toast};
 use crate::folders::{self, Lookup, NewSpace};
 use crate::geometry;
+use crate::machines::{MachineAction, MachineCall};
 use crate::mode::{
     self, Confirm, Confirmed, CopyState, JumpPopup, ListPopup, Menu, Mode, PopupState, Prompt,
     Rename, Visual,
@@ -243,6 +244,8 @@ impl Model {
             }
             Action::EditFile(path) => self.edit_file(&path, fx),
             Action::RenamePaneOf(pane) => self.rename(Rename::Pane(pane)),
+            Action::Machine(action) => self.machine(action, fx),
+            Action::CopyText(text) => fx.push(Effect::Clipboard(text)),
             Action::Peek(address) => self.open_peek(&address, fx),
             Action::ClosePeek => self.peek = None,
             Action::KeepPeek => self.keep_peeked(fx),
@@ -850,6 +853,7 @@ impl Model {
                 .and_then(|t| t.root.find(id))
                 .filter(|n| n.is_pane())
                 .map(|n| n.title().unwrap_or_default().to_owned()),
+            Rename::Machine(name) => self.world.machine(Some(name)).and(Some(name.clone())),
         };
         if let Some(value) = value {
             self.open_popup(PopupState::Prompt(Prompt { rename, value }));
@@ -907,8 +911,9 @@ impl Model {
                     cursor: list.cursor,
                     query: list.query.clone(),
                 });
-                if how == Pick::Choose {
-                    // Closes first, so the popup can't take focus back from where it leads.
+                // Closes first, so the popup can't take focus back from where it leads. The add
+                // dialog stays: it shows the machine connecting, and what went wrong.
+                if how == Pick::Choose && list.popup != Popup::MachineAdd {
                     self.mode = Mode::Normal;
                 }
             }
@@ -919,6 +924,14 @@ impl Model {
                     Rename::Tab(tab) => Intent::RenameTab { tab, name },
                     Rename::Space(space) => Intent::RenameSpace { space, name },
                     Rename::Pane(pane) => Intent::RenamePane { pane, name },
+                    Rename::Machine(machine) => {
+                        self.mode = Mode::Normal;
+                        // A machine keeps its name when none is given.
+                        if !name.is_empty() && name != machine {
+                            fx.push(Effect::Machine(MachineCall::Rename { machine, to: name }));
+                        }
+                        return;
+                    }
                 };
                 self.mode = Mode::Normal;
                 self.edit(intent, fx);
@@ -928,9 +941,52 @@ impl Model {
                 self.mode = Mode::Normal;
                 match then {
                     Confirmed::CloseSpace(space) => self.close_space(&space, fx),
+                    Confirmed::RemoveMachine(machine) => {
+                        fx.push(Effect::Machine(MachineCall::Remove(machine)))
+                    }
                 }
             }
             _ => {}
+        }
+    }
+
+    /// A machine action from the Machines dialog or the add dialog: a call, or the prompt or
+    /// confirm dialog that leads to one. The dialog it came from is closed by the pick.
+    fn machine(&mut self, action: MachineAction, fx: &mut Effects) {
+        match action {
+            MachineAction::Menu(name) => {
+                let Some(view) = self
+                    .world
+                    .machine(Some(&name))
+                    .and_then(|m| m.status.clone())
+                else {
+                    return;
+                };
+                self.close_mode(fx);
+                self.open_popup(PopupState::Menu(crate::machines::machine_menu(&view)));
+            }
+            MachineAction::Connect(name) => fx.push(Effect::Machine(MachineCall::Connect(name))),
+            MachineAction::Add(target) => {
+                let target = target.trim();
+                if !target.is_empty() {
+                    fx.push(Effect::Machine(MachineCall::Add(target.to_owned())));
+                }
+            }
+            MachineAction::Rename(name) => {
+                self.close_mode(fx);
+                self.rename(Rename::Machine(name));
+            }
+            MachineAction::Remove(name) => {
+                if self.world.machine(Some(&name)).is_none() {
+                    return;
+                }
+                self.close_mode(fx);
+                self.open_popup(PopupState::Confirm(Confirm {
+                    title: "Remove machine?".into(),
+                    detail: format!("{name}: its terminals keep running there."),
+                    then: Confirmed::RemoveMachine(name),
+                }));
+            }
         }
     }
 

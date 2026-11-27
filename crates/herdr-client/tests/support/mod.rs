@@ -21,7 +21,17 @@ static NEXT: AtomicU32 = AtomicU32::new(0);
 pub struct IsolatedCore {
     hc: HcCommand,
     scratch: PathBuf,
+    session: String,
 }
+
+/// The scratch directories each core gets, by variable.
+const XDG: [(&str, &str); 5] = [
+    ("XDG_STATE_HOME", "state"),
+    ("XDG_CONFIG_HOME", "config"),
+    ("XDG_RUNTIME_DIR", "run"),
+    ("XDG_DATA_HOME", "data"),
+    ("XDG_CACHE_HOME", "cache"),
+];
 
 /// The `hc` to test with, or `None` to skip.
 fn test_hc() -> Option<PathBuf> {
@@ -64,19 +74,43 @@ impl IsolatedCore {
         }
         let session = format!("test-hfc{id}");
         assert!(session.starts_with("test-"));
-        hc = hc.env("HC_SESSION", session).env("SHELL", "/bin/sh");
-        for (var, dir) in [
-            ("XDG_STATE_HOME", "state"),
-            ("XDG_CONFIG_HOME", "config"),
-            ("XDG_RUNTIME_DIR", "run"),
-            ("XDG_DATA_HOME", "data"),
-            ("XDG_CACHE_HOME", "cache"),
-        ] {
+        hc = hc.env("HC_SESSION", &session).env("SHELL", "/bin/sh");
+        for (var, dir) in XDG {
             let path = scratch.join(dir);
             std::fs::create_dir_all(&path).unwrap();
             hc = hc.env(var, path);
         }
-        Some(IsolatedCore { hc, scratch })
+        Some(IsolatedCore {
+            hc,
+            scratch,
+            session,
+        })
+    }
+
+    /// A command that reaches this core as another machine, for
+    /// `hc machine add --via <it> --name <name>` on a second isolated core: like ssh, it runs
+    /// the shell line it is given, here under this core's session and scratch directories, with
+    /// this `hc` first on `PATH`. A fake second machine, on this computer.
+    pub fn via(&self) -> String {
+        let quote = |v: &str| format!("'{}'", v.replace('\'', r"'\''"));
+        let bin = self.hc.program().parent().unwrap_or(Path::new("/"));
+        let path = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let mut words = vec![
+            "env".to_owned(),
+            format!("PATH={}", quote(&path)),
+            format!("HC_SESSION={}", quote(&self.session)),
+            "SHELL=/bin/sh".to_owned(),
+        ];
+        for (var, dir) in XDG {
+            let dir = self.scratch.join(dir);
+            words.push(format!("{var}={}", quote(&dir.to_string_lossy())));
+        }
+        words.push("sh -c".to_owned());
+        words.join(" ")
     }
 
     pub fn transport(&self) -> Transport {

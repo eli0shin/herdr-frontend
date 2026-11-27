@@ -14,6 +14,7 @@
 //! - [`popups`]: what the pickers, the palette and the menus list, and what picking runs.
 //! - [`folders`]: the new-space picker's folders and their ranking.
 //! - [`prs`]: the PR finder's rows: which agents watch which PRs.
+//! - [`machines`]: the machine filter's rows, each machine's line and what it needs, adding one.
 //! - [`filter`]: Eli's filter matching, which the other typed filters use.
 //! - [`geometry`]: where panes sit, and which pane lies in a direction.
 //! - [`peek`]: a terminal in an overlay, its bar, and keeping it in a pane.
@@ -35,6 +36,7 @@ pub mod folders;
 pub mod geometry;
 pub mod help;
 pub mod keys;
+pub mod machines;
 pub mod mode;
 mod model;
 pub mod names;

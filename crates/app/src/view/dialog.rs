@@ -29,6 +29,10 @@ pub fn words(prompt: &Prompt) -> (&'static str, &'static str) {
         Rename::Tab(_) => ("Rename tab", "empty: its number"),
         Rename::Space(_) => ("Rename space", "empty: named after its folder"),
         Rename::Pane(_) => ("Rename pane", "empty: unnamed"),
+        Rename::Machine(_) => (
+            "Rename machine",
+            "addresses using the old name stop working",
+        ),
     }
 }
 

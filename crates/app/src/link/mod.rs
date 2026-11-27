@@ -18,15 +18,17 @@ pub use fake::{Fake, FakeCore, printed};
 pub use live::Live;
 
 use herdr_proto::methods::TerminalAttach;
-use herdr_proto::{CloseReason, Display, ErrorKind, RpcError, StreamCaps, Terminal};
+use herdr_proto::{CloseReason, Display, ErrorKind, Hello, RpcError, StreamCaps, Terminal};
 use herdr_shared::Round;
+use model::machines::MachineCall;
 use model::{Request, Token};
 
 /// What the core said, in order.
 #[derive(Clone, Debug, PartialEq)]
 pub enum News {
-    /// A connection is up. Its snapshot follows as a resynced [`model::Event::Terminals`].
-    Connected,
+    /// A connection is up, to the core that said this `hello` (`None` from a fake core). Its
+    /// snapshot follows as a resynced [`model::Event::Terminals`].
+    Connected(Option<Box<Hello>>),
     /// The connection dropped; the supervisor reconnects.
     Lost(String),
     /// A connect attempt failed; the next one comes on its own.
@@ -48,6 +50,11 @@ pub enum News {
     /// Files from [`Link::put`] landed beside a terminal: where, on its machine. Files that
     /// couldn't be sent are left out.
     Put { address: String, paths: Vec<String> },
+    /// A [`Link::machine`] call answered.
+    Machine {
+        call: MachineCall,
+        result: Result<(), RpcError>,
+    },
 }
 
 /// A stream the core attached.
@@ -106,6 +113,10 @@ pub trait Link {
     /// Sends files beside a terminal on its machine (`terminal.put`), off the UI thread; the
     /// answer is [`News::Put`].
     fn put(&mut self, address: &str, uploads: Vec<Upload>);
+
+    /// Adds, dials, renames or forgets a machine; the answer is [`News::Machine`], and the
+    /// machine list is read again right after.
+    fn machine(&mut self, call: MachineCall);
 }
 
 /// A file for [`Link::put`].
@@ -145,6 +156,7 @@ impl Link for Offline {
     fn send(&mut self, _address: &str, _out: Out) {}
     fn detach(&mut self, _address: &str) {}
     fn put(&mut self, _address: &str, _uploads: Vec<Upload>) {}
+    fn machine(&mut self, _call: MachineCall) {}
 }
 
 /// An error that isn't the core's own, in the shape the model reads: the layout or call is

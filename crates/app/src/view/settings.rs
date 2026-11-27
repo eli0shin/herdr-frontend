@@ -11,7 +11,7 @@ use rune::{El, col, row, text};
 
 use crate::State;
 use crate::config::{PROGRAMS, SETTINGS, THEMES};
-use crate::view::icons::{FILE, FOLDER};
+use crate::view::icons::{FILE, FOLDER, SERVER};
 use crate::view::list::{self, Item, More};
 use crate::view::overlay::{self, Place};
 
@@ -28,6 +28,8 @@ pub enum Row {
         name: String,
         about: &'static str,
     },
+    /// The Machines dialog.
+    Machines,
     Reveal(PathBuf),
 }
 
@@ -55,6 +57,7 @@ pub fn rows(s: &State) -> Vec<Row> {
             about,
         })
         .collect();
+    out.push(Row::Machines);
     out.push(Row::Reveal(home));
     out
 }
@@ -73,6 +76,11 @@ pub fn view(s: &State, list: &ListPopup) -> El {
                 Row::File { path, name, about } => {
                     (name.clone(), format!("{about} · {}", shown(path)), &FILE)
                 }
+                Row::Machines => (
+                    "Machines".to_owned(),
+                    "Status, add, rename and remove the machines reached over ssh".to_owned(),
+                    &SERVER,
+                ),
                 Row::Reveal(home) => ("Show the home folder".to_owned(), shown(home), &FOLDER),
             };
             Item::row(

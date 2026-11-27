@@ -14,8 +14,8 @@ state in `crates/app/src/state.rs`. `crates/app/tests/sidebar.rs` and the `shell
 
 - **Top row** (38 pt, drags the window): "Agents", the machine filter button (a monitor; "N
   hidden" in the working blue while machines are hidden), and the sort button (a clock for
-  priority, layers for grouped). The machine filter popup itself is ticket 028; until then the
-  button says "not yet".
+  priority, layers for grouped). The machine filter button opens the machine filter
+  (`docs/machines.md`).
 - **Sections.** Pinned agents first, under "Pinned". In the priority view, Needs you, Done,
   Working and Idle follow, each with a count. An agent sorts at its most urgent sub-agent's or
   worker's rank, then by its last state change, then by the change sequence. In the grouped view
@@ -131,9 +131,9 @@ its colors.
 - Times and the change sequence move when a build sees a new state. A state that comes and goes
   between two builds isn't stamped (Herdr app renders on every change; here the list is rebuilt
   after each batch of core news).
-- A sub-agent's `parent` is matched as given, else as the same id on the child's own machine. Full
-  normalization of remote parents (core id and host name prefixes, `herdr-core-protocol.md` §5)
-  comes with the machines ticket.
+- A sub-agent's `parent` is matched as given, then normalized (a machine named by its core's id
+  or host, or this core named by its own id or name, `docs/machines.md`), else as the same id on
+  the child's own machine.
 - Space colors of spaces on a machine whose layout hasn't been read yet are kept; `colors.js`
   drops every stored id `spaces()` doesn't return, so a slow machine's spaces lost their colors.
 - The mod's "old local pins" carry-over (pins kept in its `localStorage` from before pins were

@@ -241,6 +241,9 @@ pub struct List {
     pub empty: Option<Empty>,
     /// The space colors to keep, when they differ from what was stored.
     pub space_colors: Option<BTreeMap<String, String>>,
+    /// Every agent in a pane, hidden machines' too, counted by machine (`""` is this
+    /// computer): the machine filter's counts.
+    pub machines: BTreeMap<String, usize>,
     /// Every listed agent, workers too, in layout order, as the PR finder shows it.
     pub cards: Vec<Card>,
 }
@@ -551,13 +554,16 @@ struct TabInfo<'a> {
     named: bool,
 }
 
-/// The terminal that started `t`, among the terminals: as given, else the same id on `t`'s own
-/// machine (a remote record may name its machine by host name or core id,
-/// `herdr-core-protocol.md` §5).
+/// The terminal that started `t`, among the terminals: its address normalized to this core's
+/// names for machines ([`World::normalize`]), else the same id on `t`'s own machine (a bare id on
+/// a remote record).
 pub(crate) fn parent_of<'a>(world: &'a World, t: &'a Terminal) -> Option<&'a str> {
     let parent = t.parent.as_deref().filter(|p| !p.is_empty())?;
     if world.terminal(parent).is_some() {
         return Some(parent);
+    }
+    if let Some(found) = world.terminal(&world.normalize(parent)) {
+        return Some(found.address.as_str());
     }
     let id = parent.rsplit('/').next().unwrap_or(parent);
     let mine = match machine_of(&t.address) {
@@ -1141,6 +1147,10 @@ impl Tracker {
             }
         }
 
+        let mut machines = BTreeMap::new();
+        for a in &everyone {
+            *machines.entry(machine_key(a.address)).or_insert(0) += 1;
+        }
         let why = if everyone.is_empty() {
             Empty::NoAgents
         } else {
@@ -1157,6 +1167,7 @@ impl Tracker {
             empty,
             space_colors,
             cards,
+            machines,
         }
     }
 }

@@ -13,7 +13,7 @@ use herdr_proto::methods::{
     DocGetResult, DocSetResult, ExecResult, TerminalGet, TerminalKeep, TerminalKill, TerminalLabel,
     TerminalRun,
 };
-use herdr_proto::types::MachineView;
+use herdr_proto::types::{CoreInfo, MachineView};
 use herdr_proto::{Changes, CloseReason, RpcError, Terminal, TerminalSet};
 use herdr_shared::attention::Seen;
 use herdr_shared::{Alert, Raise};
@@ -137,6 +137,8 @@ pub enum Event {
     Terminals(TerminalUpdate),
     /// `machine.list`.
     Machines(Vec<MachineView>),
+    /// Who the connected core is (`hello.core`): a record's `parent` may name this machine by it.
+    Core(CoreInfo),
     DocRead {
         machine: Option<String>,
         result: Result<DocGetResult, RpcError>,
@@ -785,6 +787,7 @@ impl Model {
                 self.world.set_machines(&list);
                 self.scan = true;
             }
+            Event::Core(core) => self.world.set_core(core),
             Event::DocRead { machine, result } => {
                 let Some(m) = self.world.machine_mut(machine.as_deref()) else {
                     return;
