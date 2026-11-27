@@ -45,8 +45,8 @@ use herdr_proto::methods::TerminalAttach;
 use model::agents::{self, Sort, Tracker};
 use model::mode::PopupState;
 use model::{
-    Action, AppCommand, CopyAction, Effect, Event, Focus, Input, Level, Model, Pick, Popup,
-    PopupAction, TerminalAction, TerminalCommand, Toast, View,
+    Action, AppCommand, Effect, Event, Focus, Input, Level, Model, Pick, Popup, PopupAction,
+    TerminalAction, TerminalCommand, Toast, View,
 };
 use rune::{
     ClipboardContent, Drag, Family, ImageCache, Ime, KeyEvent, Phase, PointerButton, PointerEvent,
@@ -963,10 +963,8 @@ impl State {
                 self.not_yet(&Action::Open(list.popup));
                 self.step(self.now, Action::Popup(PopupAction::Close));
             }
-            model::Mode::Copy(_) => {
-                self.not_yet(&Action::CopyMode);
-                self.step(self.now, Action::Copy(CopyAction::Quit));
-            }
+            // Its bar draws (`view::copy`); the terminal's worker runs it.
+            model::Mode::Copy(_) => {}
             model::Mode::Normal | model::Mode::Prefix { .. } => {}
         }
     }
@@ -1448,13 +1446,11 @@ impl State {
             }
             TerminalCommand::Action(TerminalAction::SelectAll) => viewer.terminal.select_all(),
             TerminalCommand::Action(TerminalAction::Search) => {}
-            // Copy mode says "not yet" once, as it closes (`State::mode_changed`); it's ticket
-            // 020's.
-            TerminalCommand::CopyStart
-            | TerminalCommand::CopyMove(_)
-            | TerminalCommand::CopySelect(_)
-            | TerminalCommand::CopyYank
-            | TerminalCommand::CopyEnd => {}
+            // Copy mode runs on the terminal's own buffer, on its worker; a yank comes back as
+            // `Output::Selection`, for the clipboard.
+            TerminalCommand::CopyStart => viewer.terminal.copy_mode_start(),
+            TerminalCommand::Copy(command) => viewer.terminal.copy_mode(command),
+            TerminalCommand::CopyEnd => viewer.terminal.copy_mode_end(),
         }
     }
 

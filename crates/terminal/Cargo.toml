@@ -7,6 +7,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+copy-mode = { path = "../copy-mode" }
 # Ghostty's link pattern (`src/links.rs`) needs look-around, which `regex` lacks.
 fancy-regex = "0.20.2"
 ghostty-vt-sys = { path = "../ghostty-vt-sys" }

@@ -15,6 +15,7 @@
 //! | Menus | [`menu`] | at the pointer |
 //! | Sort menu | [`crate::view::sidebar`] | under the sidebar's sort button |
 //! | Agent-jump bar (`ctrl-;`) | [`jump`] | 360 × 32, 6 from the top (8 window points at least) |
+//! | Copy mode's bar (`ctrl-g [`) | [`crate::view::copy`] | 420 × 32, as the jump bar hangs |
 //! | Machine filter (`ctrl-g /`) | [`machines`] | 340 wide, 40 from the top |
 //! | Machines, Add a machine | [`machines`] | dialogs 520 and 560 wide |
 
@@ -140,6 +141,7 @@ pub fn focus_key(mode: &Mode) -> &'static str {
     match mode {
         Mode::Popup(state) if has_field(state) => overlay::FIELD,
         Mode::Popup(state) => box_key(state),
+        Mode::Copy(_) => crate::view::copy::KEY,
         _ => overlay::FIELD,
     }
 }

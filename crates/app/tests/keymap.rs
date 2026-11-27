@@ -382,12 +382,16 @@ fn an_open_help_keeps_the_keyboard_even_when_tab_tries_to_leave_it() {
 }
 
 #[test]
-fn copy_mode_says_not_yet_once_and_lets_go() {
+fn copy_mode_holds_the_keyboard_until_it_lets_go() {
     let (mut rt, fake) = runtime();
     ch(&mut rt, "⌃", 'g');
     ch(&mut rt, "", '[');
+    assert!(matches!(rt.state.model.mode(), Mode::Copy(_)));
+    assert!(toast_titles(&rt).is_empty(), "no not-yet toast");
+    ch(&mut rt, "", 'j');
+    assert!(typed(&fake, "t1").is_empty(), "copy mode took j");
+    ch(&mut rt, "", 'q');
     assert_eq!(*rt.state.model.mode(), Mode::Normal);
-    assert_eq!(toast_titles(&rt), ["Not yet: copy_mode isn't built yet"]);
     ch(&mut rt, "", 'j');
     assert_eq!(typed(&fake, "t1"), [b"j".to_vec()]);
 }

@@ -244,3 +244,44 @@ fn cmd_click_on_a_live_terminals_address_peeks_it() {
         "the click never reached the program"
     );
 }
+
+/// Copy mode follows the keyboard: with the peek open, it runs in the peeked terminal, its
+/// bar over the peek, and leaving gives the keyboard back to the peek.
+#[test]
+fn copy_mode_in_the_peek_runs_in_the_peeked_terminal() {
+    let (mut rt, fake) = runtime();
+    click(&mut rt, "sub-t20");
+    fake.output("t20", b"\x1bcpeeked text");
+    rt.state.settle();
+    frames(&mut rt, 3);
+    let ctrl = Mods {
+        ctrl: true,
+        ..Mods::default()
+    };
+    key(&mut rt, Key::Text("g".into()), ctrl);
+    key(&mut rt, Key::Text("[".into()), Mods::default());
+    match rt.state.model.mode() {
+        model::Mode::Copy(copy) => assert_eq!(copy.address, "t20"),
+        other => panic!("{other:?}"),
+    }
+    assert!(element(&rt, "copy-mode").is_some());
+    assert_eq!(focused(&rt).as_deref(), Some("copy-mode"));
+    let peeked = rt.state.viewers["t20"].pane.as_ref().unwrap();
+    assert!(
+        peeked.snapshot.copy.is_some(),
+        "the peeked terminal's copy mode"
+    );
+    let pane = rt.state.viewers["t1"].pane.as_ref().unwrap();
+    assert_eq!(pane.snapshot.copy, None, "not the pane's behind it");
+    for c in ["0", "v", "e"] {
+        key(&mut rt, Key::Text(c.into()), Mods::default());
+    }
+    let peeked = rt.state.viewers["t20"].pane.as_ref().unwrap();
+    assert_eq!(peeked.snapshot.screen[0].selection, Some((0, 5)));
+    key(&mut rt, Key::Escape, Mods::default());
+    key(&mut rt, Key::Escape, Mods::default());
+    assert_eq!(*rt.state.model.mode(), model::Mode::Normal);
+    assert_eq!(rt.state.model.peeked(), Some("t20"), "the peek stays open");
+    assert_eq!(focused(&rt).as_deref(), Some(PEEK_KEY));
+    assert!(typed(&fake, "t20").is_empty(), "no key reached the program");
+}

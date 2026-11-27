@@ -49,6 +49,7 @@ crates/
   herdr-proto/      pure: frame codec, JSON-RPC types, Event, TerminalSet::apply
   herdr-client/     I/O: Connection (hc connect / socket), threads, calls, attach, subscribe, Supervisor
   herdr-shared/     pure: lossless herdr-app Document, Mirror with CAS replay, labels, seen, attention, adoption
+  copy-mode/        pure: copy mode's Vim grammar, motions and text objects over a Buffer of rows
   terminal/         libghostty-vt wrapper, per-terminal worker, snapshots, input encoders, metrics
   model/            pure app state: spaces/tabs/pane trees from the mirror, focus, view state, Intents
   app/              Rune binary: views, keymap, scenes, headless tests, control CLI

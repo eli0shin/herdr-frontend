@@ -13,7 +13,7 @@ use crate::links;
 use crate::machines::{MachineAction, MachineCall};
 use crate::mode::{
     self, Confirm, Confirmed, CopyState, JumpPopup, ListPopup, Menu, Mode, PopupState, Prompt,
-    Rename, Visual,
+    Rename,
 };
 use crate::model::{EDITOR_LABEL, Launch, Model, NAVIGATE_TIMEOUT, Pending};
 use crate::popups;
@@ -1129,45 +1129,38 @@ impl Model {
             address: address.clone(),
             command: TerminalCommand::CopyStart,
         });
-        self.mode = Mode::Copy(CopyState {
-            address,
-            visual: None,
-        });
+        self.mode = Mode::Copy(CopyState::new(address));
     }
 
+    /// A named copy-mode command (`copy_mode.<name>`, Eli's `copy-mode.escape`): the keys it
+    /// stands for, through the grammar.
     fn copy(&mut self, action: CopyAction, fx: &mut Effects) {
-        let Mode::Copy(copy) = &mut self.mode else {
-            return;
-        };
-        let address = copy.address.clone();
-        let command = |command| Effect::Terminal {
-            address: address.clone(),
-            command,
-        };
-        match action {
-            CopyAction::SelectChars | CopyAction::SelectLines => {
-                let kind = if action == CopyAction::SelectChars {
-                    Visual::Chars
-                } else {
-                    Visual::Lines
-                };
-                // The same key again drops the selection.
-                copy.visual = (copy.visual != Some(kind)).then_some(kind);
-                fx.push(command(TerminalCommand::CopySelect(copy.visual)));
+        for &key in mode::copy_keys(action) {
+            if !matches!(self.mode, Mode::Copy(_)) {
+                break;
             }
-            CopyAction::Escape if copy.visual.is_some() => {
-                copy.visual = None;
-                fx.push(command(TerminalCommand::CopySelect(None)));
-            }
-            CopyAction::Yank => {
-                if copy.visual.is_some() {
-                    fx.push(command(TerminalCommand::CopyYank));
-                }
-                self.close_mode(fx);
-            }
-            CopyAction::Quit | CopyAction::Escape => self.close_mode(fx),
-            motion => fx.push(command(TerminalCommand::CopyMove(motion))),
+            self.copy_key(key, fx);
         }
+    }
+
+    /// A key in copy mode, through its Vim grammar: the commands it makes go to the terminal,
+    /// and a yank, `q`, Ctrl-C or the last Esc ends copy mode after them. False for a key copy
+    /// mode doesn't read, which the window's own bindings may take.
+    pub(crate) fn copy_key(&mut self, key: copy_mode::Key, fx: &mut Effects) -> bool {
+        let Mode::Copy(copy) = &mut self.mode else {
+            return false;
+        };
+        let step = copy.vim.key(key);
+        for command in step.commands {
+            fx.push(Effect::Terminal {
+                address: copy.address.clone(),
+                command: TerminalCommand::Copy(command),
+            });
+        }
+        if step.leave {
+            self.close_mode(fx);
+        }
+        step.taken
     }
 }
 

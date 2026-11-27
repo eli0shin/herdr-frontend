@@ -78,6 +78,8 @@ impl TerminalPane {
     /// a second time, as the peek draws one whose pane is on screen too.
     pub fn view_as(&self, key: &str, focused: bool, face: &Face, look: &Look) -> El {
         let snapshot = &self.snapshot;
+        // Copy mode's cursor draws solid while its bar has the keyboard.
+        let cursor_focused = focused || snapshot.copy.is_some();
         let (cell_w, cell_h) = face.cell_pt();
         let (rows, atlas, spill) = {
             let mut cache = self.rows.borrow_mut();
@@ -115,7 +117,7 @@ impl TerminalPane {
                     .child(screen)
                     .children(spill_view(&spill, face, grid_w, grid_h))
                     .children(atlas.iter().map(|(row, cell)| cell.view(*row, face)))
-                    .children(cursor::overlay(snapshot, focused, face, look))
+                    .children(cursor::overlay(snapshot, cursor_focused, face, look))
                     .children(self.ime(focused, face)),
             )
     }

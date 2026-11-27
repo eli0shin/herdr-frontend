@@ -74,22 +74,50 @@ half-saved file. At start, a home without a key file gets the defaults written t
   `popup.page_down`), Enter and Esc; the picker also Ctrl+D. A context menu (the tab menu, the
   terminal menu) reads ↑ and ↓ (wrapping), Enter and Esc, and holds every other key; prompts and
   confirm dialogs read Enter and Esc. What each popup lists is `docs/popups.md`.
-- **Copy.** The file's `copy` keys come first, then copy mode's own keys, then one-key global
-  bindings.
+- **Copy** (`ctrl-g [`). The file's `copy` keys come first, then Cmd+C (copy and leave), then
+  copy mode's Vim grammar (`crates/copy-mode`, `model::mode::vim_key`), then one-key global
+  bindings for keys the grammar doesn't read (Cmd and Alt chords, Ctrl-H/J/K/L). `tab.close` and
+  `pane.close` leave copy mode instead. A key the file binds to `copy_mode.<name>` stands for the
+  keys that name (`copy_mode.top` is `g g`, `copy_mode.yank` is Enter). Copy mode holds the
+  keyboard: no key reaches the program. The keys:
+
+  | Keys | What |
+  | --- | --- |
+  | `h` `j` `k` `l`, arrows, Backspace, Ctrl-N/P, with a count (`5j`) | Cells and rows; `j`/`k` keep the column |
+  | `w` `b` `e` `ge`, `W` `B` `E` `gE` | Words (Vim's character classes), across soft wraps |
+  | `0` / Home, `^`, `$` / End, `\|`, `+`, `-` | The row's start, first text, last text; a column; the next or previous row's first text |
+  | `gg`, `G`, `5G`, `50%` | The top, the last row with text, row 5, halfway down |
+  | `H` `M` `L` | The view's top, middle and bottom |
+  | `f` `F` `t` `T` and a character, `;` `,` | Along the line, and again |
+  | `%`, `{` `}` | The matching bracket; the previous or next empty line |
+  | Ctrl-U/D, Ctrl-B/F or Page Up/Down, Ctrl-Y/E | Half a view, a view, a row: the view and the cursor |
+  | `/` `?` and a query, Enter; `n` `N`; `*` `#` | Search down or up (literal, ASCII letters either case), again, the word under the cursor |
+  | `m` and a letter; `'` or `` ` `` and a letter; `''` | Set a mark; go to its row or its cell; back before the last jump |
+  | `v` or Space, `V`, Ctrl-V; `o` | Select characters, lines, a block (the same key again drops it); the other end |
+  | `iw` `aw` `iW` `aW` `ip` `ap` `i"` `a'` `` i` `` `i(` `a[` `i{` `a<` `ib` `aB` | Text objects, in a selection or after `y` |
+  | `y`, Enter, Cmd+C | Copy the selection and leave (Enter with nothing selected just leaves) |
+  | `yy` / `Y`, `y` and a motion or object (`yw`, `y$`, `yiw`, `y/foo`) | Copy rows, or what the motion or object covers, and leave |
+  | Esc | Cancel a key part-way through, else drop the selection, else leave |
+  | `q`, Ctrl-C, a press beside the bar | Leave without copying |
+
+  The bar (420 × 32 at the top) says COPY, or VISUAL, VISUAL LINE or VISUAL BLOCK, then the hints,
+  the `/` prompt or what the last command said, the keys typed so far, and the cursor's row of
+  all the rows. How it runs on the terminal's buffer is `research/terminal-rendering.md` §6.
+  Scene: `shell-copy-mode`.
 
 ## Not yet
 
 Every action goes through `model::step`. An action whose feature isn't built yet shows a
-"Not yet" toast that names the command. A popup or copy mode the window doesn't draw yet closes
-at once with that toast, so it can't hold the keyboard unseen. The window draws the keys help,
-the palette, the pickers (the new-space folder picker and the PR finder too), the prompt and
-confirm dialogs, the menus, the settings dialog (`docs/popups.md`), the sidebar's sort menu, the
-agent-jump bar (`docs/sidebar.md`) and the machine popups (`docs/machines.md`). The
-terminal's sends, paste, copy and paste-image run in the terminal that has the keyboard: the
-peeked one while a peek is open (`docs/review-and-peek.md`), else the focused pane's
-(`docs/research/terminal-rendering.md` §3). Find (`cmd-f`, the terminal's find bar) and select
-all run in the focused pane's terminal (§2 "What herdr-frontend does (ticket 019)"); in the
-peek, find says "not yet".
+"Not yet" toast that names the command. A popup the window doesn't draw yet closes at once with
+that toast, so it can't hold the keyboard unseen. The window draws the keys help, the palette,
+the pickers (the new-space folder picker and the PR finder too), the prompt and confirm
+dialogs, the menus, the settings dialog (`docs/popups.md`), the sidebar's sort menu, the
+agent-jump bar (`docs/sidebar.md`), the machine popups (`docs/machines.md`) and copy mode's bar
+(above). The terminal's sends, paste, copy, paste-image, select all and copy mode run in the
+terminal that has the keyboard (`Model::keyboard_terminal`): the peeked one while a peek is open
+(`docs/review-and-peek.md`), else the focused pane's (`docs/research/terminal-rendering.md` §3).
+Find (`cmd-f`, the terminal's find bar, §2 "What herdr-frontend does (ticket 019)") is the one
+exception: it runs in the focused pane's terminal, and in the peek it says "not yet".
 
 ## Keys help
 

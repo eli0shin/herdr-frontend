@@ -5,6 +5,7 @@ members = [
     "crates/herdr-proto",
     "crates/herdr-client",
     "crates/herdr-shared",
+    "crates/copy-mode",
     "crates/terminal",
     "crates/model",
     "crates/app",

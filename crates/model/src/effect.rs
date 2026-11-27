@@ -7,9 +7,8 @@ use herdr_proto::methods::{
 };
 use herdr_shared::{Raise, Round};
 
-use crate::action::{Action, AppCommand, CopyAction, Popup, TerminalAction};
+use crate::action::{Action, AppCommand, Popup, TerminalAction};
 use crate::control::CallId;
-use crate::mode::Visual;
 
 /// Matches a call's reply to the request that made it ([`crate::Event::Reply`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -36,12 +35,9 @@ pub enum TerminalCommand {
     Action(TerminalAction),
     /// Copy mode starts at the program's cursor.
     CopyStart,
-    /// A copy-mode motion, to run on the terminal's own buffer.
-    CopyMove(CopyAction),
-    /// Start selecting from the cursor (characters or lines), or drop the selection.
-    CopySelect(Option<Visual>),
-    /// Copy the selection to the clipboard.
-    CopyYank,
+    /// A copy-mode command (a motion, a selection, a yank), to run on the terminal's own
+    /// buffer.
+    Copy(copy_mode::Command),
     /// Copy mode ends: clear the selection and scroll to the bottom.
     CopyEnd,
 }

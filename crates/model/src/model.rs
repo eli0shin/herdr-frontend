@@ -1378,11 +1378,22 @@ impl Model {
             }
             Mode::Copy(state) => {
                 self.mode = Mode::Copy(state);
-                let action = self
+                // The key file's copy keys, then Cmd+C, then the Vim grammar, then the
+                // window's one-key bindings. Copy mode holds the keyboard: no key reaches the
+                // terminal.
+                if let Some(action) = self
                     .bound(Context::Copy, press)
                     .or_else(|| press.first(mode::copy_key))
-                    .or_else(|| self.global_key(press));
-                if let Some(action) = action {
+                {
+                    self.run(action, fx);
+                    return;
+                }
+                if let Some(key) = mode::vim_key(press)
+                    && self.copy_key(key, fx)
+                {
+                    return;
+                }
+                if let Some(action) = self.global_key(press) {
                     self.run(action, fx);
                 }
             }

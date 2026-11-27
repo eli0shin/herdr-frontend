@@ -16,6 +16,7 @@ use crate::input::{
     KeyAction, KeyEvent, Mods, MouseAction, MouseEvent, OptionAsAlt, PasteRejected,
 };
 
+mod copy;
 mod find;
 mod link;
 mod select;
@@ -231,6 +232,8 @@ pub struct Vt {
     /// The cell under the pointer while Cmd is held, and the link there's cells.
     hovered: Option<(u16, u16)>,
     underlined: Vec<Span>,
+    /// Copy mode, while it runs.
+    copying: Option<copy::Copying>,
 }
 
 impl Vt {
@@ -353,6 +356,7 @@ impl Vt {
                 shown: Vec::new(),
                 hovered: None,
                 underlined: Vec::new(),
+                copying: None,
             };
             vt.set_scrollback(config.scrollback);
             vt.set_theme(&config.theme);
@@ -368,6 +372,7 @@ impl Vt {
         // SAFETY: `term` is live and `bytes` is readable for its length. Callbacks run during
         // the call and only touch `effects`.
         unsafe { ghostty_terminal_vt_write(self.term, bytes.as_ptr(), bytes.len()) };
+        self.copy_keep_pinned();
     }
 
     /// The bytes the terminal wrote back to the program since the last call: query replies,
@@ -502,6 +507,7 @@ impl Vt {
             )
         };
         ok(result, "ghostty_terminal_scroll_viewport");
+        self.copy_pin();
     }
 
     /// Resets the terminal as RIS would. Ends a render hold.
@@ -559,6 +565,7 @@ impl Vt {
         // cell data are read before the next update, and every out pointer has its key's type.
         unsafe {
             self.refresh_find();
+            self.refresh_copy_search();
             let state = self.effects().state;
             if self.effects().hold.is_none() {
                 self.effects_mut().meta = update(state, self.term);
@@ -655,7 +662,7 @@ impl Vt {
                 ),
                 "RENDER_STATE_DATA_CURSOR",
             );
-            let cursor = Cursor {
+            let program_cursor = Cursor {
                 position: raw_cursor
                     .viewport_has_value
                     .then_some((raw_cursor.viewport_x, raw_cursor.viewport_y)),
@@ -670,6 +677,8 @@ impl Vt {
                     _ => CursorStyle::Block,
                 },
             };
+            // In copy mode its cursor is the one that shows.
+            let cursor = self.copy_cursor().unwrap_or(program_cursor);
             ok(
                 ghostty_render_state_clean(state),
                 "ghostty_render_state_clean",
@@ -724,6 +733,7 @@ impl Vt {
                 pwd: terminal_string(self.term, GHOSTTY_TERMINAL_DATA_PWD),
                 find: self.found(),
                 link: self.underlined.clone(),
+                copy: self.copy_view(),
             }
         }
     }
@@ -1031,6 +1041,9 @@ impl Drop for Vt {
         unsafe {
             if let Some(finder) = &mut self.finder {
                 finder.free();
+            }
+            if let Some(copying) = &mut self.copying {
+                copying.free();
             }
             self.selector.free(self.term);
             ghostty_mouse_event_free(self.mouse_event);

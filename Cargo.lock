@@ -680,6 +680,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
+name = "copy-mode"
+version = "0.0.1"
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1718,6 +1722,7 @@ name = "model"
 version = "0.0.1"
 dependencies = [
  "base64",
+ "copy-mode",
  "herdr-proto",
  "herdr-shared",
  "serde",
@@ -3561,6 +3566,7 @@ dependencies = [
 name = "terminal"
 version = "0.0.1"
 dependencies = [
+ "copy-mode",
  "fancy-regex",
  "ghostty-vt-sys",
  "objc2-core-foundation",

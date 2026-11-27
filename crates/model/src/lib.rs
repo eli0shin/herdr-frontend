@@ -54,6 +54,7 @@ pub use action::{
     Action, AppCommand, CopyAction, Direction, Edge, Popup, PopupAction, Split, TerminalAction,
 };
 pub use control::{Call, CallId};
+pub use copy_mode;
 pub use effect::{Effect, Effects, Focus, Level, Pick, Request, TerminalCommand, Toast, Token};
 pub use geometry::{Divider, Geometry, Rect};
 pub use keys::{

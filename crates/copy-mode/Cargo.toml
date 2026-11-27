@@ -1,0 +1,9 @@
+[package]
+name = "copy-mode"
+description = "Pure copy mode: the Vim grammar, motions and text objects over a terminal's text"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]

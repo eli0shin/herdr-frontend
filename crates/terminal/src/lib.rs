@@ -47,8 +47,8 @@ pub use input::{
     PasteRejected, SelectAction, SelectEvent, encode_focus,
 };
 pub use snapshot::{
-    ActiveScreen, Cell, CellFlags, Colors, Cursor, CursorStyle, Dirty, Found, Grapheme, Match,
-    Modes, Rgb, Row, RowId, Scrollbar, Snapshot, Span, Underline, Width,
+    ActiveScreen, Cell, CellFlags, Colors, CopyView, Cursor, CursorStyle, Dirty, Found, Grapheme,
+    Match, Modes, Rgb, Row, RowId, Scrollbar, Snapshot, Span, Underline, Width,
 };
 pub use vt::{
     AUTOSCROLL_EVERY, ClipboardLocation, ColorScheme, Config, Event, Link, Progress, Scroll,
@@ -115,6 +115,9 @@ enum Request {
         x: f32,
         y: f32,
     },
+    CopyStart,
+    CopyRun(copy_mode::Command),
+    CopyEnd,
     /// The UI took the snapshot in the handoff and the worker has a newer frame waiting.
     Publish,
     /// Snapshot everything handled so far, now, and empty the handoff.
@@ -298,6 +301,23 @@ impl Terminal {
     /// to copy).
     pub fn copy(&self, or_key: Option<KeyEvent>) {
         self.send(Request::Copy(or_key));
+    }
+
+    /// Starts copy mode at the program's cursor (`docs/research/terminal-rendering.md` §6).
+    /// Snapshots then carry its cursor and [`Snapshot::copy`].
+    pub fn copy_mode_start(&self) {
+        self.send(Request::CopyStart);
+    }
+
+    /// Runs a copy-mode command on the terminal's buffer. A yank comes out as
+    /// [`Output::Selection`].
+    pub fn copy_mode(&self, command: copy_mode::Command) {
+        self.send(Request::CopyRun(command));
+    }
+
+    /// Leaves copy mode: the selection goes and the view returns to the bottom.
+    pub fn copy_mode_end(&self) {
+        self.send(Request::CopyEnd);
     }
 
     /// The newest frame, if there is one the UI hasn't taken. Call it once per frame.
@@ -559,6 +579,21 @@ impl Worker {
                     (None, None) => {}
                 }
                 false
+            }
+            Request::CopyStart => {
+                self.vt.copy_start();
+                true
+            }
+            Request::CopyRun(command) => {
+                if let Some(text) = self.vt.copy_run(&command) {
+                    self.out(Output::Selection(text));
+                }
+                true
+            }
+            Request::CopyEnd => {
+                let was = self.vt.copying();
+                self.vt.copy_end();
+                was
             }
             Request::Publish | Request::Stop => false,
             Request::SnapshotNow(reply) => {
