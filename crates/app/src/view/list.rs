@@ -57,13 +57,27 @@ pub fn follow(picks: &[Option<usize>], cursor: usize, top: usize, shown: usize) 
     top
 }
 
-/// The items from the window's first, `shown` of them, each row picking itself on a press. With
-/// `more`, "↑ N more" and "↓ N more" say what is out of view (the space picker's notes).
-pub fn view(s: &State, key: &str, items: Vec<Item>, shown: usize, more: bool) -> El {
+/// Which notes say what is out of view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum More {
+    None,
+    /// "↑ N more" and "↓ N more" (the space picker).
+    Both,
+    /// "↓ N more" only (the new-space picker, the PR finder).
+    Below,
+}
+
+/// The items from the window's first, `shown` of them, each row picking itself on a press,
+/// with `more`'s notes.
+pub fn view(s: &State, key: &str, items: Vec<Item>, shown: usize, more: More) -> El {
     let total = items.len();
     let top = s.list_top.min(total.saturating_sub(shown));
-    let above = top;
-    let below = total.saturating_sub(top + shown);
+    let above = if more == More::Both { top } else { 0 };
+    let below = if more == More::None {
+        0
+    } else {
+        total.saturating_sub(top + shown)
+    };
     let note = |text: String| overlay::note(s, text).px(14.0).h(20.0).items_center();
     let rows = items
         .into_iter()
@@ -81,9 +95,9 @@ pub fn view(s: &State, key: &str, items: Vec<Item>, shown: usize, more: bool) ->
         .key(key)
         .w_full()
         .min_h(0.0)
-        .children((more && above > 0).then(|| note(format!("↑ {above} more"))))
+        .children((above > 0).then(|| note(format!("↑ {above} more"))))
         .children(rows)
-        .children((more && below > 0).then(|| note(format!("↓ {below} more"))))
+        .children((below > 0).then(|| note(format!("↓ {below} more"))))
         .on_wheel(|s: &mut State, e, tx| s.list_wheel(e.dy, tx))
 }
 

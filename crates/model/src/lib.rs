@@ -12,7 +12,9 @@
 //! - [`names`]: what tabs are called on screen, and the tab bar's pills.
 //! - [`mode`]: who has the keyboard: normal, a prefix sequence, a popup, copy mode.
 //! - [`popups`]: what the pickers, the palette and the menus list, and what picking runs.
-//! - [`filter`]: Eli's filter matching, which every typed filter uses.
+//! - [`folders`]: the new-space picker's folders and their ranking.
+//! - [`prs`]: the PR finder's rows: which agents watch which PRs.
+//! - [`filter`]: Eli's filter matching, which the other typed filters use.
 //! - [`geometry`]: where panes sit, and which pane lies in a direction.
 //! - [`peek`]: a terminal in an overlay, its bar, and keeping it in a pane.
 //! - [`review`]: the review view, `cmd-r`.
@@ -29,6 +31,7 @@ pub mod agents;
 pub mod control;
 pub mod effect;
 pub mod filter;
+pub mod folders;
 pub mod geometry;
 pub mod help;
 pub mod keys;
@@ -37,6 +40,7 @@ mod model;
 pub mod names;
 pub mod peek;
 pub mod popups;
+pub mod prs;
 pub mod review;
 pub mod shell;
 pub mod view;

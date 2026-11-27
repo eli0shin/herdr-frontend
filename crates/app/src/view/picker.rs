@@ -15,7 +15,7 @@ use rune::{Color, El, col, el, row, text};
 use crate::State;
 use crate::config::theme::Rgba;
 use crate::view::icons::SEARCH;
-use crate::view::list::{self, Item};
+use crate::view::list::{self, Item, More};
 use crate::view::overlay::{self, Place};
 
 pub const PLACE: Place = Place::Top {
@@ -203,5 +203,5 @@ pub fn view(s: &State, list: &ListPopup) -> El {
             Some(&SEARCH),
             None,
         ))
-        .child(list::view(s, "picker-rows", items, SHOWN, false).mb(6.0))
+        .child(list::view(s, "picker-rows", items, SHOWN, More::None).mb(6.0))
 }

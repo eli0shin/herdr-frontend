@@ -11,7 +11,7 @@ use model::popups::{self, SpaceRow};
 use rune::{El, col, el, row, text};
 
 use crate::State;
-use crate::view::list::{self, Item};
+use crate::view::list::{self, Item, More};
 use crate::view::overlay::{self, Place};
 
 pub const PLACE: Place = Place::Top {
@@ -87,6 +87,6 @@ pub fn view(s: &State, list: &ListPopup) -> El {
             Some(overlay::note(s, "↑/↓ · Enter · Esc")),
         ))
         .child(overlay::field(s, "Go to space…", None, None))
-        .child(list::view(s, "space-rows", items, SHOWN, true))
+        .child(list::view(s, "space-rows", items, SHOWN, More::Both))
         .children(empty)
 }

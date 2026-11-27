@@ -14,7 +14,7 @@ use rune::{El, col, row, text};
 
 use crate::State;
 use crate::view::icons::COMMAND;
-use crate::view::list::{self, Item};
+use crate::view::list::{self, Item, More};
 use crate::view::overlay::{self, Place};
 
 pub const PLACE: Place = Place::Top {
@@ -96,7 +96,7 @@ pub fn view(s: &State, list: &ListPopup) -> El {
         .px(16.0)
         .py(14.0)
     } else {
-        list::view(s, "palette-rows", items, SHOWN, false).mb(6.0)
+        list::view(s, "palette-rows", items, SHOWN, More::None).mb(6.0)
     };
     col()
         .w_full()

@@ -22,8 +22,22 @@ pub struct Core {
     pub down: Vec<Option<String>>,
     /// The app clock, in seconds, passed with every step.
     pub now: f64,
-    /// What every `machine.exec` answers.
+    /// What every `machine.exec` answers, but those in `exec_by`.
     pub exec: Result<ExecResult, RpcError>,
+    /// What a `machine.exec` of this argv answers.
+    pub exec_by: BTreeMap<Vec<String>, Result<ExecResult, RpcError>>,
+    /// `machine.exec` calls left unanswered (the answers are held back).
+    pub exec_held: bool,
+}
+
+/// A `machine.exec` result that exited 0 and printed `stdout`.
+pub fn printed(stdout: &str) -> Result<ExecResult, RpcError> {
+    use base64::Engine;
+    Ok(ExecResult {
+        code: Some(0),
+        stdout: base64::engine::general_purpose::STANDARD.encode(stdout),
+        ..Default::default()
+    })
 }
 
 /// A `machine.exec` result that exited with `code`.
@@ -59,6 +73,8 @@ impl Core {
             down: Vec::new(),
             now: 0.0,
             exec: exited(0),
+            exec_by: BTreeMap::new(),
+            exec_held: false,
         }
     }
 
@@ -282,8 +298,19 @@ pub fn run_effects(m: &mut Model, core: &mut Core, effects: Vec<Effect>) -> Vec<
                     token,
                     request: request @ Request::Exec(_),
                 } => {
+                    let argv = match &request {
+                        Request::Exec(e) => e.argv.clone(),
+                        _ => unreachable!(),
+                    };
                     core.calls.push(request);
-                    let result = core.exec.clone();
+                    if core.exec_held {
+                        continue;
+                    }
+                    let result = core
+                        .exec_by
+                        .get(&argv)
+                        .cloned()
+                        .unwrap_or_else(|| core.exec.clone());
                     queue.push_back(Event::Executed { token, result }.into());
                 }
                 Effect::Call { token, request } => {

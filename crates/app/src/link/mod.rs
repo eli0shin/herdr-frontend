@@ -14,7 +14,7 @@
 mod fake;
 mod live;
 
-pub use fake::{Fake, FakeCore};
+pub use fake::{Fake, FakeCore, printed};
 pub use live::Live;
 
 use herdr_proto::methods::TerminalAttach;

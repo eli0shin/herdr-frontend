@@ -597,6 +597,22 @@ pub struct ExecResult {
     pub extra: Extra,
 }
 
+impl ExecResult {
+    /// What it wrote to stdout, as text (invalid UTF-8 replaced); empty when it isn't base64.
+    pub fn stdout_text(&self) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(self.stdout.as_bytes())
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_default()
+    }
+
+    /// It ran to the end and exited 0.
+    pub fn succeeded(&self) -> bool {
+        self.code == Some(0) && !self.timed_out
+    }
+}
+
 // Files.
 
 /// `file.read`.
@@ -761,6 +777,21 @@ pub struct SubscribeResult {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn exec_output_reads_as_text() {
+        let r: ExecResult =
+            serde_json::from_value(json!({"code": 0, "stdout": "L2EKL2IK"})).unwrap();
+        assert_eq!(r.stdout_text(), "/a\n/b\n");
+        assert!(r.succeeded());
+        let bad = ExecResult {
+            stdout: "not base64!".into(),
+            code: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(bad.stdout_text(), "");
+        assert!(!bad.succeeded());
+    }
 
     #[test]
     fn defaults_are_not_sent() {

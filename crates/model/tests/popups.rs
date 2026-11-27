@@ -579,3 +579,266 @@ fn settings_files_open_in_a_new_tab_running_the_editor() {
         "after the selected one, shown"
     );
 }
+
+// ---- The new-space folder picker (`cmd-n`, §11) ----------------------------------------------
+
+fn argv(words: &[&str]) -> Vec<String> {
+    words.iter().map(|w| (*w).to_owned()).collect()
+}
+
+const ZOXIDE: &[&str] = &["zoxide", "query", "-l"];
+
+fn repos_argv() -> Vec<String> {
+    argv(&["sh", "-c", model::folders::REPOS_CONFIG])
+}
+
+/// The picker's folders, as shown: `~/…` paths and tags.
+fn folder_rows(m: &model::Model, query: &str) -> Vec<String> {
+    popups::new_space_rows(m, query)
+        .iter()
+        .map(|f| {
+            let shown = model::folders::display_path(&f.path, Some(HOME));
+            match f.source.tag() {
+                Some(tag) => format!("{shown} ({tag})"),
+                None => shown,
+            }
+        })
+        .collect()
+}
+
+/// `world()` whose zoxide knows two folders and whose repos config lists two more.
+fn world_with_folders() -> Core {
+    let mut core = world();
+    core.exec_by.insert(
+        argv(ZOXIDE),
+        printed("/home/me/code/api\n/home/me/code/one\n"),
+    );
+    core.exec_by.insert(
+        repos_argv(),
+        printed(r#"{"repos": [{"path": "/home/me/code/api"}, {"path": "/home/me/code/web/"}]}"#),
+    );
+    core
+}
+
+#[test]
+fn the_folder_picker_offers_where_you_are_then_zoxide_then_repos() {
+    let mut core = world_with_folders();
+    let mut m = connected(&mut core);
+    let fx = key(&mut m, &mut core, "cmd-n", false);
+    assert!(fx.iter().all(|e| !matches!(e, Effect::NotYet(_))));
+    assert_eq!(list(&m).popup, Popup::NewSpace);
+    assert_eq!(
+        core.execs(),
+        [(argv(ZOXIDE), None), (repos_argv(), None)],
+        "this computer's lookups, and its home is known"
+    );
+    let timeouts: Vec<Option<f64>> = core
+        .calls
+        .iter()
+        .filter_map(|c| match c {
+            Request::Exec(e) => Some(e.timeout),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(timeouts, [Some(5.0), Some(5.0)]);
+    let picker = m.folder_picker().unwrap();
+    assert!(!picker.loading());
+    assert_eq!(picker.machine, None);
+    assert_eq!(
+        folder_rows(&m, ""),
+        ["~/code/one (here)", "~/code/api", "~/code/web (repo)"]
+    );
+    assert_eq!(folder_rows(&m, "we"), ["~/code/web (repo)"]);
+    assert_eq!(
+        folder_rows(&m, "~/code/new/"),
+        ["~/code/new (path)"],
+        "a typed path is offered even where nothing matches"
+    );
+    // `ctrl-g ctrl-s` opens it too.
+    drive(&mut m, &mut core, Action::Popup(PopupAction::Close));
+    key(&mut m, &mut core, "ctrl-g ctrl-s", false);
+    assert_eq!(list(&m).popup, Popup::NewSpace);
+}
+
+#[test]
+fn failed_lookups_leave_only_where_you_are() {
+    let mut core = world();
+    core.exec = Err(error(
+        herdr_proto::ErrorKind::Other("spawn_failed".into()),
+        "no zoxide",
+    ));
+    core.exec_by.insert(repos_argv(), exited(1));
+    let mut m = connected(&mut core);
+    drive(&mut m, &mut core, Action::Open(Popup::NewSpace));
+    assert!(!m.folder_picker().unwrap().loading());
+    assert_eq!(folder_rows(&m, ""), ["~/code/one (here)"]);
+}
+
+#[test]
+fn enter_while_the_folders_are_loading_waits_when_nothing_matches() {
+    let mut core = world_with_folders();
+    core.exec_held = true;
+    let mut m = connected(&mut core);
+    drive(&mut m, &mut core, Action::Open(Popup::NewSpace));
+    assert!(m.folder_picker().unwrap().loading());
+    assert_eq!(folder_rows(&m, ""), ["~/code/one (here)"]);
+    drive(
+        &mut m,
+        &mut core,
+        Action::Popup(PopupAction::Query("zzz".into())),
+    );
+    let fx = drive(&mut m, &mut core, Action::Popup(PopupAction::Choose));
+    assert!(fx.iter().all(|e| !matches!(e, Effect::Pick { .. })));
+    assert_eq!(list(&m).popup, Popup::NewSpace, "still open");
+    // Matching where you are, Enter goes at once.
+    drive(
+        &mut m,
+        &mut core,
+        Action::Popup(PopupAction::Query("one".into())),
+    );
+    let fx = drive(&mut m, &mut core, Action::Popup(PopupAction::Choose));
+    assert!(fx.iter().any(|e| matches!(
+        e,
+        Effect::Pick {
+            popup: Popup::NewSpace,
+            ..
+        }
+    )));
+    assert_eq!(*m.mode(), Mode::Normal);
+}
+
+#[test]
+fn picking_a_folder_makes_the_space_there_and_shows_it() {
+    let mut core = world_with_folders();
+    let mut m = connected(&mut core);
+    drive(&mut m, &mut core, Action::Open(Popup::NewSpace));
+    let action = popups::new_space_pick(&m, "api", 0).unwrap();
+    assert_eq!(
+        action,
+        Action::NewSpaceIn {
+            machine: None,
+            folder: Some("/home/me/code/api".into())
+        }
+    );
+    drive(&mut m, &mut core, Action::Popup(PopupAction::Close));
+    drive(&mut m, &mut core, action);
+    let run = core.runs().pop().unwrap();
+    assert_eq!(run.cwd.as_deref(), Some("/home/me/code/api"));
+    assert_eq!(run.on, None);
+    let doc = core.doc(None);
+    let space = doc.space(&run.labels["herdr.space"]).unwrap();
+    assert_eq!(space.folder, "/home/me/code/api");
+    assert_eq!(space.name, "", "named after its folder");
+    assert_eq!(m.active_space().unwrap().id, space.id, "shown");
+
+    // Nothing matched: where plain `space.new` starts, the focused terminal's folder.
+    drive(&mut m, &mut core, Action::ShowTab("tb1".into()));
+    drive(&mut m, &mut core, Action::Open(Popup::NewSpace));
+    let none = popups::new_space_pick(&m, "zzz", 0).unwrap();
+    assert_eq!(
+        none,
+        Action::NewSpaceIn {
+            machine: None,
+            folder: None
+        }
+    );
+    drive(&mut m, &mut core, none);
+    assert_eq!(
+        core.runs().pop().unwrap().cwd.as_deref(),
+        Some("/home/me/code/one")
+    );
+}
+
+#[test]
+fn on_another_machine_the_folders_and_home_come_from_there() {
+    let mut core = world();
+    core.docs.insert(
+        Some("devbox".into()),
+        (
+            doc(vec![space("sp9", vec![tab("tb9", vec![pane("p9", "t9")])])]),
+            4,
+        ),
+    );
+    core.terminals
+        .insert("devbox/t9".into(), shell("devbox/t9", "/srv/app"));
+    let home = argv(&["sh", "-c", r#"printf %s "$HOME""#]);
+    core.exec_by.insert(home.clone(), printed("/root"));
+    core.exec_by
+        .insert(argv(ZOXIDE), printed("/root/code/svc\n/srv/app\n"));
+    let mut m = connected(&mut core);
+    let mut devbox = MachineView {
+        state: MachineState::Connected,
+        ..Default::default()
+    };
+    devbox.machine.name = "devbox".into();
+    drive(&mut m, &mut core, Event::Machines(vec![devbox]));
+    drive(&mut m, &mut core, Action::ShowSpace("devbox/sp9".into()));
+    assert_eq!(m.focused_terminal(), Some("devbox/t9"));
+    drive(&mut m, &mut core, Action::Open(Popup::NewSpace));
+    let on = Some("devbox".to_owned());
+    assert_eq!(
+        core.execs(),
+        [
+            (home, on.clone()),
+            (argv(ZOXIDE), on.clone()),
+            (repos_argv(), on.clone())
+        ]
+    );
+    let picker = m.folder_picker().unwrap();
+    assert_eq!(picker.machine.as_deref(), Some("devbox"));
+    assert_eq!(picker.home.as_deref(), Some("/root"));
+    let rows: Vec<String> = popups::new_space_rows(&m, "")
+        .iter()
+        .map(|f| model::folders::display_path(&f.path, picker.home.as_deref()))
+        .collect();
+    assert_eq!(rows, ["/srv/app", "~/code/svc"]);
+    assert_eq!(
+        popups::new_space_rows(&m, "~/x")[0].path,
+        "/root/x",
+        "`~` is that machine's home"
+    );
+    let action = popups::new_space_pick(&m, "svc", 0).unwrap();
+    drive(&mut m, &mut core, Action::Popup(PopupAction::Close));
+    drive(&mut m, &mut core, action);
+    let run = core.runs().pop().unwrap();
+    assert_eq!(run.on.as_deref(), Some("devbox"));
+    assert_eq!(run.cwd.as_deref(), Some("/root/code/svc"));
+    assert_eq!(core.doc(Some("devbox")).spaces.len(), 2, "made there");
+}
+
+#[test]
+fn a_late_answer_for_an_earlier_opening_is_dropped() {
+    let mut core = world_with_folders();
+    core.exec_held = true;
+    let mut m = connected(&mut core);
+    let first = m.step(core.now, Action::Open(Popup::NewSpace)).list;
+    let tokens: Vec<model::Token> = first
+        .iter()
+        .filter_map(|e| match e {
+            Effect::Call {
+                token,
+                request: Request::Exec(_),
+            } => Some(*token),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tokens.len(), 2);
+    drive(&mut m, &mut core, Action::Popup(PopupAction::Close));
+    drive(&mut m, &mut core, Action::Open(Popup::NewSpace));
+    for token in tokens {
+        drive(
+            &mut m,
+            &mut core,
+            Event::Executed {
+                token,
+                result: printed("/elsewhere"),
+            },
+        );
+    }
+    let picker = m.folder_picker().unwrap();
+    assert!(picker.loading(), "the new opening still waits");
+    assert_eq!(folder_rows(&m, ""), ["~/code/one (here)"]);
+    // A dropped connection stops the waiting.
+    drive(&mut m, &mut core, Event::Lost);
+    assert!(!m.folder_picker().unwrap().loading());
+}

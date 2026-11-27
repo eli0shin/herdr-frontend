@@ -25,6 +25,7 @@ use herdr_shared::{
 use crate::action::{Action, AppCommand, Direction};
 use crate::control::{Call, CallId, answer_call};
 use crate::effect::{Effect, Effects, Focus, Level, Request, TerminalCommand, Toast, Token};
+use crate::folders::{self, NewSpace};
 use crate::geometry::{self, Geometry, Rect};
 use crate::keys::{Chord, Context, Key, Keymap, Lookup, Mods, Press};
 use crate::mode::{self, Mode, PREFIX_TIMEOUT};
@@ -241,6 +242,11 @@ pub(crate) enum Pending {
         tab: Option<String>,
         direction: Direction,
     },
+    /// One of the new-space picker's lookups, for its `opening`th opening.
+    Folders {
+        opening: u64,
+        lookup: folders::Lookup,
+    },
     /// "Send back to <parent>": its labels are cleared (`labelled` once that answered), then
     /// keep is turned off, then its pane goes (`cfg/AGENTS.md`: `terminal.park`).
     Park {
@@ -299,6 +305,10 @@ pub struct Model {
     pub(crate) retry_at: BTreeMap<Option<String>, f64>,
     /// Something that may need adoption or closed-pane lookups changed.
     pub(crate) scan: bool,
+    /// The new-space folder picker's folders, from its latest opening.
+    pub(crate) new_space: Option<NewSpace>,
+    /// How many times the new-space picker has opened.
+    pub(crate) openings: u64,
     last_focus: Option<Focus>,
     last_saved: View,
 }
@@ -344,6 +354,8 @@ impl Model {
             births: BTreeMap::new(),
             retry_at: BTreeMap::new(),
             scan: false,
+            new_space: None,
+            openings: 0,
             last_focus: None,
             last_saved,
         }
@@ -393,6 +405,12 @@ impl Model {
 
     pub fn geometry(&self) -> &Geometry {
         &self.geometry
+    }
+
+    /// The new-space folder picker's machine and folders, from its latest opening (a pick is
+    /// resolved after the picker closed).
+    pub fn folder_picker(&self) -> Option<&NewSpace> {
+        self.new_space.as_ref()
     }
 
     pub fn active_space(&self) -> Option<&Space> {
@@ -723,6 +741,10 @@ impl Model {
     /// The connection dropped or came back: launches under way may never be answered, so their
     /// control calls get an error now.
     fn drop_answers(&mut self, fx: &mut Effects) {
+        // The folder picker stops waiting for lookups that may never answer.
+        if let Some(ns) = &mut self.new_space {
+            ns.waiting.clear();
+        }
         for pending in self.pending.values_mut() {
             if let Pending::Launch { answer, .. } = pending
                 && let Some(id) = answer.take()
@@ -1051,7 +1073,7 @@ impl Model {
             }
             Pending::Keep(keep) => self.kept(keep, result, fx),
             // Exec calls answer with `Event::Executed`.
-            Pending::Navigate { .. } => {}
+            Pending::Navigate { .. } | Pending::Folders { .. } => {}
         }
     }
 
@@ -1092,14 +1114,25 @@ impl Model {
     /// Neovim took the key, or it couldn't run (an error toast), or the labeled Neovim is gone,
     /// so its label is cleared and the pane moves, if focus hasn't moved meanwhile.
     fn executed(&mut self, token: Token, result: Result<ExecResult, RpcError>, fx: &mut Effects) {
-        let Some(Pending::Navigate {
-            address,
-            pane,
-            tab,
-            direction,
-        }) = self.pending.remove(&token)
-        else {
-            return;
+        let (address, pane, tab, direction) = match self.pending.remove(&token) {
+            Some(Pending::Navigate {
+                address,
+                pane,
+                tab,
+                direction,
+            }) => (address, pane, tab, direction),
+            Some(Pending::Folders { opening, lookup }) => {
+                // What it printed when it exited 0, else nothing (`new-space/main.js` `output`).
+                let output = match &result {
+                    Ok(r) if r.succeeded() => r.stdout_text(),
+                    _ => String::new(),
+                };
+                if let Some(ns) = self.new_space.as_mut().filter(|ns| ns.opening == opening) {
+                    ns.answered(lookup, output);
+                }
+                return;
+            }
+            _ => return,
         };
         let failed = match result {
             Err(error) => Some(error.message),

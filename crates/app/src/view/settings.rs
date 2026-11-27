@@ -12,7 +12,7 @@ use rune::{El, col, row, text};
 use crate::State;
 use crate::config::{PROGRAMS, SETTINGS, THEMES};
 use crate::view::icons::{FILE, FOLDER};
-use crate::view::list::{self, Item};
+use crate::view::list::{self, Item, More};
 use crate::view::overlay::{self, Place};
 
 pub const PLACE: Place = Place::Dialog {
@@ -132,6 +132,12 @@ pub fn view(s: &State, list: &ListPopup) -> El {
             )
             .font(s.ui_font(12.0, 400.0)),
         )
-        .child(list::view(s, "settings-rows", items, rows.len(), false))
+        .child(list::view(
+            s,
+            "settings-rows",
+            items,
+            rows.len(),
+            More::None,
+        ))
         .children((!problems.is_empty()).then(|| col().w_full().gap(4.0).children(problems)))
 }
