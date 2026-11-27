@@ -1,0 +1,12 @@
+{
+  "title": "Copy mode",
+  "inventory": "§16",
+  "notes": "Ctrl+G [ on a shell with history: motions and a visual selection.",
+  "steps": [
+    {"name": "the split tab", "do": "space.select", "args": {"index": 1}},
+    {"name": "some history", "send": {"terminal": "{{t:w1}}", "text": "seq 1 60"}, "wait": 0.5},
+    {"name": "copy mode", "keys": "ctrl-g [", "herdr-app": {"do": "mod.open", "args": {"name": "copy-mode"}}},
+    {"name": "move and select", "keys": "k k k v k k", "herdr-app": {"skip": "keys go to herdr-frontend only"}},
+    {"name": "leave", "keys": "escape escape", "herdr-app": {"do": "overlay.close"}}
+  ]
+}

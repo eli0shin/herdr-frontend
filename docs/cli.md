@@ -34,6 +34,9 @@ Code: `crates/app/src/control.rs` (socket and client) and `crates/model/src/cont
   Requests are `{"ls": true}`, `{"status": true}`, `{"commands": true}` or
   `{"do": "<command>", "args": <object or null>}`. The reply is the JSON the CLI prints. The window
   answers within 5 s or the reply is `{"error": "the window did not answer"}`.
+- A window the end-to-end harness started (`HERDR_FRONTEND_E2E=1`) also answers `keys`, `type`,
+  `tree` and `window` (`docs/e2e.md` "herdr-frontend's harness requests"). Any other window
+  refuses them as unknown requests. The CLI has no subcommand for them.
 - The window runs every request on its UI thread, through the model (`Model::ls`,
   `Model::status`, and `Model::step` with a `Call` for `do`), so a command changes state exactly as
   the same key or click would.

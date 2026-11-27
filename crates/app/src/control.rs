@@ -60,6 +60,20 @@ struct Request {
     reply: mpsc::Sender<Value>,
 }
 
+/// A harness request (`crate::e2e`) for the window to answer itself: keys, its tree or its
+/// window number.
+pub struct Probe {
+    pub cmd: Value,
+    reply: mpsc::Sender<Value>,
+}
+
+impl Probe {
+    /// Sends the answer to the connection waiting for it, if it still is.
+    pub fn answer(self, reply: Value) {
+        let _ = self.reply.send(reply);
+    }
+}
+
 /// The window's end of the control socket: it listens while alive and removes the socket when
 /// dropped.
 pub struct Control {
@@ -69,6 +83,8 @@ pub struct Control {
     waiting: BTreeMap<CallId, mpsc::Sender<Value>>,
     next: u64,
     stop: Arc<AtomicBool>,
+    /// Whether harness requests are served ([`Control::with_probes`]), and those waiting.
+    probes: Option<Vec<Probe>>,
 }
 
 impl Control {
@@ -117,7 +133,20 @@ impl Control {
             waiting: BTreeMap::new(),
             next: 0,
             stop,
+            probes: None,
         })
+    }
+
+    /// Serves the harness requests too (`crate::e2e`): [`Control::drain`] queues them for
+    /// [`Control::take_probes`] instead of refusing them.
+    pub fn with_probes(mut self) -> Control {
+        self.probes = Some(Vec::new());
+        self
+    }
+
+    /// The harness requests that came in since the last call, for the window to answer.
+    pub fn take_probes(&mut self) -> Vec<Probe> {
+        self.probes.as_mut().map(std::mem::take).unwrap_or_default()
     }
 
     pub fn path(&self) -> &Path {
@@ -131,7 +160,8 @@ impl Control {
     ///
     /// Returns the steps' effects for the app to carry out, or `None` when no request came in
     /// (so nothing changed). Answers among them are sent here and left out; one that comes in a
-    /// later step (a `space.new` waiting for its terminal) goes to [`Control::answer`].
+    /// later step (a `space.new` waiting for its terminal) goes to [`Control::answer`]. Harness
+    /// requests wait in [`Control::take_probes`] when served.
     pub fn drain(
         &mut self,
         model: &mut Model,
@@ -160,6 +190,12 @@ impl Control {
                         other => fx.push(other),
                     }
                 }
+                continue;
+            }
+            if let Some(probes) = &mut self.probes
+                && crate::e2e::is_request(&cmd)
+            {
+                probes.push(Probe { cmd, reply });
                 continue;
             }
             let answer = if cmd.get("ls").is_some() {

@@ -39,7 +39,8 @@ use terminal::{GridSize, Output, Padding, PaddingBalance, ScreenSize, Size, Term
 use crate::config::settings::{self, Settings, UI_FONT_SIZE};
 use crate::config::theme::Chrome;
 use crate::config::{Config, SETTINGS, Sources, Stamp, Watcher as ConfigWatcher};
-use crate::control::{self, Control};
+use crate::control::{self, Control, Probe};
+use crate::e2e::{self, Tap};
 use crate::home::{Home, VIEW};
 use crate::keyfile::{self, Loaded, Watcher};
 use crate::link::{Link, News, Offline, Out};
@@ -135,6 +136,8 @@ struct Ui {
     wake: Option<f64>,
     /// Window commands for Rune: quit, close, maximize.
     window: Vec<AppCommand>,
+    /// Keys a harness sent (`crate::e2e`), to deliver as typed.
+    keys: Vec<KeyEvent>,
 }
 
 /// The window's tab area, as laid out, in view points.
@@ -194,6 +197,9 @@ pub struct State {
     home: Option<Home>,
     /// The control socket in the home, served from setup on ([`State::serve`]).
     control: Option<Control>,
+    /// The last drawn frame's tree, in a window the end-to-end harness started: it then serves
+    /// the harness requests too (`crate::e2e`).
+    tap: Option<Tap>,
     pub window: Keeper,
     ui: Ui,
     /// When the model asked to be stepped with [`Event::Tick`] ([`Effect::WakeAt`]).
@@ -299,6 +305,7 @@ impl State {
             synchronous: false,
             home,
             control: None,
+            tap: None,
             window,
             ui: Ui::default(),
             tick_at: None,
@@ -742,6 +749,9 @@ impl State {
         if let Some(at) = self.ui.wake.take() {
             tx.wake_at(at);
         }
+        for key in self.ui.keys.drain(..) {
+            tx.send_key(key);
+        }
     }
 
     /// Drains the core and the terminals and keeps the viewers and their sizes right. True when
@@ -801,6 +811,7 @@ impl State {
         let Some(fx) = control.drain(&mut self.model, now, &facts) else {
             return false;
         };
+        let probes = control.take_probes();
         for effect in fx.list {
             self.carry_out(effect);
         }
@@ -808,7 +819,42 @@ impl State {
         if *self.model.mode() != before {
             self.mode_changed(&before);
         }
+        for probe in probes {
+            self.probe(probe);
+        }
         true
+    }
+
+    /// Answers a harness request (`crate::e2e`): keys go out with the next handler's `Tx`.
+    fn probe(&mut self, probe: Probe) {
+        let cmd = &probe.cmd;
+        let reply = if cmd.get("tree").is_some() {
+            self.tap
+                .as_ref()
+                .and_then(Tap::tree)
+                .unwrap_or_else(|| json!({ "error": "the window has drawn no frame yet" }))
+        } else if cmd.get("window").is_some() {
+            json!({ "window": self.window.window_number(), "pid": std::process::id() })
+        } else {
+            match e2e::key_events(cmd) {
+                Ok(keys) => {
+                    self.ui.keys.extend(keys);
+                    // Delivered after the frame's handler; a waker makes sure one runs.
+                    if let Some(waker) = &self.waker {
+                        waker();
+                    }
+                    json!({ "ok": true })
+                }
+                Err(e) => json!({ "error": e }),
+            }
+        };
+        probe.answer(reply);
+    }
+
+    /// Serves the end-to-end harness's requests (`crate::e2e`), with `tap` keeping the drawn
+    /// frames' trees. Call before setup, where the socket opens.
+    pub fn serve_harness(&mut self, tap: Tap) {
+        self.tap = Some(tap);
     }
 
     /// Serves the control socket in the home, if there is one: the CLI's `ls | do | status`
@@ -819,6 +865,7 @@ impl State {
             return;
         }
         match Control::listen(home.dir().join(control::SOCKET), move || waker()) {
+            Ok(control) if self.tap.is_some() => self.control = Some(control.with_probes()),
             Ok(control) => self.control = Some(control),
             Err(e) => eprintln!("herdr-frontend: not serving ls, do and status: {e}"),
         }

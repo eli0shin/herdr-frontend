@@ -1,0 +1,8 @@
+{
+  "title": "Changes and Files views",
+  "inventory": "§14",
+  "notes": "Unused by Eli: with workspace.panels [] the tab bar shows no Files/Changes buttons. The start capture is the check.",
+  "steps": [
+    {"name": "a shell tab", "do": "space.select", "args": {"index": 2}}
+  ]
+}

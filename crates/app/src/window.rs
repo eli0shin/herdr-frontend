@@ -114,6 +114,11 @@ impl Keeper {
         }
     }
 
+    /// The window's macOS CGWindowID (`screencapture -l`), once it's open.
+    pub fn window_number(&self) -> Option<u32> {
+        self.handle.borrow().as_ref()?.window_number()
+    }
+
     /// Saves where the window is: in the background, or at once when `now` (closing, quitting).
     pub fn save(&self, now: bool) {
         let (Some(home), Some(handle)) = (&self.home, self.handle.borrow().clone()) else {

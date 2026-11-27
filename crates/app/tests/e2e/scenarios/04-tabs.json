@@ -1,0 +1,15 @@
+{
+  "title": "Tabs",
+  "inventory": "§4",
+  "notes": "eli-tabs: agents' tabs stay out of the bar, numbered tabs count shown tabs, next/previous skip hidden tabs.",
+  "steps": [
+    {"name": "space with agents' tabs", "do": "space.select", "args": {"index": 1}},
+    {"name": "next tab", "keys": "ctrl-tab", "herdr-app": {"do": "navigator-status.tab-next"}},
+    {"name": "previous tab", "keys": "cmd-shift-[", "herdr-app": {"do": "navigator-status.tab-prev"}},
+    {"name": "new tab", "keys": "cmd-t", "herdr-app": {"do": "tab.new"}},
+    {"name": "tab 1 by number", "keys": "cmd-1", "herdr-app": {"do": "navigator-status.tab-1"}},
+    {"name": "rename the tab", "do": "tab.rename", "args": {"id": "{{tb:work-1}}", "name": "shells"}},
+    {"name": "rename prompt", "keys": "f2", "herdr-app": {"skip": "tab.rename from a script fails instead of asking"}},
+    {"name": "cancel the prompt", "keys": "escape", "herdr-app": {"skip": "no prompt open"}}
+  ]
+}

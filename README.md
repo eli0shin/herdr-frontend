@@ -41,6 +41,7 @@ just test         # pin check, fmt, clippy, tests and bindings check, as CI runs
 just snap [scene] # render a scene headless to target/snap/<scene>.png
 just bundle       # build target/release/herdr-frontend.app (`just install` installs it)
 just icon         # regenerate assets/icon/herdr-frontend.icns from its SVG (needs ImageMagick)
+just e2e          # the full app and Herdr app through every scenario, screenshots side by side
 just ghostty-diff # compare the terminal renderer with Ghostty.app (opens Ghostty windows)
 just pane-budget  # time many terminal panes changing at once against the 120 Hz frame
 just check-pins   # check the Rune pin against Rune's patch list at that rev
@@ -65,5 +66,9 @@ caches it in `~/Library/Caches/ghostty-vt-sys` (set `GHOSTTY_VT_CACHE_DIR` to mo
 herdr-client's tests start their own isolated herdr-core (a `test-*` session with scratch dirs under
 `/tmp`), never yours. They use the `hc` on your machine, or `HERDR_TEST_HC=/path/to/herdr-core`, and
 skip without one. CI installs the pinned hc release.
+
+`just e2e` opens real windows on your display, each app on its own isolated core and home, and
+writes `target/e2e/<run>/index.html`. `docs/e2e.md` describes what it runs and what it never
+touches.
 
 Rune is pinned to one `dev` rev in `Cargo.toml`; bump it as `docs/research/rune.md` §1 describes.

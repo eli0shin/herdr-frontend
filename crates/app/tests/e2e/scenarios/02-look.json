@@ -1,0 +1,11 @@
+{
+  "title": "Look: theme, fonts, settings",
+  "inventory": "§2",
+  "notes": "Arctic theme, Operator Mono at 17 and zoom 1.1: Herdr app reads them from Eli's copied settings.json, herdr-frontend has them as its defaults (its isolated home has no settings.json).",
+  "steps": [
+    {"name": "zoom in", "keys": "cmd-=", "herdr-app": {"do": "app.zoom_in"}},
+    {"name": "zoom back", "keys": "cmd-0", "herdr-app": {"do": "app.zoom_reset"}},
+    {"name": "settings", "keys": "cmd-,", "herdr-app": {"do": "app.settings"}},
+    {"name": "close settings", "keys": "escape", "herdr-app": {"do": "overlay.close"}}
+  ]
+}

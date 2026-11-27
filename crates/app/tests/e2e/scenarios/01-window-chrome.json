@@ -1,0 +1,23 @@
+{
+  "title": "Window chrome and layout regions",
+  "inventory": "§1",
+  "notes": "Borderless window, the 38 pt sidebar top row and tab bar, bare panes with a 1 px gap, no status row.",
+  "steps": [
+    {
+      "name": "split tab",
+      "note": "The first tab: w1 | (w2 / w3). The only lines in the window are between split panes.",
+      "do": "space.select",
+      "args": {"index": 1}
+    },
+    {
+      "name": "hide the sidebar",
+      "keys": "cmd-b",
+      "herdr-app": {"do": "layout.toggle", "args": {"id": "sidebar"}}
+    },
+    {
+      "name": "show the sidebar",
+      "keys": "ctrl-g b",
+      "herdr-app": {"do": "layout.toggle", "args": {"id": "sidebar"}}
+    }
+  ]
+}

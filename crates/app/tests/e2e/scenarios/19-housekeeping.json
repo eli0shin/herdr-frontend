@@ -1,0 +1,10 @@
+{
+  "title": "Housekeeping state",
+  "inventory": "§19",
+  "notes": "This screen's view (space, tab, focused pane) survives a restart; it lives in the app's own home.",
+  "steps": [
+    {"name": "pick a space and pane", "do": "space.select", "args": {"index": 2}},
+    {"name": "focus blocked", "do": "agent.focus", "args": {"terminal": "{{t:blocked}}"}},
+    {"name": "restart", "note": "Quit and open again on the same home and core.", "restart": true, "wait": 1.0}
+  ]
+}

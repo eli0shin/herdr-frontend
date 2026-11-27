@@ -1,0 +1,10 @@
+{
+  "title": "Session continuity and naming",
+  "inventory": "§18",
+  "notes": "Pi writes tab names with `do tab.rename`; kept terminals keep their address.",
+  "steps": [
+    {"name": "show pi", "do": "agent.focus", "args": {"terminal": "{{t:pi}}"}},
+    {"name": "Pi names the tab", "do": "tab.rename", "args": {"id": "{{tb:work-2}}", "name": "fix-login"}},
+    {"name": "back to the automatic name", "do": "tab.rename", "args": {"id": "{{tb:work-2}}", "name": ""}}
+  ]
+}
