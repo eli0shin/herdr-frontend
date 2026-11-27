@@ -19,7 +19,10 @@
 use model::agents::{AgentRow, Branch, Fold, Header, List, Row, Sort, SubRow, Tree};
 use model::mode::{ListPopup, PopupState};
 use model::{Action, Mode, Popup, PopupAction};
-use rune::{Align, Color, Cursor, Cx, El, Icon, LoopSpec, Side, col, el, icon, row, text};
+use rune::{
+    Align, Color, Cursor, Cx, El, Icon, LoopSpec, Side, Spring, Transition, col, el, icon, row,
+    text,
+};
 
 use crate::State;
 use crate::config::theme::{Chrome, Rgba};
@@ -374,6 +377,9 @@ fn agent(s: &State, list: &List, r: &AgentRow, jumping: bool, cx: &Cx<State>) ->
             text(r.title.clone())
                 .key("title")
                 .font(s.ui_font(14.5, 400.0))
+                // An idle agent's title brightens while it's selected, at once as the
+                // selection moves.
+                .motion(Spring::NONE)
                 .color(if live || r.focused {
                     hex(LIVE_TITLE)
                 } else {
@@ -480,6 +486,27 @@ fn agent(s: &State, list: &List, r: &AgentRow, jumping: bool, cx: &Cx<State>) ->
             .radius(2.0)
             .fill(t)
     });
+    // The selected row: a faint wash and a thin outline under what it shows. They are their
+    // own element, on the selected row only, so they move to another row at once when the
+    // focused agent changes (a click, a space or tab switch) rather than fading out on one row
+    // and in on the other, and the row's own motion (folds, re-sorts) stays as it is. The wash
+    // gives way to the hover's fill, as the row's own fill would.
+    let selected = r.focused.then(|| {
+        el().key("selected")
+            .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+            .radius(8.0)
+            .border(1.0, a(c.working, 0x73))
+            .transition(Transition::none())
+            .child(
+                el().key("wash")
+                    .w_full()
+                    .h_full()
+                    .radius(8.0)
+                    .fill(a(c.working, 0x12))
+                    .group_opacity(1.0, 0.0)
+                    .transition(Transition::none()),
+            )
+    });
     let target = r.address.clone();
     row()
         .key(key("ag", &r.address))
@@ -487,24 +514,13 @@ fn agent(s: &State, list: &List, r: &AgentRow, jumping: bool, cx: &Cx<State>) ->
         .px(8.0)
         .py(4.0)
         .radius(8.0)
-        // The selected row: a faint wash and a thin outline. Every row has the border so none
-        // shifts.
-        .border(
-            1.0,
-            if r.focused {
-                a(c.working, 0x73)
-            } else {
-                Color::TRANSPARENT
-            },
-        )
-        .fill(if r.focused {
-            a(c.working, 0x12)
-        } else {
-            Color::TRANSPARENT
-        })
+        // Every row has the border so none shifts.
+        .border(1.0, Color::TRANSPARENT)
         .hover_fill(c.hover)
+        .hover_group()
         .cursor(Cursor::Pointer)
         .on_press_tx(move |s: &mut State, tx| s.act(Action::FocusAgent(target.clone()), tx))
+        .children(selected)
         .children(edge)
         .children(r.line.map(|b| tree_line(c, b)))
         .child(body)

@@ -32,6 +32,7 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-prefix", shell_prefix),
     ("shell-not-yet", shell_not_yet),
     ("shell-tabs", shell_tabs),
+    ("shell-spaces", busy),
     ("shell-agents", shell_agents),
     ("shell-agents-grouped", shell_agents_grouped),
     ("shell-sort-menu", shell_sort_menu),
@@ -237,7 +238,8 @@ fn shell_agents_empty(s: &mut State) {
     shell(s);
 }
 
-/// The busy core ([`fixtures::busy_core`]): agents in other spaces, for the pickers.
+/// The busy core ([`fixtures::busy_core`]): agents in other spaces, for the pickers and for
+/// switching spaces (`shell-spaces`).
 fn busy(s: &mut State) {
     s.connect(Box::new(fixtures::busy_core()));
     s.settle();

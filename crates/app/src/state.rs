@@ -418,6 +418,9 @@ pub struct State {
     /// The pointer over a terminal, in device pixels from its grid's corner: where Cmd
     /// pressed with no motion underlines a link.
     pointer: Option<(String, f32, f32)>,
+    /// The commit ([`rune::commit_generation`]) that draws the last step that showed another
+    /// space: [`State::space_switched`].
+    space_switched_in: Option<u64>,
 }
 
 impl Default for State {
@@ -588,6 +591,7 @@ impl State {
             divider_drag: None,
             spare_edit: TextEdit::default(),
             pointer: None,
+            space_switched_in: None,
         };
         s.keys_problem = keys_problem;
         s.configure_all(config);
@@ -866,11 +870,19 @@ impl State {
         self.in_use.as_deref()
     }
 
+    /// Whether the commit being drawn shows another space than the last one did, by a step
+    /// since: the window then lands everything that commit changes at once ([`crate::view`]).
+    /// Any other commit keeps its motion, so a pill added or closed within a space fades.
+    pub fn space_switched(&self) -> bool {
+        self.space_switched_in == Some(rune::commit_generation())
+    }
+
     /// Steps the model and carries out what it asks. True when it used the key (always, for
     /// anything but a key).
     pub fn step(&mut self, now: f64, input: impl Into<Input>) -> bool {
         self.now = self.now.max(now);
         let before = self.model.mode().clone();
+        let space = self.model.active_space().map(|s| s.id.clone());
         let effects = self.model.step(self.now, input);
         self.agents_stale = true;
         let handled = effects.handled;
@@ -890,6 +902,10 @@ impl State {
         }
         for pick in picks {
             self.carry_out(pick);
+        }
+        if self.model.active_space().map(|s| s.id.as_str()) != space.as_deref() {
+            // A step runs between commits: the next one draws it.
+            self.space_switched_in = Some(rune::commit_generation() + 1);
         }
         // The world may have changed under an open list (a tab made or closed elsewhere): its
         // rows are counted again, so the cursor and clicks reach exactly what it shows.

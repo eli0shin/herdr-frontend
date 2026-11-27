@@ -649,7 +649,18 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   slot's through a resize) show whole the frame they mount and are gone the frame they
   unmount. Rune's default entrance and exit fade every element in an input-caused commit, and
   the old and new terminals crossfading let the border fill flash through on every agent or
-  tab click. `tests/switching.rs` checks this frame by frame from `--frames` dumps. Each divider has a
+  tab click. A space switch (`ctrl-1`…`ctrl-9`, the space picker, an agent in another space)
+  lands whole: the commit that draws it puts `.instant_changes()` on the window's root, so the
+  old space's pills go and the new one's come, and the picker it was chosen in closes, in that
+  frame. `State::step` notes the commit that will draw a step that changed the shown space
+  (`rune::commit_generation()` + 1) and the view compares it with the commit it draws, since a
+  pill added or closed within a space keeps its fade and Rune can't tell the two mounts apart.
+  Colours aren't covered: the pills' row has `Spring::NONE` (below), and an Agents row's
+  selected wash and outline are an element of their own on the focused row only, with
+  `Transition::none()`, so they move at once on any focus change while the rows keep their
+  own motion; an idle agent's title, brighter while selected, has `Spring::NONE`. Escape on
+  the picker still fades it. `tests/switching.rs` checks
+  this frame by frame from `--frames` dumps. Each divider has a
   6 pt handle centered on its gap (`on_drag`, the resize cursor) that writes sizes as it moves; a
   cancelled drag puts them back. A movable pane's 18 pt top strip shows a 28 × 18 grip while the
   pointer is on it. The tab area, the panes' parent, follows the pointer for this, so only the

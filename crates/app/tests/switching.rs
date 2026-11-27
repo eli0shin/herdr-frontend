@@ -1,6 +1,7 @@
-//! Showing another terminal is a swap: clicking an agent or a tab, or stepping to the next tab,
-//! every frame Rune draws of the panes and the tab strip is either what they showed before or
-//! what they show after, never a fade between them with the split gap's border color flashing
+//! Showing another terminal is a swap: clicking an agent or a tab, stepping to the next tab, or
+//! showing another space (its key or the space picker), every frame Rune draws of the panes,
+//! the tab strip (and, for a space, the whole window) is either what they showed before or what
+//! they show after, never a fade between them with the split gap's border color flashing
 //! through. Frame by frame through the real renderer, headless: the app's `--scene`, `--script`
 //! and `--frames` (Rune's tooling).
 
@@ -54,8 +55,9 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-/// The PNG at `path`, as RGB, cropped to `rect` (device pixels: x, y, w, h).
-fn read(path: &Path, rect: [usize; 4]) -> Pixels {
+/// The PNG at `path`, as RGB, cropped to `rect` (device pixels: x, y, w, h), with what's under
+/// each of `masks` (the same) black.
+fn read(path: &Path, rect: [usize; 4], masks: &[[usize; 4]]) -> Pixels {
     let file = std::fs::File::open(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
@@ -66,8 +68,17 @@ fn read(path: &Path, rect: [usize; 4]) -> Pixels {
     let [x, y, w, h] = rect;
     assert!(x + w <= info.width as usize && y + h <= info.height as usize);
     let mut rgb = Vec::with_capacity(w * h * 3);
+    let masked = |col: usize, row: usize| {
+        masks
+            .iter()
+            .any(|&[mx, my, mw, mh]| (mx..mx + mw).contains(&col) && (my..my + mh).contains(&row))
+    };
     for row in y..y + h {
         for col in x..x + w {
+            if masked(col, row) {
+                rgb.extend_from_slice(&[0, 0, 0]);
+                continue;
+            }
             let at = (row * info.width as usize + col) * channels;
             rgb.extend_from_slice(&buf[at..at + 3]);
         }
@@ -90,7 +101,8 @@ fn element<'a>(tree: &'a serde_json::Value, key: &str) -> &'a serde_json::Value 
 }
 
 /// Runs `scene` through `script` and returns each frame of the element keyed `area`: `main`
-/// for the panes, `work` for the tab strip and the panes.
+/// for the panes, `work` for the tab strip and the panes, `window` for everything. What loops
+/// (a working agent's spinner) is masked out: it turns whatever the input does.
 fn run(name: &str, scene: &str, script: serde_json::Value, area: &str) -> Run {
     let dir = scratch(name);
     let script_path = dir.join("script.json");
@@ -119,21 +131,38 @@ fn run(name: &str, scene: &str, script: serde_json::Value, area: &str) -> Run {
     let tree: serde_json::Value = serde_json::from_slice(&std::fs::read(&tree).unwrap()).unwrap();
     // The view's points times the device scale and zoom; whole pixels inside the rect.
     let scale = tree["scale"].as_f64().unwrap();
-    let r: Vec<f64> = element(&tree, area)["rect"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| v.as_f64().unwrap() * scale)
-        .collect();
+    let points = |e: &serde_json::Value| -> Vec<f64> {
+        e["rect"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap() * scale)
+            .collect()
+    };
+    let r = points(element(&tree, area));
     let (x0, y0) = (r[0].ceil(), r[1].ceil());
     let (x1, y1) = ((r[0] + r[2]).floor(), (r[1] + r[3]).floor());
     let rect = [x0, y0, x1 - x0, y1 - y0].map(|v| v as usize);
+    // A turning element's corners sweep a circle around its center: every pixel it touches.
+    let masks: Vec<[usize; 4]> = tree["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| !e["loopPhase"].is_null())
+        .map(|e| {
+            let r = points(e);
+            let (cx, cy, radius) = (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0, r[2].hypot(r[3]) / 2.0);
+            let (x0, y0) = ((cx - radius).floor() - 1.0, (cy - radius).floor() - 1.0);
+            let (x1, y1) = ((cx + radius).ceil() + 1.0, (cy + radius).ceil() + 1.0);
+            [x0, y0, x1 - x0, y1 - y0].map(|v| v.max(0.0) as usize)
+        })
+        .collect();
     let fill = element(&tree, "main")["fill"].as_str().unwrap();
     let hex = |i: usize| u8::from_str_radix(&fill[i..i + 2], 16).unwrap();
     let gap = [hex(1), hex(3), hex(5)];
 
     let frames = (0..FRAMES)
-        .map(|i| read(&out.join(format!("frame_{i:04}.png")), rect))
+        .map(|i| read(&out.join(format!("frame_{i:04}.png")), rect, &masks))
         .collect();
     let _ = std::fs::remove_dir_all(&dir);
     Run { frames, gap }
@@ -180,6 +209,26 @@ fn clicking_an_agent_swaps_its_terminal_in_at_once() {
 }
 
 #[test]
+fn clicking_an_agent_in_another_space_swaps_the_sidebar_at_once() {
+    // The same click, over the Agents list: the selection, the pinned agent's brighter title
+    // and the folded orchestration all land on the release. (Before it, the pressed row shows
+    // its hover.)
+    let script = serde_json::json!([{ "t": AT, "type": "tap", "key": "ag-t15" }]);
+    let run = run("agent-list", "shell-agents", script, "ag-list");
+    let released = ((AT + HOLD - START) * 60.0).ceil() as usize;
+    let after = &run.frames[run.frames.len() - 1];
+    assert!(run.frames[0] != *after, "the click moved the selection");
+    for (i, frame) in run.frames.iter().enumerate().skip(released + 1) {
+        assert!(
+            frame == after,
+            "frame {i} (t = {:.3} s) is not the list after the click, {} pixels differ",
+            START + i as f64 / 60.0,
+            frame.differing(after),
+        );
+    }
+}
+
+#[test]
 fn clicking_a_tab_swaps_its_panes_in_at_once() {
     // `shell` shows `work`'s three panes; `logs` is one pane in another layout. After the
     // release the pointer leaves the pill, so its tooltip doesn't open over the panes. (The
@@ -198,6 +247,44 @@ fn the_next_tab_swaps_the_strip_and_the_panes_at_once() {
     let script = serde_json::json!([{ "t": AT, "type": "key", "name": "Tab", "ctrl": true }]);
     let run = run("next-tab", "shell", script, "work");
     assert_swaps("the next tab", &run.frames, AT);
+}
+
+#[test]
+fn a_space_key_swaps_the_window_at_once() {
+    // `shell-spaces` shows the first space; Ctrl-2 shows `dotfiles`: the pills, the pane, and
+    // the agent row it focuses in the sidebar.
+    let script = serde_json::json!([{ "t": AT, "type": "key", "name": "2", "ctrl": true }]);
+    let run = run("space-key", "shell-spaces", script, "window");
+    assert_swaps("a space key", &run.frames, AT);
+}
+
+#[test]
+fn picking_a_space_swaps_the_window_at_once() {
+    // The space picker, moved down to `dotfiles` well before; Enter shows it, and the picker
+    // is gone in the same frame rather than fading out over the new space.
+    let script = serde_json::json!([
+        { "t": 0.05, "type": "key", "name": "Down" },
+        { "t": AT, "type": "key", "name": "Enter" },
+    ]);
+    let run = run("space-picker", "shell-space-picker", script, "window");
+    assert_swaps("picking a space", &run.frames, AT);
+}
+
+#[test]
+fn closing_the_space_picker_still_fades_it() {
+    // Escape switches nothing: the picker keeps its exit fade.
+    let script = serde_json::json!([{ "t": AT, "type": "key", "name": "Escape" }]);
+    let run = run(
+        "space-picker-closed",
+        "shell-space-picker",
+        script,
+        "window",
+    );
+    let (before, after) = (&run.frames[0], &run.frames[run.frames.len() - 1]);
+    assert!(
+        run.frames.iter().any(|f| f != before && f != after),
+        "the picker closed at once"
+    );
 }
 
 #[test]
