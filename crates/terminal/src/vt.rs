@@ -12,11 +12,17 @@ use std::time::{Duration, Instant};
 
 use ghostty_vt_sys::*;
 
-use crate::input::{KeyAction, KeyEvent, MouseAction, MouseEvent, OptionAsAlt, PasteRejected};
+use crate::input::{
+    KeyAction, KeyEvent, Mods, MouseAction, MouseEvent, OptionAsAlt, PasteRejected,
+};
+
+mod select;
+
 use crate::snapshot::{
     ActiveScreen, Cell, CellFlags, Colors, Cursor, CursorStyle, Dirty, Grapheme, Modes, Rgb, Row,
     RowId, Scrollbar, Snapshot, Underline, Width,
 };
+pub use select::AUTOSCROLL_EVERY;
 
 /// How a terminal starts.
 #[derive(Clone, Debug, PartialEq)]
@@ -207,6 +213,7 @@ pub struct Vt {
     key_event: GhosttyKeyEvent,
     mouse: GhosttyMouseEncoder,
     mouse_event: GhosttyMouseEvent,
+    selector: select::Selector,
     option_as_alt: OptionAsAlt,
     hold_timeout: Duration,
     /// Rows of the last snapshot by id.
@@ -326,6 +333,7 @@ impl Vt {
                 key_event,
                 mouse,
                 mouse_event,
+                selector: select::Selector::new(),
                 option_as_alt: config.option_as_alt,
                 hold_timeout: config.render_hold_timeout,
                 rows_by_id: HashMap::new(),
@@ -791,7 +799,34 @@ impl Vt {
                     len: 0,
                 },
             );
-            buf
+            match self.legacy_control(event) {
+                // modifyOtherKeys asked for the chord itself (`CSI 27;5;…~`): keep it.
+                Some(alias) if !buf.starts_with(b"\x1b[27;") => alias.to_vec(),
+                _ => buf,
+            }
+        }
+    }
+
+    /// The control character xterm sends for Ctrl with `[`, `-`, `I` or `M` in the legacy
+    /// encoding, which libghostty-vt leaves to fixterms (`CSI 91;5u`): Esc, `^_`, Tab and
+    /// Return, as Herdr app sends them (`control_alias_bytes`). `None` for any other key, and
+    /// under the kitty keyboard protocol, which reports the chord.
+    fn legacy_control(&self, event: &KeyEvent) -> Option<&'static [u8]> {
+        if event.composing || event.action == KeyAction::Release || self.modes().kitty_keyboard != 0
+        {
+            return None;
+        }
+        let ctrl = event.mods.0 & !(Mods::CAPS_LOCK.0 | Mods::NUM_LOCK.0);
+        let shifted = ctrl == (Mods::CTRL | Mods::SHIFT).0;
+        if ctrl != Mods::CTRL.0 && !shifted {
+            return None;
+        }
+        match event.key {
+            GHOSTTY_KEY_BRACKET_LEFT if !shifted => Some(b"\x1b"),
+            GHOSTTY_KEY_I if !shifted => Some(b"\t"),
+            GHOSTTY_KEY_M if !shifted => Some(b"\r"),
+            GHOSTTY_KEY_MINUS => Some(b"\x1f"),
+            _ => None,
         }
     }
 
@@ -916,6 +951,12 @@ impl Vt {
         }
     }
 
+    /// The viewport shows the bottom of the screen (not scrolled back), as it is now.
+    pub fn at_bottom(&self) -> bool {
+        // SAFETY: `term` is live and the key's output type is `bool`.
+        unsafe { terminal_get(self.term, GHOSTTY_TERMINAL_DATA_VIEWPORT_ACTIVE) }
+    }
+
     /// The modes as they are now (a snapshot's modes are from its frame).
     pub fn modes(&self) -> Modes {
         // SAFETY: `term` is live.
@@ -948,6 +989,7 @@ impl Drop for Vt {
         // SAFETY: each handle was created in `new` and is freed exactly once, the terminal last
         // of those it refers to.
         unsafe {
+            self.selector.free(self.term);
             ghostty_mouse_event_free(self.mouse_event);
             ghostty_mouse_encoder_free(self.mouse);
             ghostty_key_event_free(self.key_event);

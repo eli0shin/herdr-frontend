@@ -3,15 +3,17 @@
 //! cell metrics.
 //!
 //! A [`Terminal`] owns a worker thread that runs a [`Vt`]. The app sends it the program's output
-//! ([`Terminal::write`]) and user input to encode ([`Terminal::key`], [`Terminal::mouse`],
-//! [`Terminal::paste`]). The worker parses on its own thread, so the UI thread never touches the
+//! ([`Terminal::write`]), user input to encode ([`Terminal::key`], [`Terminal::mouse`],
+//! [`Terminal::paste`], [`Terminal::input`]) and mouse selections ([`Terminal::select`],
+//! [`Terminal::copy`]). The worker parses on its own thread, so the UI thread never touches the
 //! emulator, and hands back:
 //!
 //! - **Snapshots**, at most one per UI frame. The worker publishes a [`Snapshot`] into a one-slot
 //!   handoff only after the UI took the previous one, and calls the waker. Output that arrives in
 //!   the meantime is folded into the next snapshot, so a busy program never queues frames.
 //! - **[`Output`]** on a channel, in order: query replies (send them to herdr-core as
-//!   AUTOMATIC_INPUT), encoded user input (DATA), and [`Event`]s (title, bell, clipboard, ...).
+//!   AUTOMATIC_INPUT), encoded user input (DATA), selected text to copy, and [`Event`]s (title,
+//!   bell, clipboard, ...).
 //!
 //! Another thread (the one reading the core's attach stream) feeds output through a
 //! [`Writer`]. [`Terminal::snapshot_now`] waits for a settled screen, for tests and scenes.
@@ -41,14 +43,15 @@ pub use size::{CellSize, GridSize, Padding, PaddingBalance, ScreenSize, Size, Si
 
 pub use input::{
     Focus, Key, KeyAction, KeyEvent, Mods, MouseAction, MouseButton, MouseEvent, OptionAsAlt,
-    PasteRejected, encode_focus,
+    PasteRejected, SelectAction, SelectEvent, encode_focus,
 };
 pub use snapshot::{
     ActiveScreen, Cell, CellFlags, Colors, Cursor, CursorStyle, Dirty, Grapheme, Modes, Rgb, Row,
     RowId, Scrollbar, Snapshot, Underline, Width,
 };
 pub use vt::{
-    ClipboardLocation, ColorScheme, Config, Event, Progress, Scroll, Scrollback, Theme, Vt,
+    AUTOSCROLL_EVERY, ClipboardLocation, ColorScheme, Config, Event, Progress, Scroll, Scrollback,
+    Theme, Vt,
 };
 
 /// Called from the worker thread when there is something new for the UI: a snapshot to take or
@@ -65,6 +68,8 @@ pub enum Output {
     /// User input encoded for the program's current modes: keys, mouse reports, pastes. Send
     /// them as DATA.
     Input(Vec<u8>),
+    /// The selected text, for the clipboard ([`Terminal::copy`]).
+    Selection(String),
     Event(Event),
 }
 
@@ -93,6 +98,10 @@ enum Request {
         text: String,
         allow_unsafe: bool,
     },
+    Input(Vec<u8>),
+    Select(SelectEvent),
+    ClearSelection,
+    Copy(Option<KeyEvent>),
     /// The UI took the snapshot in the handoff and the worker has a newer frame waiting.
     Publish,
     /// Snapshot everything handled so far, now, and empty the handoff.
@@ -225,6 +234,32 @@ impl Terminal {
         });
     }
 
+    /// Bytes for the program as they are, as [`Output::Input`] in order with the keys around
+    /// them: a key binding's `send:` text, or what an input method composed.
+    pub fn input(&self, bytes: impl Into<Vec<u8>>) {
+        let bytes = bytes.into();
+        if !bytes.is_empty() {
+            self.send(Request::Input(bytes));
+        }
+    }
+
+    /// One step of a mouse selection, for a program that doesn't take the mouse. A drag held
+    /// past the grid's top or bottom keeps scrolling on the worker until it moves back or ends.
+    pub fn select(&self, event: SelectEvent) {
+        self.send(Request::Select(event));
+    }
+
+    pub fn clear_selection(&self) {
+        self.send(Request::ClearSelection);
+    }
+
+    /// The selected text, as [`Output::Selection`]. With nothing selected, `or_key` is encoded
+    /// instead, as [`Terminal::key`] would (`cmd-c` reaches the program when there's nothing
+    /// to copy).
+    pub fn copy(&self, or_key: Option<KeyEvent>) {
+        self.send(Request::Copy(or_key));
+    }
+
     /// The newest frame, if there is one the UI hasn't taken. Call it once per frame.
     pub fn take_snapshot(&self) -> Option<Snapshot> {
         let mut handoff = self.handoff.lock().expect("handoff lock");
@@ -324,8 +359,12 @@ impl Worker {
     fn run(mut self) {
         self.publish();
         loop {
-            // Sleep until a request comes, or until a render hold has to end.
-            let deadline = self.vt.hold_deadline();
+            // Sleep until a request comes, until a render hold has to end, or until a selection
+            // drag held past an edge scrolls again.
+            let deadline = match (self.vt.hold_deadline(), self.vt.autoscroll_deadline()) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
             let first = match deadline {
                 Some(deadline) => {
                     match self
@@ -362,6 +401,9 @@ impl Worker {
                 };
             }
             if self.vt.expire_hold(Instant::now()) {
+                self.changed = true;
+            }
+            if self.vt.autoscroll(Instant::now()) {
                 self.changed = true;
             }
             self.flush();
@@ -408,8 +450,9 @@ impl Worker {
                 // Replies queued so far go out before the key, as the program asked first.
                 self.flush();
                 let bytes = self.vt.encode_key(&event);
+                let typed = !bytes.is_empty() && event.action != KeyAction::Release;
                 self.input(bytes);
-                false
+                typed && self.typed()
             }
             Request::Mouse(event) => {
                 self.flush();
@@ -420,8 +463,40 @@ impl Worker {
             Request::Paste { text, allow_unsafe } => {
                 self.flush();
                 match self.vt.paste(&text, allow_unsafe) {
-                    Ok(bytes) => self.input(bytes),
-                    Err(rejected) => self.out(Output::Event(Event::PasteRejected(rejected))),
+                    Ok(bytes) if !bytes.is_empty() => {
+                        self.input(bytes);
+                        self.typed()
+                    }
+                    Ok(_) => false,
+                    Err(rejected) => {
+                        self.out(Output::Event(Event::PasteRejected(rejected)));
+                        false
+                    }
+                }
+            }
+            Request::Input(bytes) => {
+                self.flush();
+                self.input(bytes);
+                self.typed()
+            }
+            Request::Select(event) => {
+                self.vt.select(&event, Instant::now());
+                true
+            }
+            Request::ClearSelection => {
+                let had = self.vt.has_selection();
+                self.vt.clear_selection();
+                had
+            }
+            Request::Copy(or_key) => {
+                self.flush();
+                match (self.vt.selection_text(), or_key) {
+                    (Some(text), _) => self.out(Output::Selection(text)),
+                    (None, Some(key)) => {
+                        let bytes = self.vt.encode_key(&key);
+                        self.input(bytes);
+                    }
+                    (None, None) => {}
                 }
                 false
             }
@@ -460,6 +535,20 @@ impl Worker {
         if !bytes.is_empty() {
             self.out(Output::Input(bytes));
         }
+    }
+
+    /// The person typed into the program, as Ghostty and Herdr app treat it: the selection
+    /// goes and the viewport returns to the bottom. True if either changed the screen.
+    fn typed(&mut self) -> bool {
+        let selected = self.vt.has_selection();
+        if selected {
+            self.vt.clear_selection();
+        }
+        let scrolled = !self.vt.at_bottom();
+        if scrolled {
+            self.vt.scroll(Scroll::Bottom);
+        }
+        selected || scrolled
     }
 
     fn out(&mut self, output: Output) {

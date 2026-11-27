@@ -234,14 +234,24 @@ fn typing_goes_to_the_focused_pane_as_data() {
     );
     assert!(fake.sent_to("t2").is_empty());
 
-    // Ctrl+C reaches the program as its control character.
-    rt.key(KeyEvent {
+    // Ctrl+C reaches the program in the form it asked for: Neovim's modifyOtherKeys makes it
+    // `CSI 27;5;99~`, as Ghostty sends it; a plain shell gets its control character.
+    let ctrl_c = KeyEvent {
         key: Key::Text("c".into()),
         mods: Mods {
             ctrl: true,
             ..Mods::default()
         },
-    });
+    };
+    rt.key(ctrl_c.clone());
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        fake.sent_to("t1").last(),
+        Some(&Out::Input(b"\x1b[27;5;99~".to_vec()))
+    );
+    fake.output("t1", b"\x1bc");
+    frames(&mut rt, 3);
+    rt.key(ctrl_c);
     rt.frame(1.0 / 60.0);
     assert_eq!(fake.sent_to("t1").last(), Some(&Out::Input(vec![0x03])));
 }

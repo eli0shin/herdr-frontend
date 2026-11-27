@@ -9,6 +9,8 @@ publish.workspace = true
 default-run = "herdr-frontend"
 
 [dependencies]
+# `terminal.put` carries a dropped file's bytes as base64. The version already in Rune's tree.
+base64 = "0.22.1"
 ghostty-vt-sys = { path = "../ghostty-vt-sys" }
 herdr-client = { path = "../herdr-client" }
 herdr-proto = { path = "../herdr-proto" }

@@ -5,8 +5,11 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use ghostty_vt_sys::GHOSTTY_KEY_ARROW_UP;
-use terminal::{Config, Event, KeyEvent, Mods, Output, PasteRejected, Snapshot, Terminal};
+use ghostty_vt_sys::{GHOSTTY_KEY_A, GHOSTTY_KEY_ARROW_UP, GHOSTTY_KEY_C};
+use terminal::{
+    Config, Event, KeyEvent, Mods, Output, PasteRejected, Scroll, SelectAction, SelectEvent,
+    Snapshot, Terminal,
+};
 
 const PATIENCE: Duration = Duration::from_secs(10);
 
@@ -328,4 +331,109 @@ fn dropping_a_terminal_doesnt_parse_its_backlog_first() {
     });
     drop(terminal);
     assert_eq!(parsed.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+/// Selects `cols` cells of row 0 from its first, in `config()`'s 10x22 cells.
+fn select_start_of_row(terminal: &Terminal, cols: u16) {
+    terminal.select(SelectEvent::new(SelectAction::Press, 1.0, 5.0));
+    let end = f32::from(cols) * 10.0 - 2.0;
+    terminal.select(SelectEvent::new(SelectAction::Drag, end, 5.0));
+    terminal.select(SelectEvent::new(SelectAction::Release, end, 5.0));
+}
+
+#[test]
+fn copy_sends_the_selection_or_else_the_key() {
+    let (terminal, _wakes) = spawn(config());
+    terminal.write(b"hello world".to_vec());
+    let cmd_c = KeyEvent {
+        unshifted: Some('c'),
+        ..KeyEvent::press(GHOSTTY_KEY_C, Mods::SUPER)
+    };
+    // Nothing selected: the key goes to the program, as it would under the kitty protocol.
+    terminal.write(b"\x1b[>1u".to_vec());
+    terminal.copy(Some(cmd_c.clone()));
+    assert_eq!(sync(&terminal), [Output::Input(b"\x1b[99;9u".to_vec())]);
+
+    select_start_of_row(&terminal, 5);
+    terminal.copy(Some(cmd_c));
+    terminal.copy(None);
+    assert_eq!(
+        sync(&terminal),
+        [
+            Output::Selection("hello".into()),
+            Output::Selection("hello".into())
+        ]
+    );
+    terminal.clear_selection();
+    terminal.copy(None);
+    assert_eq!(sync(&terminal), [], "nothing to copy, no key: nothing");
+}
+
+#[test]
+fn typing_drops_the_selection_and_returns_to_the_bottom() {
+    let (terminal, wakes) = spawn(Config {
+        rows: 5,
+        ..config()
+    });
+    let lines: Vec<u8> = (1..=20)
+        .flat_map(|i| format!("line {i}\r\n").into_bytes())
+        .collect();
+    terminal.write(lines);
+    terminal.scroll(Scroll::Delta(-3));
+    select_start_of_row(&terminal, 4);
+    snapshot_where(&terminal, &wakes, |s| {
+        !s.scrollbar.at_bottom && s.screen[0].selection.is_some()
+    });
+
+    // A lone modifier types nothing and changes nothing.
+    terminal.key(KeyEvent::press(
+        ghostty_vt_sys::GHOSTTY_KEY_SHIFT_LEFT,
+        Mods::SHIFT,
+    ));
+    assert_eq!(sync(&terminal), []);
+    terminal.copy(None);
+    assert_eq!(sync(&terminal), [Output::Selection("line".into())]);
+
+    terminal.key(KeyEvent::text(GHOSTTY_KEY_A, "a"));
+    assert_eq!(sync(&terminal), [Output::Input(b"a".to_vec())]);
+    let s = snapshot_where(&terminal, &wakes, |s| s.scrollbar.at_bottom);
+    assert!(s.screen.iter().all(|row| row.selection.is_none()));
+}
+
+#[test]
+fn input_goes_out_as_it_is_in_order_with_keys() {
+    let (terminal, _wakes) = spawn(config());
+    terminal.key(KeyEvent::text(GHOSTTY_KEY_A, "a"));
+    terminal.input(b"\x1bb".to_vec());
+    terminal.input(Vec::new());
+    terminal.key(KeyEvent::text(GHOSTTY_KEY_A, "a"));
+    assert_eq!(
+        sync(&terminal),
+        [
+            Output::Input(b"a".to_vec()),
+            Output::Input(b"\x1bb".to_vec()),
+            Output::Input(b"a".to_vec())
+        ]
+    );
+}
+
+#[test]
+fn a_selection_drag_held_past_the_top_scrolls_on_the_worker() {
+    let (terminal, wakes) = spawn(Config {
+        rows: 5,
+        ..config()
+    });
+    let lines: Vec<u8> = (1..=40)
+        .flat_map(|i| format!("line {i}\r\n").into_bytes())
+        .collect();
+    terminal.write(lines);
+    let bottom = snapshot_where(&terminal, &wakes, |s| s.line(3).contains("line 40"));
+    terminal.select(SelectEvent::new(SelectAction::Press, 1.0, 50.0));
+    terminal.select(SelectEvent::new(SelectAction::Drag, 1.0, -40.0));
+    // No more events: the worker keeps scrolling while the drag is held there.
+    let s = snapshot_where(&terminal, &wakes, |s| {
+        s.scrollbar.offset + 5 <= bottom.scrollbar.offset
+    });
+    assert!(s.screen[0].selection.is_some());
+    terminal.select(SelectEvent::new(SelectAction::Release, 1.0, -40.0));
 }

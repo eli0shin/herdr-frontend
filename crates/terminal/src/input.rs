@@ -1,9 +1,11 @@
-//! Input to a terminal's program: key, mouse, paste and focus events, and what they encode to.
+//! Input to a terminal's program: key, mouse, paste and focus events, and what they encode to,
+//! and the mouse selection a program that doesn't take the mouse leaves to the terminal.
 //!
 //! Keys, mouse events and pastes encode through libghostty-vt with the terminal's modes as they
 //! are at that moment ([`crate::Vt::encode_key`], [`crate::Vt::encode_mouse`],
 //! [`crate::Vt::paste`], or the same requests sent to a [`crate::Terminal`]'s worker). Focus has
-//! no modes to follow, so [`encode_focus`] is a plain function.
+//! no modes to follow, so [`encode_focus`] is a plain function. Selecting goes through
+//! libghostty-vt's selection gestures ([`crate::Vt::select`]).
 
 use ghostty_vt_sys::*;
 
@@ -157,6 +159,45 @@ pub struct MouseEvent {
     pub y: f32,
     /// Some button is held (motion while dragging).
     pub any_button_pressed: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectAction {
+    Press,
+    /// The pointer moved with the button held, inside the grid or past its edges.
+    Drag,
+    Release,
+}
+
+/// One step of selecting text with the mouse, while the program doesn't take it (Ghostty's
+/// selection gestures: a click, a drag, a double or triple click, and scrolling while a drag
+/// is held past the top or bottom edge).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SelectEvent {
+    pub action: SelectAction,
+    /// The pointer in device pixels from the grid's top-left corner, in the cell size the
+    /// terminal was last resized with. A drag may go past the grid's edges.
+    pub x: f32,
+    pub y: f32,
+    /// Which click of a run the press is: 1 selects cells as it drags, 2 words, 3 lines.
+    pub clicks: u32,
+    /// Shift: a press moves the end of the selection there, and the drag keeps moving it.
+    pub extend: bool,
+    /// A rectangular block rather than text as it flows (Alt held).
+    pub rectangle: bool,
+}
+
+impl SelectEvent {
+    pub fn new(action: SelectAction, x: f32, y: f32) -> SelectEvent {
+        SelectEvent {
+            action,
+            x,
+            y,
+            clicks: 1,
+            extend: false,
+            rectangle: false,
+        }
+    }
 }
 
 /// A paste was refused because the text could run commands (a newline outside bracketed paste,

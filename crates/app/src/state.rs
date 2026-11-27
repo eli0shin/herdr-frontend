@@ -20,21 +20,35 @@
 //!
 //! Viewers stay attached while their pane is in the layout, shown or not, so switching back is
 //! instant and the program isn't sent to the headless size and back.
+//!
+//! Input goes to the terminals' workers, which encode it for the program's modes
+//! (`docs/research/terminal-rendering.md` §3): keys with their physical key, consumed modifiers
+//! and releases ([`keys`]), what an input method commits, mouse reports while the program tracks
+//! the mouse and selections while it doesn't, the wheel, pastes and dropped files. Focus is never
+//! encoded here: the FOCUS frames above are the core's to turn into `CSI I` and `CSI O`.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::time::Duration;
 
+use ghostty_vt_sys::{GHOSTTY_KEY_C, GHOSTTY_KEY_V};
 use herdr_proto::Display;
 use herdr_proto::methods::TerminalAttach;
 use model::mode::{PopupState, Rename};
 use model::{
     Action, AppCommand, CopyAction, Effect, Event, Focus, Input, Level, Model, Popup, PopupAction,
-    Toast, View,
+    TerminalAction, TerminalCommand, Toast, View,
 };
-use rune::{Family, ImageCache, KeyEvent, TextEdit, TextStyle, Tx};
+use rune::{
+    ClipboardContent, Drag, Family, ImageCache, Ime, KeyEvent, Phase, PointerButton, PointerEvent,
+    TextEdit, TextStyle, Tx, WheelEvent,
+};
 use serde_json::{Map, Value, json};
-use terminal::{GridSize, Output, Padding, PaddingBalance, ScreenSize, Size, Terminal, Theme};
+use terminal::{
+    ActiveScreen, GridSize, MouseAction, MouseButton, MouseEvent, OptionAsAlt, Output, Padding,
+    PaddingBalance, ScreenSize, Scroll, SelectAction, SelectEvent, Size, Terminal, Theme,
+};
 
 use crate::config::settings::{self, Settings, UI_FONT_SIZE};
 use crate::config::theme::Chrome;
@@ -43,7 +57,8 @@ use crate::control::{self, Control, Probe};
 use crate::e2e::{self, Tap};
 use crate::home::{Home, VIEW};
 use crate::keyfile::{self, Loaded, Watcher};
-use crate::link::{Link, News, Offline, Out};
+use crate::keys::KeyInfo;
+use crate::link::{Link, News, Offline, Out, Upload};
 use crate::toast::{self, Toasts};
 use crate::view::terminal::TerminalPane;
 use crate::view::terminal::font::{Face, Font};
@@ -69,6 +84,12 @@ pub const SPLIT_GAP: f32 = 1.0;
 
 /// How long a scene or test waits for a terminal to settle.
 const SETTLE: Duration = Duration::from_secs(5);
+
+/// The points Rune gives a notched mouse wheel's step on macOS (its `LINE_POINTS`).
+const WHEEL_NOTCH: f32 = 40.0;
+
+/// Lines a notch scrolls: Ghostty's default wheel multiplier, which Herdr app keeps.
+const LINES_PER_NOTCH: f32 = 3.0;
 
 /// Where the core connection stands, as the window shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,6 +134,8 @@ pub struct Viewer {
     told_facts: Option<Display>,
     told_grid: Option<GridSize>,
     focus_sent: bool,
+    /// What the input method is composing in this terminal.
+    pub preedit: Option<String>,
 }
 
 impl Viewer {
@@ -122,10 +145,42 @@ impl Viewer {
             None => {
                 let mut pane = TerminalPane::new(self.key.clone(), snapshot);
                 pane.focused = self.focused;
+                pane.preedit = self.preedit.clone();
                 self.pane = Some(pane);
             }
         }
     }
+
+    fn set_preedit(&mut self, preedit: Option<String>) {
+        if let Some(pane) = &mut self.pane {
+            pane.preedit = preedit.clone();
+        }
+        self.preedit = preedit;
+    }
+
+    /// The program's modes and screen as the last snapshot drew them.
+    fn shown(&self) -> Option<&terminal::Snapshot> {
+        self.pane.as_ref().map(|p| &p.snapshot)
+    }
+
+    fn tracks_mouse(&self) -> bool {
+        self.shown().is_some_and(|s| s.modes.mouse_tracking)
+    }
+}
+
+/// What a mouse button held over a terminal is doing.
+#[derive(Clone, Debug, PartialEq)]
+enum Gesture {
+    /// The program tracks the mouse: the press, motion and release are its.
+    Report(MouseButton),
+    /// Selecting text.
+    Select,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Press {
+    address: String,
+    gesture: Gesture,
 }
 
 /// What the next handler with a [`Tx`] carries out.
@@ -138,6 +193,12 @@ struct Ui {
     window: Vec<AppCommand>,
     /// Keys a harness sent (`crate::e2e`), to deliver as typed.
     keys: Vec<KeyEvent>,
+    /// Text for the clipboard: a selection copied.
+    copy: Option<String>,
+    /// Terminals to paste the clipboard into, once it's read.
+    paste: Vec<String>,
+    /// Terminals to paste the clipboard's image into, once it's read.
+    paste_image: Vec<String>,
 }
 
 /// The window's tab area, as laid out, in view points.
@@ -217,6 +278,15 @@ pub struct State {
     pub help_filter: TextEdit,
     /// Something only the view shows changed (a toast, the prefix indicator): draw a frame.
     redraw: bool,
+    /// Which Option keys act as Alt in terminals: both, as Eli's Ghostty has it
+    /// (`macos-option-as-alt = true`).
+    pub option_as_alt: OptionAsAlt,
+    /// Keys whose press went to a terminal, so only their releases follow.
+    keys_down: Vec<(String, terminal::Key)>,
+    /// The mouse button held over a terminal.
+    press: Option<Press>,
+    /// Trackpad scrolling not yet a whole line, in points.
+    wheel: f32,
 }
 
 impl Default for State {
@@ -316,6 +386,10 @@ impl State {
             keys_every: keyfile::EVERY,
             help_filter: TextEdit::default(),
             redraw: false,
+            option_as_alt: OptionAsAlt::Both,
+            keys_down: Vec::new(),
+            press: None,
+            wheel: 0.0,
         };
         s.configure_all(config);
         s.window_sized(crate::SIZE.0, crate::SIZE.1);
@@ -642,17 +716,7 @@ impl State {
             Effect::App(command) => self.app_command(command),
             Effect::Toast(toast) => self.toast(toast),
             Effect::NotYet(action) => self.not_yet(&action),
-            // The terminal's own commands (sends, paste, copy, search) are ticket 015's and
-            // 019's; until then they say so.
-            Effect::Terminal { command, .. } => match command {
-                model::TerminalCommand::Action(action) => self.not_yet(&Action::Terminal(action)),
-                // Copy mode says "not yet" once, as it closes (`State::mode_changed`).
-                model::TerminalCommand::CopyStart
-                | model::TerminalCommand::CopyMove(_)
-                | model::TerminalCommand::CopySelect(_)
-                | model::TerminalCommand::CopyYank
-                | model::TerminalCommand::CopyEnd => {}
-            },
+            Effect::Terminal { address, command } => self.terminal_command(&address, command),
             // A `do` call's answer that came in a later step: `space.new`'s, once its terminal
             // runs.
             Effect::Answer { id, reply } => {
@@ -731,7 +795,48 @@ impl State {
         self.ui.wake = Some(self.ui.wake.map_or(at, |w| w.min(at)));
     }
 
-    /// Hands the focus, the window commands and the wakes asked for to Rune.
+    /// A `terminal` key binding's action, or another command for a terminal's view.
+    fn terminal_command(&mut self, address: &str, command: TerminalCommand) {
+        // Find and select all are ticket 019's; until then they say so.
+        if let TerminalCommand::Action(
+            action @ (TerminalAction::Search | TerminalAction::SelectAll),
+        ) = command
+        {
+            self.not_yet(&Action::Terminal(action));
+            return;
+        }
+        let Some(viewer) = self.viewers.get(address) else {
+            return;
+        };
+        match command {
+            // `send:` bindings: the text as it is (`alt-left` is `ESC b`).
+            TerminalCommand::Action(TerminalAction::Send(text)) => {
+                viewer.terminal.input(text.into_bytes())
+            }
+            TerminalCommand::Action(TerminalAction::Paste) => self.ui.paste.push(address.into()),
+            // The selection, or with none, Cmd+C itself for the program.
+            TerminalCommand::Action(TerminalAction::Copy) => {
+                viewer.terminal.copy(Some(terminal::KeyEvent {
+                    unshifted: Some('c'),
+                    ..terminal::KeyEvent::press(GHOSTTY_KEY_C, terminal::Mods::SUPER)
+                }))
+            }
+            // The clipboard's image, once it's read.
+            TerminalCommand::Action(TerminalAction::PasteImage) => {
+                self.ui.paste_image.push(address.into())
+            }
+            TerminalCommand::Action(TerminalAction::Search | TerminalAction::SelectAll) => {}
+            // Copy mode says "not yet" once, as it closes (`State::mode_changed`); it's ticket
+            // 020's.
+            TerminalCommand::CopyStart
+            | TerminalCommand::CopyMove(_)
+            | TerminalCommand::CopySelect(_)
+            | TerminalCommand::CopyYank
+            | TerminalCommand::CopyEnd => {}
+        }
+    }
+
+    /// Hands the focus, the window commands, the clipboard and the wakes asked for to Rune.
     fn apply_ui(&mut self, tx: &mut Tx) {
         match self.ui.focus.take() {
             Some(Focus::Pane(pane)) => tx.focus_when_shown(pane_key(&pane), false),
@@ -745,6 +850,21 @@ impl State {
                 AppCommand::Maximize => tx.toggle_maximized(),
                 _ => {}
             }
+        }
+        if let Some(text) = self.ui.copy.take() {
+            tx.copy(text);
+        }
+        for address in std::mem::take(&mut self.ui.paste_image) {
+            tx.read_clipboard(move |s: &mut State, content, tx| {
+                s.paste_image(&address, content.image());
+                s.after_input(tx);
+            });
+        }
+        for address in std::mem::take(&mut self.ui.paste) {
+            tx.read_clipboard(move |s: &mut State, content, tx| {
+                s.paste_content(&address, content);
+                s.after_input(tx);
+            });
         }
         if let Some(at) = self.ui.wake.take() {
             tx.wake_at(at);
@@ -897,6 +1017,7 @@ impl State {
                 self.step(now, Event::Lost);
             }
             News::Unavailable(why) => self.status = Status::Down(why),
+            News::Put { address, paths } => self.paste_text(&address, &quote_paths(&paths)),
             News::Event(event) => {
                 self.step(now, event);
             }
@@ -1049,6 +1170,7 @@ impl State {
                 cell_width: cell.width,
                 cell_height: cell.height,
                 theme: self.theme.clone(),
+                option_as_alt: self.option_as_alt,
                 ..terminal::Config::default()
             },
             waker,
@@ -1064,6 +1186,7 @@ impl State {
             told_facts: None,
             told_grid: None,
             focus_sent: false,
+            preedit: None,
         }
     }
 
@@ -1207,6 +1330,10 @@ impl State {
             let mut sent = false;
             for viewer in self.viewers.values() {
                 while let Ok(output) = viewer.terminal.output().try_recv() {
+                    if let Output::Selection(text) = output {
+                        self.ui.copy = Some(text);
+                        continue;
+                    }
                     if viewer.attach != Attach::Attached {
                         continue;
                     }
@@ -1218,6 +1345,7 @@ impl State {
                             self.link.send(&viewer.address, Out::Input(bytes));
                             sent = true;
                         }
+                        Output::Selection(_) => {}
                         // Titles, bells and the clipboard come with their tickets.
                         Output::Event(_) => {}
                     }
@@ -1309,6 +1437,10 @@ impl State {
         s.step(tx.clock(), Event::WindowActive(active));
         if !active {
             s.window.save(false);
+            // The input method drops what it was composing with the window.
+            for viewer in s.viewers.values_mut() {
+                viewer.set_preedit(None);
+            }
         }
         s.pump(tx.clock());
         s.apply_ui(tx);
@@ -1341,34 +1473,158 @@ impl State {
 
     /// A pane took or lost the keyboard: the model follows a click into another pane.
     pub fn pane_focus(&mut self, pane: &str, gained: bool, tx: &mut Tx) {
-        if gained && self.model.focused_pane().as_deref() != Some(pane) {
+        if !gained {
+            // Rune discards a composition when focus moves; the pane left behind must not keep
+            // drawing it, or treat its keys as part of it.
+            if let Some(address) = self.model.world().address_of(pane).map(str::to_owned)
+                && let Some(viewer) = self.viewers.get_mut(&address)
+            {
+                viewer.set_preedit(None);
+            }
+            return;
+        }
+        if self.model.focused_pane().as_deref() != Some(pane) {
             self.step(tx.clock(), Action::FocusPane(pane.to_owned()));
             self.pump(tx.clock());
             self.apply_ui(tx);
         }
     }
 
-    /// A key in pane `pane`: plain typing goes to its terminal. False for keys it leaves.
+    /// Sends a terminal that isn't in use its pane's grid, before input it must send anyway.
+    fn resize_for_input(&mut self, address: &str) {
+        let Some(rect) = self
+            .shown_panes()
+            .into_iter()
+            .find(|(_, _, a)| a.as_deref() == Some(address))
+            .map(|(_, rect, _)| rect)
+        else {
+            return;
+        };
+        let grid = self.grid_for(rect);
+        if let Some(viewer) = self.viewers.get_mut(address)
+            && viewer.attach == Attach::Attached
+            && viewer.told_grid != Some(grid)
+        {
+            self.link.send(
+                address,
+                Out::Resize {
+                    cols: grid.columns,
+                    rows: grid.rows,
+                },
+            );
+            viewer.told_grid = Some(grid);
+        }
+    }
+
+    /// Makes pane `pane` the one in use before input it didn't get through the keyboard (a
+    /// click, a drop): focused, so the window's in-use terminal takes its size first. True when
+    /// its terminal is the one in use: only then may it send the program DATA, which would
+    /// otherwise apply this viewer's stale size (`herdr-core-protocol.md` §4).
+    fn use_pane(&mut self, pane: &str, address: &str, tx: &mut Tx) -> bool {
+        if self.model.focused_pane().as_deref() != Some(pane) {
+            self.step(tx.clock(), Action::FocusPane(pane.to_owned()));
+        }
+        self.pump(tx.clock());
+        self.in_use() == Some(address)
+    }
+
+    /// A key pressed in pane `pane`: it goes to its terminal. False for keys it leaves (chords
+    /// with Cmd).
     pub fn typed(&mut self, pane: &str, ev: &KeyEvent, tx: &mut Tx) -> bool {
-        let Some(key) = keys::encode(ev) else {
+        let address = self.model.world().address_of(pane).map(str::to_owned);
+        let composing = address
+            .as_ref()
+            .and_then(|a| self.viewers.get(a))
+            .is_some_and(|v| v.preedit.is_some());
+        let info = KeyInfo {
+            composing,
+            ..KeyInfo::pressed(tx, self.option_as_alt)
+        };
+        let Some(key) = keys::encode(ev, info) else {
             return false;
         };
         if self.model.focused_pane().as_deref() != Some(pane) {
             self.step(tx.clock(), Action::FocusPane(pane.to_owned()));
         }
-        let Some(address) = self.model.world().address_of(pane).map(str::to_owned) else {
+        let Some(address) = address else {
             return true;
         };
         // Typing is using it: it takes the size first, if it hadn't.
         self.pump(tx.clock());
         if let Some(viewer) = self.viewers.get(&address) {
+            let down = (address.clone(), key.key);
+            if !self.keys_down.contains(&down) {
+                self.keys_down.push(down);
+            }
             viewer.terminal.key(key);
         }
+        self.after_input(tx);
+        true
+    }
+
+    /// A key let go in pane `pane`: its release goes to the terminal its press went to, which
+    /// sends it only to a program that asked for releases (kitty's event types flag).
+    pub fn released(&mut self, pane: &str, ev: &KeyEvent, tx: &mut Tx) -> bool {
+        let info = KeyInfo::released(tx, self.option_as_alt);
+        let Some(key) = keys::encode(ev, info) else {
+            return false;
+        };
+        let Some(address) = self.model.world().address_of(pane).map(str::to_owned) else {
+            return false;
+        };
+        let down = (address.clone(), key.key);
+        let Some(i) = self.keys_down.iter().position(|k| *k == down) else {
+            return false;
+        };
+        self.keys_down.remove(i);
+        if let Some(viewer) = self.viewers.get(&address) {
+            viewer.terminal.key(key);
+        }
+        self.after_input(tx);
+        true
+    }
+
+    /// After input reached a worker: in scenes and tests its answer is waited for, and what it
+    /// asked of the UI (the clipboard, a frame) goes to Rune.
+    fn after_input(&mut self, tx: &mut Tx) {
         if self.synchronous {
             self.pump(tx.clock());
         }
         self.apply_ui(tx);
-        true
+    }
+
+    /// The terminal the keyboard is in: the focused pane's.
+    fn typing_into(&self) -> Option<String> {
+        let address = self.model.focused_terminal()?;
+        self.viewers
+            .contains_key(address)
+            .then(|| address.to_owned())
+    }
+
+    /// `App::on_ime`: the input method composing for the focused terminal, whose caret the pane
+    /// marks. A composition shows at the cursor; committed text goes to the program as it is.
+    pub fn on_ime(s: &mut State, ime: &Ime, tx: &mut Tx) -> bool {
+        let Some(address) = s.typing_into() else {
+            return false;
+        };
+        let viewer = s.viewers.get_mut(&address).expect("typing into a viewer");
+        match ime {
+            Ime::Preedit(text, ..) => {
+                viewer.set_preedit((!text.is_empty()).then(|| text.clone()));
+                true
+            }
+            Ime::Commit(text) => {
+                viewer.set_preedit(None);
+                viewer.terminal.input(text.as_bytes());
+                s.after_input(tx);
+                true
+            }
+            Ime::Disabled => {
+                viewer.set_preedit(None);
+                false
+            }
+            Ime::Select(_) | Ime::Enabled => false,
+        }
     }
 
     /// An action from the window (a click, the popup's field), stepped and carried out.
@@ -1437,6 +1693,343 @@ impl State {
         typed
     }
 
+    /// The pointer in device pixels from the grid's top left, from points in the pane.
+    fn grid_px(&self, address: &str, x: f32, y: f32) -> (f32, f32) {
+        let padding = self
+            .viewers
+            .get(address)
+            .and_then(|v| v.pane.as_ref())
+            .map_or(Padding::default(), |p| p.padding);
+        (
+            x * self.scale - padding.left as f32,
+            y * self.scale - padding.top as f32,
+        )
+    }
+
+    /// A mouse button pressed, dragged or let go over pane `pane` (`El::on_drag`). A program
+    /// that tracks the mouse gets it, unless Shift is held; otherwise the primary button
+    /// selects (Shift extends, Alt makes a block) and the middle one pastes. Letting go of a
+    /// selection copies it (`copy_on_select`).
+    pub fn pane_drag(&mut self, pane: &str, d: &Drag, tx: &mut Tx) {
+        let Some(address) = self.model.world().address_of(pane).map(str::to_owned) else {
+            return;
+        };
+        let in_use = d.phase == Phase::Down && self.use_pane(pane, &address, tx);
+        let Some(viewer) = self.viewers.get(&address) else {
+            return;
+        };
+        let mods = tx.mods();
+        let (x, y) = self.grid_px(&address, d.x, d.y);
+        let button = match tx.button() {
+            PointerButton::Middle => MouseButton::Middle,
+            PointerButton::Secondary => MouseButton::Right,
+            _ => MouseButton::Left,
+        };
+        let report = |action, button, any_button_pressed| MouseEvent {
+            action,
+            button,
+            mods: term_mods(mods),
+            x,
+            y,
+            any_button_pressed,
+        };
+        let select = |action| SelectEvent {
+            clicks: d.clicks,
+            extend: mods.shift,
+            rectangle: mods.alt,
+            ..SelectEvent::new(action, x, y)
+        };
+        match d.phase {
+            Phase::Down => {
+                let gesture = if in_use && viewer.tracks_mouse() && !mods.shift {
+                    // The program took the click: an old selection can't be copied again.
+                    viewer.terminal.clear_selection();
+                    viewer
+                        .terminal
+                        .mouse(report(MouseAction::Press, Some(button), false));
+                    Some(Gesture::Report(button))
+                } else if button == MouseButton::Left {
+                    viewer.terminal.select(select(SelectAction::Press));
+                    Some(Gesture::Select)
+                } else {
+                    if button == MouseButton::Middle && in_use {
+                        self.ui.paste.push(address.clone());
+                    }
+                    None
+                };
+                self.press = gesture.map(|gesture| Press {
+                    address: address.clone(),
+                    gesture,
+                });
+            }
+            Phase::Move => {
+                match self.press.as_ref().map(|p| (&p.address, &p.gesture)) {
+                    Some((a, Gesture::Report(held))) if *a == address => viewer
+                        .terminal
+                        .mouse(report(MouseAction::Motion, Some(*held), true)),
+                    Some((a, Gesture::Select)) if *a == address => {
+                        viewer.terminal.select(select(SelectAction::Drag))
+                    }
+                    _ => {}
+                }
+            }
+            Phase::Up => match self.press.take() {
+                Some(Press {
+                    address: a,
+                    gesture: Gesture::Report(held),
+                }) if a == address => {
+                    viewer
+                        .terminal
+                        .mouse(report(MouseAction::Release, Some(held), false))
+                }
+                Some(Press {
+                    address: a,
+                    gesture: Gesture::Select,
+                }) if a == address => {
+                    viewer.terminal.select(select(SelectAction::Release));
+                    viewer.terminal.copy(None);
+                }
+                _ => {}
+            },
+        }
+        self.after_input(tx);
+    }
+
+    /// The pointer moving over pane `pane` with no button held: a program tracking every
+    /// motion (mode 1003) hears it.
+    pub fn pane_hover(&mut self, pane: &str, p: PointerEvent, tx: &mut Tx) {
+        tx.live_only();
+        if self.press.is_some() {
+            return;
+        }
+        let Some(address) = self.model.world().address_of(pane).map(str::to_owned) else {
+            return;
+        };
+        let mods = tx.mods();
+        let (x, y) = self.grid_px(&address, p.x, p.y);
+        if self.in_use() == Some(address.as_str())
+            && let Some(viewer) = self.viewers.get(&address)
+            && viewer.tracks_mouse()
+            && !mods.shift
+        {
+            viewer.terminal.mouse(MouseEvent {
+                action: MouseAction::Motion,
+                button: None,
+                mods: term_mods(mods),
+                x,
+                y,
+                any_button_pressed: false,
+            });
+        }
+    }
+
+    /// The wheel over pane `pane`, as Herdr app and Ghostty scroll: a notch is three lines,
+    /// trackpad scrolling a line per cell height. A program tracking the mouse hears wheel
+    /// buttons (Shift keeps the wheel the terminal's); on the alternate screen, which has no
+    /// scrollback, the arrows (xterm's alternate scroll); otherwise the scrollback moves. Only
+    /// the terminal in use sends the program anything: over another pane the wheel moves the
+    /// scrollback alone.
+    pub fn pane_wheel(&mut self, pane: &str, ev: &WheelEvent, tx: &mut Tx) -> bool {
+        let Some(address) = self.model.world().address_of(pane).map(str::to_owned) else {
+            return false;
+        };
+        // macOS turns Shift with a notched wheel into horizontal scrolling.
+        let dy = if ev.mods.shift && ev.dy == 0.0 {
+            ev.dx
+        } else {
+            ev.dy
+        };
+        let lines = if ev.notch || !ev.precise {
+            let ticks = dy / WHEEL_NOTCH;
+            if ticks == 0.0 {
+                0
+            } else {
+                (ticks.signum() * ticks.abs().max(1.0) * LINES_PER_NOTCH).trunc() as i32
+            }
+        } else {
+            let line = self.face(self.scale).cell_pt().1;
+            self.wheel += dy;
+            let lines = (self.wheel / line).trunc();
+            self.wheel -= lines * line;
+            lines as i32
+        };
+        let in_use = self.in_use() == Some(address.as_str());
+        let Some(viewer) = self.viewers.get(&address) else {
+            return true;
+        };
+        if lines == 0 {
+            return true;
+        }
+        let (x, y) = self.grid_px(&address, ev.x, ev.y);
+        let up = lines > 0;
+        let n = lines.unsigned_abs();
+        let alternate = viewer
+            .shown()
+            .is_some_and(|s| s.active_screen == ActiveScreen::Alternate);
+        if !in_use && (alternate || (viewer.tracks_mouse() && !ev.mods.shift)) {
+            return true;
+        }
+        if viewer.tracks_mouse() && !ev.mods.shift {
+            let button = if up {
+                MouseButton::WheelUp
+            } else {
+                MouseButton::WheelDown
+            };
+            for _ in 0..n {
+                viewer.terminal.mouse(MouseEvent {
+                    action: MouseAction::Press,
+                    button: Some(button),
+                    mods: term_mods(ev.mods),
+                    x,
+                    y,
+                    any_button_pressed: false,
+                });
+            }
+        } else if alternate {
+            let arrow = if up {
+                ghostty_vt_sys::GHOSTTY_KEY_ARROW_UP
+            } else {
+                ghostty_vt_sys::GHOSTTY_KEY_ARROW_DOWN
+            };
+            for _ in 0..n {
+                viewer
+                    .terminal
+                    .key(terminal::KeyEvent::press(arrow, terminal::Mods::NONE));
+            }
+        } else {
+            let delta = n as isize;
+            viewer
+                .terminal
+                .scroll(Scroll::Delta(if up { -delta } else { delta }));
+        }
+        self.after_input(tx);
+        true
+    }
+
+    /// A right-click on pane `pane`: the program's, when its terminal is labelled to send
+    /// right-clicks there (`herdr.right-click=program`) and it tracks the mouse, unless Shift is
+    /// held; otherwise the terminal's menu (ticket 026).
+    pub fn pane_right_click(&mut self, pane: &str, p: PointerEvent, tx: &mut Tx) {
+        let Some(address) = self.model.world().address_of(pane).map(str::to_owned) else {
+            return;
+        };
+        let to_program = self
+            .model
+            .world()
+            .terminal(&address)
+            .is_some_and(|t| herdr_shared::labels::right_click_to_program(&t.labels));
+        let mods = tx.mods();
+        let (x, y) = self.grid_px(&address, p.x, p.y);
+        let for_program = to_program
+            && !mods.shift
+            && self.viewers.get(&address).is_some_and(Viewer::tracks_mouse);
+        // The label decides, not the focus: a right-click for the program takes its pane, as
+        // a click does.
+        let in_use = for_program && self.use_pane(pane, &address, tx);
+        match self.viewers.get(&address) {
+            Some(viewer) if in_use => {
+                for action in [MouseAction::Press, MouseAction::Release] {
+                    viewer.terminal.mouse(MouseEvent {
+                        action,
+                        button: Some(MouseButton::Right),
+                        mods: term_mods(mods),
+                        x,
+                        y,
+                        any_button_pressed: false,
+                    });
+                }
+            }
+            _ => {
+                self.step(tx.clock(), Action::TerminalMenu(pane.to_owned()));
+            }
+        }
+        self.after_input(tx);
+    }
+
+    /// Files dropped on pane `pane`: their paths typed in, quoted for the shell, as a paste.
+    /// The pane takes focus first, as a click would. In a window in the background no pane is
+    /// in use, and the paste goes anyway, as in Herdr app: the person asked for it. It takes
+    /// the pane's grid with it, so the core doesn't apply a stale one.
+    pub fn pane_dropped(&mut self, pane: &str, paths: &[PathBuf], tx: &mut Tx) {
+        if let Some(address) = self.model.world().address_of(pane).map(str::to_owned) {
+            if !self.use_pane(pane, &address, tx) {
+                self.resize_for_input(&address);
+            }
+            self.drop_files(&address, paths.to_vec());
+        }
+        self.after_input(tx);
+    }
+
+    /// The root's `on_paste_content`: a paste Rune delivers (its Edit menu, a script) goes to
+    /// the terminal the keyboard is in.
+    pub fn pasted(&mut self, content: &ClipboardContent, tx: &mut Tx) {
+        if let Some(address) = self.typing_into() {
+            self.paste_content(&address, content);
+        }
+        self.after_input(tx);
+    }
+
+    /// What the clipboard held, pasted into a terminal as Herdr app pastes it: copied files as
+    /// if dropped, else the text, else (an image alone) Ctrl+V for the program to read it.
+    pub fn paste_content(&mut self, address: &str, content: &ClipboardContent) {
+        if !content.files().is_empty() {
+            self.drop_files(address, content.files().to_vec());
+        } else if !content.text().is_empty() {
+            self.paste_text(address, content.text());
+        } else if let Some(image) = content.image() {
+            self.paste_image(address, Some(image));
+        }
+    }
+
+    /// An image for a terminal's program. One on another machine reads that machine's
+    /// clipboard, so the image is sent beside it as a PNG and its path pasted; a local program
+    /// reads the clipboard itself when it hears Ctrl+V (Herdr app's `paste_image`).
+    fn paste_image(&mut self, address: &str, image: Option<&rune::ClipboardImage>) {
+        if address.contains('/') {
+            if let Some(image) = image {
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos());
+                self.link.put(
+                    address,
+                    vec![Upload::Bytes {
+                        name: format!("herdr-paste-{stamp}.png"),
+                        data: image.png().into(),
+                    }],
+                );
+            }
+        } else if let Some(viewer) = self.viewers.get(address) {
+            viewer.terminal.key(ctrl_v());
+        }
+    }
+
+    /// Text pasted into a terminal, framed for its modes (bracketed paste). Like Herdr app it
+    /// never asks before pasting text that could run commands; unsafe control bytes are still
+    /// replaced.
+    fn paste_text(&mut self, address: &str, text: &str) {
+        if let Some(viewer) = self.viewers.get(address) {
+            viewer.terminal.paste(text, true);
+        }
+    }
+
+    /// Files for a terminal: their paths, quoted, as a paste. A terminal on another machine
+    /// gets each file copied beside it first (`terminal.put`), and its path there.
+    fn drop_files(&mut self, address: &str, paths: Vec<PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
+        if address.contains('/') {
+            self.link
+                .put(address, paths.into_iter().map(Upload::File).collect());
+        } else {
+            let paths: Vec<String> = paths
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            self.paste_text(address, &quote_paths(&paths));
+        }
+    }
+
     /// `App::on_close` and `App::on_quit`: the last save of the window's place and the view.
     pub fn on_close(s: &mut State, _tx: &mut Tx) {
         s.window.save(true);
@@ -1446,4 +2039,51 @@ impl State {
         // The socket goes with the window, even when the process ends before the state drops.
         s.control = None;
     }
+}
+
+/// Rune's modifiers as a terminal's (Cmd is Super).
+fn term_mods(m: rune::Mods) -> terminal::Mods {
+    let mut mods = terminal::Mods::NONE;
+    for (held, bit) in [
+        (m.shift, terminal::Mods::SHIFT),
+        (m.ctrl, terminal::Mods::CTRL),
+        (m.alt, terminal::Mods::ALT),
+        (m.cmd || m.logo, terminal::Mods::SUPER),
+    ] {
+        if held {
+            mods = mods | bit;
+        }
+    }
+    mods
+}
+
+/// Ctrl+V, for a program to read the clipboard's image itself.
+fn ctrl_v() -> terminal::KeyEvent {
+    terminal::KeyEvent {
+        unshifted: Some('v'),
+        ..terminal::KeyEvent::press(GHOSTTY_KEY_V, terminal::Mods::CTRL)
+    }
+}
+
+/// Paths as a shell reads them, each followed by a space: as they are when plain, else
+/// single-quoted, as Herdr app types a drop (`quote_paths`). Agents read a dropped image that
+/// way.
+pub fn quote_paths(paths: &[String]) -> String {
+    let plain = |p: &str| {
+        !p.is_empty()
+            && p.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "/._-+=,:@%~".contains(c))
+    };
+    let mut out = String::new();
+    for p in paths {
+        if plain(p) {
+            out.push_str(p);
+        } else {
+            out.push('\'');
+            out.push_str(&p.replace('\'', "'\\''"));
+            out.push('\'');
+        }
+        out.push(' ');
+    }
+    out
 }
