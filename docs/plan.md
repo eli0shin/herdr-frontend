@@ -40,6 +40,8 @@ Scope rules are in `AGENTS.md`.
   agent-status, Pi and dot): herdr-frontend serves a compatible `ls | do | status` through its
   own binary. After parity, each tool reads one frontend setting and calls
   herdr-frontend, herdr-app or `hc` directly, with no shim; switching back is one edit (ticket 035).
+  The setting is `${XDG_CONFIG_HOME:-$HOME/.config}/herdr/frontend` (`docs/cli.md` "Frontend
+  selection").
 
 ## Workspace layout
 

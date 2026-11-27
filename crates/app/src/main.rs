@@ -8,6 +8,10 @@ fn main() {
     if herdr_frontend::control::is_subcommand(&args) {
         std::process::exit(herdr_frontend::control::client(&args));
     }
+    // A bare launch while a window serves this home brings that window forward instead.
+    if args.is_empty() && herdr_frontend::control::raise_running() {
+        return;
+    }
     // The terminals need a libghostty-vt the bindings work with; stop before opening a window.
     if let Err(mismatch) = ghostty_vt_sys::check_version() {
         eprintln!("herdr-frontend: {mismatch}");

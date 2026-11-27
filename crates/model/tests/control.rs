@@ -527,6 +527,65 @@ fn closing_a_space_needs_confirmed_then_ends_its_terminals() {
     assert_eq!(m.ls()["recent"], json!([]));
 }
 
+/// A closed space's terminals still carry its `herdr.space` label until the core ends them. A
+/// slow kill leaves them live and in no pane for a while, which must not adopt them back into a
+/// space under the closed id (`repos clean`, then `ls`: herdr-app keeps terminals it's closing
+/// out of adoption, `closing_terminals`).
+#[test]
+fn a_closed_spaces_terminals_are_not_adopted_back_while_they_end() {
+    let mut core = world();
+    let t4 = core.terminals.get_mut("t4").unwrap();
+    t4.labels.insert("herdr.space".into(), "sp2".into());
+    t4.labels.insert("herdr.tab".into(), "tb4".into());
+    let mut m = connected(&mut core);
+    let id = CallId(7);
+    let fx = m.step(
+        core.now,
+        Call {
+            id,
+            name: "space.close".into(),
+            args: json!({"id": "sp2", "confirmed": true}),
+        },
+    );
+    // The core hasn't ended t4 yet: its kill waits, and the terminal is still live.
+    let (kills, rest): (Vec<Effect>, Vec<Effect>) = fx.list.into_iter().partition(|e| {
+        matches!(
+            e,
+            Effect::Call {
+                request: model::Request::Kill(_),
+                ..
+            }
+        )
+    });
+    assert_eq!(kills.len(), 1, "t4's kill");
+    let out = run_effects(&mut m, &mut core, rest);
+    assert_eq!(answers(&out, id), json!({"ok": true}));
+    // Something else changes the listing meanwhile, which makes the window look for orphans.
+    let t1 = core.terminals["t1"].clone();
+    drive(
+        &mut m,
+        &mut core,
+        Event::Terminals(model::TerminalUpdate {
+            terminals: vec![t1],
+            ..Default::default()
+        }),
+    );
+    assert!(core.doc(None).space("sp2").is_none(), "closed for good");
+    assert!(m.world().space("sp2").is_none());
+    assert!(
+        !core
+            .calls
+            .iter()
+            .any(|c| matches!(c, model::Request::Get(g) if g.terminal == "t4")),
+        "t4 is not looked up for adoption: {:?}",
+        core.calls
+    );
+    // The kill lands; the space stays closed.
+    run_effects(&mut m, &mut core, kills);
+    assert!(core.doc(None).space("sp2").is_none());
+    assert!(m.world().space("sp2").is_none());
+}
+
 #[test]
 fn closing_a_pane_closes_its_tab_when_last_but_never_the_space() {
     let mut core = world();

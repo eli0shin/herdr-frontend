@@ -9,151 +9,17 @@
 
 #[path = "../../herdr-client/tests/support/mod.rs"]
 mod support;
-
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+mod window;
 
 use herdr_client::{ConnectOptions, Connection};
-use herdr_frontend::control::{HOME_VAR, SOCKET};
+use herdr_frontend::control::SOCKET;
 use herdr_frontend::fixtures::{pane, split, tab};
-use herdr_frontend::home::Home;
-use herdr_frontend::link::Live;
-use herdr_frontend::{SIZE, State, live};
-use herdr_proto::methods::{DocGet, DocSet, TerminalGet, TerminalRun};
-use rune::{Env, Runtime};
-use serde_json::{Value, json};
+use serde_json::json;
 use support::IsolatedCore;
-
-const WAIT: Duration = Duration::from_secs(30);
-
-/// A scratch herdr-frontend home under `/tmp` (socket paths must stay short), removed when
-/// dropped.
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new() -> Scratch {
-        let dir = PathBuf::from(format!("/tmp/hf-win-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        Scratch(dir)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-/// Starts `cat` under `sh` on the core: a terminal that stays up until it's ended.
-fn run(conn: &Connection, core: &IsolatedCore) -> String {
-    conn.call(TerminalRun {
-        argv: vec!["/bin/sh".into(), "-c".into(), "exec cat".into()],
-        cwd: Some(core.folder().display().to_string()),
-        keep: true,
-        ..Default::default()
-    })
-    .wait()
-    .expect("terminal.run")
-    .terminal
-    .address
-}
-
-/// Whether the core still runs `address`.
-fn is_live(conn: &Connection, address: &str) -> bool {
-    conn.call(TerminalGet {
-        terminal: address.into(),
-        ..Default::default()
-    })
-    .wait()
-    .is_ok_and(|t| t.is_live())
-}
-
-/// The layout document on the core.
-fn layout(conn: &Connection) -> Value {
-    conn.call(DocGet {
-        name: "herdr-app".into(),
-        ..Default::default()
-    })
-    .wait()
-    .expect("doc.get")
-    .value
-}
-
-/// Frames until the core's layout satisfies `done`. A `do` answers once the model made its
-/// edit; the link writes it to the core just after, on its own connection.
-fn layout_until(
-    rt: &mut Runtime<State>,
-    conn: &Connection,
-    what: &str,
-    done: impl Fn(&Value) -> bool,
-) {
-    until(rt, what, |_| done(&layout(conn)));
-}
-
-fn space_in<'a>(doc: &'a Value, id: &str) -> Option<&'a Value> {
-    doc["spaces"].as_array()?.iter().find(|s| s["id"] == id)
-}
-
-/// Frames, as the window draws them while its wakers fire, until `done` holds.
-fn until(rt: &mut Runtime<State>, what: &str, mut done: impl FnMut(&mut Runtime<State>) -> bool) {
-    let deadline = Instant::now() + WAIT;
-    loop {
-        rt.frame(1.0 / 60.0);
-        if done(rt) {
-            return;
-        }
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(10));
-    }
-}
-
-/// Runs `herdr-frontend <args>` against `home`, the window drawing frames until it exits.
-fn cli(rt: &mut Runtime<State>, home: &Path, args: &[&str]) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-frontend"))
-        .env(HOME_VAR, home)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let deadline = Instant::now() + WAIT;
-    while child.try_wait().unwrap().is_none() {
-        if Instant::now() > deadline {
-            let _ = child.kill();
-            panic!("herdr-frontend {args:?} hangs");
-        }
-        rt.frame(1.0 / 60.0);
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    child.wait_with_output().unwrap()
-}
-
-fn json_of(output: &Output) -> Value {
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|e| panic!("{e}: {output:?}"))
-}
-
-/// `herdr-frontend <args>`, which must exit 0 and print `{"ok": true}`.
-fn ok(rt: &mut Runtime<State>, home: &Path, args: &[&str]) {
-    let out = cli(rt, home, args);
-    assert_eq!(out.status.code(), Some(0), "{args:?}: {out:?}");
-    assert_eq!(json_of(&out), json!({"ok": true}), "{args:?}");
-}
-
-/// `herdr-frontend <args>`, which must exit 1 and print `{"error": error}`.
-fn fails(rt: &mut Runtime<State>, home: &Path, args: &[&str], error: &str) {
-    let out = cli(rt, home, args);
-    assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
-    assert_eq!(json_of(&out), json!({ "error": error }), "{args:?}");
-}
-
-fn status(rt: &mut Runtime<State>, home: &Path) -> Value {
-    let out = cli(rt, home, &["status"]);
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
-    json_of(&out)
-}
+use window::{
+    Scratch, cli, cli_without_window, fails, is_live, json_of, layout_until, ok, open, run,
+    set_layout, space_in, status, until,
+};
 
 #[test]
 fn the_window_serves_every_cli_command_on_a_live_core() {
@@ -178,35 +44,12 @@ fn the_window_serves_every_cli_command_on_a_live_core() {
             tab("tb-3", "1", split("tb-3", "row", vec![pane("pn-d", &d)])),
         ]},
     ]});
-    let read = conn
-        .call(DocGet {
-            name: "herdr-app".into(),
-            ..Default::default()
-        })
-        .wait()
-        .expect("doc.get");
-    conn.call(DocSet {
-        name: "herdr-app".into(),
-        value: doc,
-        version: read.version,
-        ..Default::default()
-    })
-    .wait()
-    .expect("doc.set");
+    set_layout(&conn, doc);
 
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("win");
     let home = scratch.0.as_path();
     let socket = home.join(SOCKET);
-    // The bundled font, so the settings have nothing to report whatever fonts the machine has
-    // installed; the zoom and size stay Eli's defaults.
-    std::fs::write(
-        home.join("settings.json"),
-        r#"{"font": "JetBrains Mono", "ui_font": "JetBrains Mono"}"#,
-    )
-    .expect("settings.json");
-    let mut rt = live(Live::new(core.transport()), Some(Home::at(home)))
-        .headless_runtime(SIZE, Env::new(true, 2.0));
-    assert_eq!(rt.state.control_socket(), Some(socket.as_path()));
+    let mut rt = open(&core, home);
     until(&mut rt, "the layout and its terminals", |rt| {
         let world = rt.state.model.world();
         [&a, &b, &c, &d].iter().all(|t| world.is_live(t))
@@ -367,13 +210,4 @@ fn the_window_serves_every_cli_command_on_a_live_core() {
         )),
         "{out:?}"
     );
-}
-
-fn cli_without_window(home: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_herdr-frontend"))
-        .env(HOME_VAR, home)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .unwrap()
 }

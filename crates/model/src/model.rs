@@ -246,6 +246,8 @@ pub(crate) enum Pending {
         answer: Option<CallId>,
     },
     Adopt(Orphan),
+    /// A `terminal.kill` of a terminal this screen is ending ([`Model::closing`]).
+    Kill(String),
     CheckClosed {
         pane: String,
         address: String,
@@ -339,6 +341,10 @@ pub struct Model {
     pub(crate) busy: BTreeSet<String>,
     /// Terminals a lookup said are still there, until they show up live again.
     pub(crate) not_closed: BTreeSet<String>,
+    /// Terminals this screen is ending, and whether the core answered their kill. Until they
+    /// leave the live list they are never adopted: a closed space's terminals keep its
+    /// `herdr.space` label, and would bring it back (`app:src/window.rs` `closing_terminals`).
+    pub(crate) closing: BTreeMap<String, bool>,
     /// Terminals this screen started, and when.
     pub(crate) births: BTreeMap<String, f64>,
     /// Machines that may wait before their next layout round, until when.
@@ -399,6 +405,7 @@ impl Model {
             pending: BTreeMap::new(),
             busy: BTreeSet::new(),
             not_closed: BTreeSet::new(),
+            closing: BTreeMap::new(),
             births: BTreeMap::new(),
             retry_at: BTreeMap::new(),
             scan: false,
@@ -741,13 +748,14 @@ impl Model {
             |_| false,
         );
         for terminal in targets {
+            self.closing.insert(terminal.clone(), false);
             self.call(
                 fx,
                 Request::Kill(TerminalKill {
-                    terminal,
+                    terminal: terminal.clone(),
                     ..Default::default()
                 }),
-                None,
+                Some(Pending::Kill(terminal)),
             );
         }
     }
@@ -860,6 +868,8 @@ impl Model {
                 self.drop_answers(fx);
                 self.pending.clear();
                 self.busy.clear();
+                // Kills under way may never be answered; the new listing says what still runs.
+                self.closing.clear();
                 // Seen writes under way may never be answered: the new listing decides, and
                 // what is on screen is looked at again.
                 self.seen = SeenTracker::default();
@@ -998,6 +1008,8 @@ impl Model {
         }
         let live: BTreeSet<&str> = self.world.live().map(|t| t.address.as_str()).collect();
         self.not_closed.retain(|a| !live.contains(a.as_str()));
+        self.closing
+            .retain(|a, answered| !*answered || live.contains(a.as_str()));
         self.seen.echoed(&update.seen, update.resynced);
         self.seen.retain(|a| live.contains(a));
         self.seen_failed.clear();
@@ -1114,6 +1126,16 @@ impl Model {
                         Toast::new(Level::Error, "Couldn't start a terminal", error.message),
                     );
                     fx.push(Effect::Toast(toast));
+                }
+            },
+            // Answered, it stays out of adoption until it leaves the live list; a kill that
+            // failed leaves the terminal running, free to be placed again.
+            Pending::Kill(address) => match result {
+                Ok(_) if self.world.is_live(&address) => {
+                    self.closing.insert(address, true);
+                }
+                _ => {
+                    self.closing.remove(&address);
                 }
             },
             Pending::Adopt(orphan) => {
@@ -1241,6 +1263,7 @@ impl Model {
             Pending::DeadSpaces { before, paths } => self.swept(before, &paths, &result, fx),
             Pending::Launch { .. }
             | Pending::Adopt(_)
+            | Pending::Kill(_)
             | Pending::CheckClosed { .. }
             | Pending::Park { .. }
             | Pending::Seen(_)
@@ -1958,7 +1981,7 @@ impl Model {
             world.live(),
             |a| world.pane_of(a).is_some(),
             ready,
-            |a| self.busy.contains(a),
+            |a| self.busy.contains(a) || self.closing.contains_key(a),
         )
         .into_iter()
         .filter(|o| o.tab.as_ref().is_none_or(|t| !launching.contains(t)))
