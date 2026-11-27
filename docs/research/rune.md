@@ -671,8 +671,9 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   title with ` · N` on duplicates, else its number among the shown tabs), whether it is
   selected or zoomed (" Z"), and its status. Pills are 29 pt rows in one row (`tab-pills`)
   inside a `scroll_x` row: `scroll_x` stretches its content to the viewport, and a lone pill
-  would be that content. The pills' row has `.instant_changes()` and `.motion(Spring::NONE)`,
-  so a tab or space switch swaps pills, ×, colors and widths in one frame. A pill's
+  would be that content. The pills' row has `.motion(Spring::NONE)`, and the × (and its icon)
+  `Transition::none()`, so a tab switch moves the selected look, the × and the widths in one
+  frame. A pill's
   `on_drag` renames on the second press of a double-click (`Drag::clicks`); on release it picks
   the pill under the pointer (`Tx::element_at_in` reading the pill's `El::data`) and shows its
   own tab or moves to the other's place (`Action::MoveTab`, by id). `on_secondary_press` opens

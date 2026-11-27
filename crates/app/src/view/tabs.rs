@@ -4,8 +4,8 @@
 //! ```text
 //! tabs  38 pt, drags the window: 10 pt in, 6 above the 29 pt pills and 3 below
 //! ├─ tab-scroll   the shown space's shown tabs, scrolling sideways when they overflow
-//! │  └─ tab-pills its pills, each its own width, swapped at once when the shown tab or
-//! │     │         space changes
+//! │  └─ tab-pills its pills, each its own width; the selected one's colors and × change at
+//! │     │         once when the shown tab changes
 //! │     └─ tab-<id>  icon · name (at most 170 pt, cut short, its whole name as a tooltip) ·
 //! │                  " Z" when zoomed · a spinner while working, a dot when blocked or
 //! │                  done · × on the selected one
@@ -22,7 +22,9 @@
 
 use herdr_shared::{Displayed, Space, Tab, machine_of};
 use model::{Action, SpaceExt, TabPill};
-use rune::{Cx, Drag, El, LoopSpec, Phase, Spring, Tx, WheelEvent, el, icon, row, text};
+use rune::{
+    Cx, Drag, El, LoopSpec, Phase, Spring, Transition, Tx, WheelEvent, el, icon, row, text,
+};
 
 use crate::State;
 use crate::config::programs::Program;
@@ -107,15 +109,14 @@ pub fn view(s: &State, cx: &Cx<State>) -> El {
 /// The pills, in one row the strip scrolls: Rune's `scroll_x` stretches its content to the
 /// strip's width, and a lone pill would be that content.
 ///
-/// Switching tabs or spaces swaps the pills at once, as Herdr app does: Rune would otherwise
-/// fade pills and their × in and out and spring their colors and widths on the click.
+/// Switching tabs swaps the selected pill's colors at once, as Herdr app does: Rune would
+/// otherwise spring them on the click.
 fn pills_row(pills: Vec<El>) -> El {
     row()
         .key("tab-pills")
         .h_full()
         .gap(3.0)
         .items_center()
-        .instant_changes()
         .motion(Spring::NONE)
         .children(pills)
 }
@@ -161,12 +162,18 @@ fn pill(s: &State, tab: &Tab, p: TabPill, cx: &Cx<State>) -> El {
     };
     let close = p.active.then(|| {
         let id = p.tab.clone();
+        // It moves to the selected pill at once rather than fading out and in.
         el().key("tab-close")
             .size(MARK, MARK)
+            .transition(Transition::none())
             .focusable(false)
             .label("Close tab")
             .on_press_tx(move |s: &mut State, tx| s.act(Action::CloseTabOf(id.clone()), tx))
-            .child(icon(&CLOSE, MARK).color(c.dim))
+            .child(
+                icon(&CLOSE, MARK)
+                    .color(c.dim)
+                    .transition(Transition::none()),
+            )
     });
     let (drag, menu) = (p.tab.clone(), p.tab.clone());
     row()
