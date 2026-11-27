@@ -10,9 +10,12 @@ evidence.
 - **Side by side, the whole app.** `just e2e` ran herdr-frontend and Herdr app 0.1.18 through the
   same 20 scenarios (`crates/app/tests/e2e/scenarios/`). Each app had its own isolated
   herdr-core with the same seeded content, and its own isolated home (Herdr app got a copy of
-  Eli's config, `docs/e2e.md`). Every step of both apps ran and was captured. The screenshots, one
-  image per step with herdr-frontend on the left and Herdr app on the right, are in
-  [`images/parity/`](images/parity/), named `<scenario>--<step>.jpg`.
+  Eli's config, `docs/e2e.md`). In the run on this branch's head (`20261127-095629`), every step
+  of both apps ran and was captured. The screenshots, one image per step with herdr-frontend on
+  the left and Herdr app on the right, are in [`images/parity/`](images/parity/), named
+  `<scenario>--<step>.jpg`. Each is the run's two PNGs scaled to 720 px high and joined
+  (`magick <frontend.png> -resize x720 ( -size 10x720 xc:#5a5a5a ) ( <herdr-app.png> -resize x720 )
+  +append -quality 80`).
 - **Headless and isolated-core tests** for what a screenshot can't show: key handling, shared
   labels, the layout document, timing. The evidence column names them as `file::test` (`app/` is
   `crates/app/tests/`, `model/` is `crates/model/tests/`, `src/` names unit tests).
@@ -187,6 +190,7 @@ cursor under popups (§1), `cmd-shift-l` (§1), the picker's spinner and the key
 | The login card: "<m> needs a login: run", the command and Copy | Fixed | Missing before. A new space, tab or split on a machine that needs a login now shows the card, and Copy copies the command and leaves the card up: `app/machines.rs::a_new_space_on_a_machine_that_needs_a_login_says_what_to_run_with_copy` |
 | Notes about agents on hidden machines close at once | Pass | `app/attention.rs::notes_about_agents_on_hidden_machines_close_at_once` |
 | Other toasts: Neovim navigation failed, copy mode without a terminal, terminal failed to start | Fixed | "Terminal failed to start" was missing: a terminal this window started that exits non-zero within 2 s now says so with its last lines (`model/layout.rs::a_terminal_started_here_that_fails_at_once_says_so_with_its_last_lines`, `src/closed.rs::a_quick_failing_exit_is_a_launch_failure`). The others: `model/layout.rs::nvim_that_cant_run_says_so_and_nothing_moves`, `model/modes.rs::copy_mode_needs_a_focused_terminal_and_ends_when_focus_leaves_it` |
+| What "Terminal failed to start" says | Intentional | "Exit code 127 · <its last lines>" on one line. Herdr app puts the lines below "Exit code 127", and `eli-toast` shows a body's first line only, so Eli's card reads just "Exit code 127". The program's own last words are what says why it failed |
 | Other toasts: edits moved to `<name>-edited`, layout needs missing mods, core update failed, `set-shared` misuse | Intentional | herdr-frontend has no layout or mod files, doesn't update herdr-core, and serves no `set-shared` |
 | Other toasts: dead space closed | Follow-up (040) | comes with the dead-space sweep (§3) |
 
@@ -208,7 +212,7 @@ cursor under popups (§1), `cmd-shift-l` (§1), the picker's spinner and the key
 | Tab/agent picker `cmd-p` | Pass | `app/popups.rs::the_picker_goes_to_tabs_closes_them_and_unfolds_quiet_spaces`, `model/popups.rs::the_picker_puts_busy_spaces_first_and_folds_quiet_ones`; [`10-pickers--01-tab-picker`](images/parity/10-pickers--01-tab-picker.jpg). It filters with Eli's matching, not Herdr app's substring filter (`docs/popups.md`) |
 | The picker's working spinner | Fixed | It was a static ◐; the shipped picker spins one. Same test |
 | Command palette | Pass | `app/popups.rs::the_palette_filters_runs_a_command_and_remembers_it`, `model/popups.rs::the_palette_lists_recent_commands_first_then_every_group`; [`10-pickers--03-command-palette`](images/parity/10-pickers--03-command-palette.jpg), [`10-pickers--04-type-in-the-palette`](images/parity/10-pickers--04-type-in-the-palette.jpg) |
-| The palette's key hints | Intentional | Each row shows the first key the key file binds (Rename tab: `f2`). Herdr app shows the alphabetically first one (`ctrl-g r`), a side effect of the map its keys come from |
+| The palette's key hints and entries | Intentional | Each row shows the first key the key file binds (Rename tab: `f2`). Herdr app shows the alphabetically first one (`ctrl-g r`), a side effect of the map its keys come from. The palette also lists Eli's own commands (the jump list, copy mode, agent jump, review), which Herdr app's palette doesn't list |
 | Prompt dialog | Pass | `app/popups.rs::the_prompt_cancels_with_esc_and_saves_with_its_button`, `model/popups.rs::the_prompt_saves_trimmed_names_and_the_confirm_closes_the_space`; [`04-tabs--07-rename-prompt`](images/parity/04-tabs--07-rename-prompt.jpg) |
 | Confirm dialog | Pass | `app/popups.rs::closing_a_space_asks_and_cancel_or_confirm_answers` |
 | Tab menu | Pass | `model/tabs.rs::right_click_opens_the_tab_menu_with_its_items_and_key_hints`, `::the_tab_menu_runs_rename_new_tab_and_close_on_its_tab` |
@@ -285,16 +289,17 @@ panel buttons ([`14-panels--01-a-shell-tab`](images/parity/14-panels--01-a-shell
 
 Every binding in the table is in herdr-frontend's default key file, which is Eli's `keys.json`
 verbatim (`crates/model/src/keys.json`). `model/modes.rs::every_binding_runs_in_every_mode` runs
-each one, and `app_keys_become_app_commands` checks the app commands. Each key's action is
+each one, and `::app_keys_become_app_commands` checks the app commands. Each key's action is
 covered by its section above. The keys inside Eli's popups (§22 "Keys inside Eli's popups") are
 `model::mode::popup_key` and copy mode's grammar: `model/modes.rs::list_popups_move_wrap_pick_and_close`,
 `::the_picker_closes_a_tab_and_the_machine_filter_toggles_without_closing`,
 `::agent_jump_focuses_a_row_by_its_label_and_ignores_modified_keys`,
 `::elis_copy_mode_escape_drops_the_selection_then_leaves`. The mouse gestures are the §4, §5, §6
-and §17 rows. Two keys differ:
+and §17 rows. Two keys behave differently:
 
 - `cmd-h` and `cmd-alt-h` hide the app through macOS's app menu, which takes them before the
-  window does. The same command from the palette shows "Not yet".
+  window does. The window's own `app.hide` would say "Not yet", but no key or palette entry
+  reaches it.
 - `cmd-shift-l` stays on `eli` (§1).
 
 ## Appendix: Eli's regression checks

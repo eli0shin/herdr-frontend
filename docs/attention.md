@@ -66,7 +66,9 @@ agent (`Model::alert_toast`):
 - **Terminal failed to start** (error): a terminal this window started exited on its own with a
   non-zero code within 2 s of starting (`app:src/window.rs` `launch_failure`). The body is "Exit
   code N" and the last five lines it wrote that aren't blank (`terminal.read`), joined with " · "
-  on one line, where Herdr app breaks lines. Its tab or pane goes, as any ended program's does.
+  on its one line. Herdr app puts those lines on lines of their own, and `eli-toast` shows a
+  body's first line only, so Eli's card there reads just "Exit code N". Its tab or pane goes, as
+  any ended program's does.
 - **Couldn't start a terminal**: `terminal.run` itself failed.
 - **<machine> needs a login: run** (error): a new space, tab or split on a machine that needs a
   login failed (Herdr app's failed New space toast). As `eli-toast` draws it, the body is
