@@ -533,14 +533,31 @@ impl Model {
     /// for a layout that can't take its pane would be left kept and pane-less, so a launch asks
     /// first (`app:src/window.rs` `require_document`).
     fn layout_ready(&self, machine: Option<&str>, fx: &mut Effects) -> bool {
-        let Some(m) = self.world.machine(machine) else {
+        if self.world.machine(machine).is_none() {
             return false;
-        };
-        if *m.mirror.layout() == Layout::Ready {
-            return true;
         }
-        fx.push(Effect::Toast(unavailable(m.mirror.layout())));
-        false
+        match self.refused_on(machine) {
+            None => true,
+            Some(toast) => {
+                fx.push(Effect::Toast(toast));
+                false
+            }
+        }
+    }
+
+    /// The toast for a machine's layout that can't take an edit now; `None` when it can, or
+    /// when there is no such machine.
+    fn refused_on(&self, machine: Option<&str>) -> Option<Toast> {
+        let m = self.world.machine(machine)?;
+        (*m.mirror.layout() != Layout::Ready).then(|| unavailable(m.mirror.layout()))
+    }
+
+    /// Why the layout holding `id` (a node, tab or space) can't take an edit now, as the toast
+    /// that says so; `None` when it can, or when no machine holds it. A gesture that edits as it
+    /// goes (a divider drag) asks once, on press, as Herdr app's `require_document` does, instead
+    /// of a toast for every move.
+    pub fn edit_refused(&self, id: &str) -> Option<Toast> {
+        self.refused_on(machine_of(id))
     }
 
     /// Ends terminals (`close_targets`: on cores 0.1.13 and later, which this client requires,

@@ -1702,8 +1702,16 @@ impl State {
         cancelled: bool,
         tx: &mut Tx,
     ) {
+        let ours = |d: &DividerDrag| d.container == container && d.index == index;
         match phase {
             rune::Phase::Down => {
+                self.divider_drag = None;
+                // A layout that can't take the sizes says so once, here, not on every move; the
+                // drag then does nothing.
+                if let Some(refused) = self.model.edit_refused(container) {
+                    self.toast(refused);
+                    return;
+                }
                 let before = self
                     .model
                     .world()
@@ -1729,9 +1737,10 @@ impl State {
                 });
             }
             rune::Phase::Move => {
-                if let Some(drag) = &mut self.divider_drag {
-                    drag.moved = true;
-                }
+                let Some(drag) = self.divider_drag.as_mut().filter(|d| ours(d)) else {
+                    return;
+                };
+                drag.moved = true;
                 self.act(
                     Action::DragDivider {
                         container: container.to_owned(),
@@ -1745,9 +1754,7 @@ impl State {
                 let drag = self.divider_drag.take();
                 // A press that never moved wrote nothing: a click leaves the sizes alone, and a
                 // cancel has nothing to put back.
-                if let Some(drag) =
-                    drag.filter(|d| d.moved && d.container == container && d.index == index)
-                {
+                if let Some(drag) = drag.filter(|d| d.moved && ours(d)) {
                     if cancelled {
                         self.act(Action::ResizeSplit { sizes: drag.before }, tx);
                     } else {

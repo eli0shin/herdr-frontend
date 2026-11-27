@@ -138,6 +138,45 @@ fn a_cancelled_divider_drag_puts_the_sizes_back() {
 }
 
 #[test]
+fn a_divider_drag_on_a_layout_that_cant_take_it_says_so_once_and_does_nothing() {
+    let (mut rt, fake) = runtime();
+    // The connection comes back while the machine's layout can't be read: the last one read
+    // stays shown, but it takes no edits.
+    fake.core().docs_down = true;
+    fake.drop_connection();
+    frames(&mut rt, 3);
+    rt.state.settle();
+    assert!(
+        rt.state.model.shown_tab().is_some(),
+        "the last layout stays shown"
+    );
+    let toasts = |rt: &Runtime<State>| {
+        rt.state
+            .toasts
+            .shown
+            .iter()
+            .filter(|t| t.toast.title == "Layout unavailable")
+            .count()
+    };
+    let before_toasts = toasts(&rt);
+    let writes = fake.core().writes;
+    let pane = element(&rt, "pane-pn-1").rect;
+
+    let from = center(&element(&rt, "divider-tb-work-0"));
+    rt.pointer_down(from.0, from.1);
+    rt.frame(1.0 / 60.0);
+    glide(&mut rt, from, (from.0 + 100.0, from.1));
+    rt.pointer_up(from.0 + 100.0, from.1);
+    frames(&mut rt, 2);
+    rt.state.settle();
+
+    assert_eq!(toasts(&rt), before_toasts + 1, "one toast, on the press");
+    assert_eq!(fake.core().writes, writes);
+    assert_eq!(size_of(&fake, "pn-1"), None);
+    assert!(near_rect(element(&rt, "pane-pn-1").target, pane));
+}
+
+#[test]
 fn a_panes_grip_shows_on_its_top_edge_and_drops_it_onto_another_pane() {
     let (mut rt, fake) = runtime();
     let pane = element(&rt, "pane-pn-1").rect;
