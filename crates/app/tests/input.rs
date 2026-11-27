@@ -591,6 +591,29 @@ fn only_the_pane_in_use_sends_the_program_pointer_input() {
 }
 
 #[test]
+fn a_composition_committed_as_the_window_goes_to_the_background_isnt_sent() {
+    let (mut rt, fake, _) = runtime();
+    shell(&mut rt, &fake, "$ ");
+    rt.ime(Ime::Preedit("にほ".into(), None, Vec::new()));
+    frames(&mut rt, 1);
+    let from = mark(&fake);
+    // Rune finishes the open composition after the window lost focus: its commit follows.
+    rt.window_focus(false);
+    rt.ime(Ime::Commit("にほ".into()));
+    frames(&mut rt, 2);
+    let sent = &fake.sent_to("t1")[from..];
+    let lost = sent
+        .iter()
+        .position(|o| *o == Out::Focus(false))
+        .expect("FOCUS(0)");
+    assert!(
+        !sent[lost..].iter().any(|o| matches!(o, Out::Input(_))),
+        "DATA after FOCUS(0): {sent:?}"
+    );
+    assert_eq!(rt.state.viewers["t1"].preedit, None);
+}
+
+#[test]
 fn a_composition_left_behind_by_a_pane_switch_is_dropped() {
     let (mut rt, fake, _) = runtime();
     shell(&mut rt, &fake, "$ ");

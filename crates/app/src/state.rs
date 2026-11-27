@@ -1437,7 +1437,7 @@ impl State {
         s.step(tx.clock(), Event::WindowActive(active));
         if !active {
             s.window.save(false);
-            // The input method drops what it was composing with the window.
+            // The window's composition ends with it; Rune's commit of it is dropped (`on_ime`).
             for viewer in s.viewers.values_mut() {
                 viewer.set_preedit(None);
             }
@@ -1602,11 +1602,15 @@ impl State {
     }
 
     /// `App::on_ime`: the input method composing for the focused terminal, whose caret the pane
-    /// marks. A composition shows at the cursor; committed text goes to the program as it is.
+    /// marks. A composition shows at the cursor; committed text goes to the program as it is,
+    /// only from the terminal in use. Rune commits an open composition when the window goes to
+    /// the background, after FOCUS(0): sent, that DATA would take the size back from the window
+    /// in front (`herdr-core-protocol.md` §4), so it's dropped.
     pub fn on_ime(s: &mut State, ime: &Ime, tx: &mut Tx) -> bool {
         let Some(address) = s.typing_into() else {
             return false;
         };
+        let in_use = s.in_use() == Some(address.as_str());
         let viewer = s.viewers.get_mut(&address).expect("typing into a viewer");
         match ime {
             Ime::Preedit(text, ..) => {
@@ -1615,7 +1619,9 @@ impl State {
             }
             Ime::Commit(text) => {
                 viewer.set_preedit(None);
-                viewer.terminal.input(text.as_bytes());
+                if in_use {
+                    viewer.terminal.input(text.as_bytes());
+                }
                 s.after_input(tx);
                 true
             }

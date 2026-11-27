@@ -623,7 +623,9 @@ is needed.
   preedit on the viewer and draws it over the cell: underlined, on the terminal background.
   A commit goes to the program as its bytes (Herdr app does the same). Keys pressed during a
   composition are sent as `composing`, so they send nothing. A pane that loses focus, or a
-  window that goes to the background, drops its composition, as Rune's input method does.
+  window that goes to the background, drops its composition. Rune commits a composition that
+  was open as the window went to the background; that text is dropped, since only the
+  terminal in use may send DATA.
 - **Mouse** (`State::pane_drag`, `pane_hover`, `pane_wheel`, `pane_right_click`).
   - While the program tracks the mouse and Shift isn't held, it gets presses, drags, releases
     and motion (any-event mode only), all in device pixels from the grid's corner.
