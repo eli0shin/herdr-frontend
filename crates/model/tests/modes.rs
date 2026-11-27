@@ -747,16 +747,9 @@ fn a_saved_remote_space_gone_by_the_time_its_machine_loads_leaves_the_screen_whe
 fn unbuilt_features_say_not_yet() {
     let mut core = agents();
     let mut m = connected(&mut core);
-    for action in [
-        Action::FoldSubagents("a2".into()),
-        Action::OpenLink {
-            pane: "p1".into(),
-            link: "x.rs:3".into(),
-        },
-    ] {
-        let fx = m.step(m.now(), action.clone());
-        assert!(fx.list.contains(&Effect::NotYet(action)));
-    }
+    let action = Action::FoldSubagents("a2".into());
+    let fx = m.step(m.now(), action.clone());
+    assert!(fx.list.contains(&Effect::NotYet(action)));
 }
 
 /// Every binding of the default keymap, pressed in every key context and mode, steps without

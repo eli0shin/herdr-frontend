@@ -204,6 +204,21 @@ impl Vt {
         self.selection().is_some()
     }
 
+    /// Selects everything: the scrollback and the screen (`terminal.select_all`).
+    pub fn select_all(&mut self) {
+        let mut selection = GhosttySelection::default();
+        // SAFETY: `term` is live; the selection it fills is installed before any other change.
+        unsafe {
+            if ghostty_terminal_select_all(self.term, &mut selection) == GHOSTTY_SUCCESS {
+                set(
+                    self.term,
+                    GHOSTTY_TERMINAL_OPT_SELECTION,
+                    (&raw const selection).cast(),
+                );
+            }
+        }
+    }
+
     pub fn clear_selection(&mut self) {
         // SAFETY: `term` is live; null clears the option.
         unsafe { set(self.term, GHOSTTY_TERMINAL_OPT_SELECTION, ptr::null()) };
@@ -279,7 +294,7 @@ impl Vt {
     }
 
     /// The viewport cell under a pixel position, clamped into the grid.
-    fn cell_at(&self, x: f32, y: f32) -> Option<(u16, u16)> {
+    pub(super) fn cell_at(&self, x: f32, y: f32) -> Option<(u16, u16)> {
         let size = self.effects().size;
         if size.cell_width == 0 || size.cell_height == 0 {
             return None;
@@ -295,7 +310,7 @@ impl Vt {
     }
 
     /// The viewport cell as a grid reference.
-    fn grid_ref(&self, col: u16, row: u16) -> Option<GhosttyGridRef> {
+    pub(super) fn grid_ref(&self, col: u16, row: u16) -> Option<GhosttyGridRef> {
         let point = GhosttyPoint {
             tag: GHOSTTY_POINT_TAG_VIEWPORT,
             value: GhosttyPointValue {

@@ -1,6 +1,7 @@
 //! The app's views.
 
 pub mod dialog;
+pub mod find;
 pub mod help;
 pub mod icons;
 pub mod jump;

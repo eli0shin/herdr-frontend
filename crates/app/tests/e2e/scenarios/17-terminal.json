@@ -1,7 +1,7 @@
 {
   "title": "Terminal behavior",
   "inventory": "§17",
-  "notes": "Typing into the focused terminal through the app, colors, and the Cmd+F find bar.",
+  "notes": "Typing into the focused terminal through the app, colors, the Cmd+F find bar with a query and its hits, and select all from the palette (Eli's keys don't bind it; herdr-frontend's `do` serves only the commands his tools use). Cmd-hover and Cmd-click on links need the pointer, which the harness doesn't drive: the headless tests cover them (crates/app/tests/scrollback.rs).",
   "steps": [
     {"name": "the split tab", "do": "space.select", "args": {"index": 1}},
     {
@@ -15,6 +15,26 @@
       "wait": 0.3
     },
     {"name": "find bar", "keys": "cmd-f", "herdr-app": {"do": "terminal.search"}},
-    {"name": "close the find bar", "keys": "escape", "herdr-app": {"do": "overlay.close"}}
+    {
+      "name": "find a word in the screen and scrollback",
+      "type": "red",
+      "herdr-app": {"skip": "typing goes to herdr-frontend only"}
+    },
+    {
+      "name": "select the newest hit",
+      "keys": "enter",
+      "herdr-app": {"skip": "typing goes to herdr-frontend only"}
+    },
+    {"name": "close the find bar", "keys": "escape", "herdr-app": {"do": "overlay.close"}},
+    {
+      "name": "the palette, for select all",
+      "keys": "cmd-shift-p",
+      "herdr-app": {"skip": "the palette's typing goes to herdr-frontend only"}
+    },
+    {
+      "name": "select all",
+      "type": "select all\n",
+      "herdr-app": {"do": "terminal.select_all"}
+    }
   ]
 }

@@ -45,6 +45,38 @@ pub struct Snapshot {
     pub title: String,
     /// The working directory from OSC 7 (raw, often a `file://` URI), empty if none.
     pub pwd: String,
+    /// The find bar's search, while it has a query ([`Row::matches`] marks its hits).
+    pub find: Option<Found>,
+    /// The link under the pointer while Cmd is held, for its underline: one span per row it
+    /// covers, in the viewport.
+    pub link: Vec<Span>,
+}
+
+/// Where a search over the screen and scrollback stands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Found {
+    /// Matches found so far on the active screen, scrollback included.
+    pub total: usize,
+    /// The selected match, counted from the newest (0 is the one nearest the bottom).
+    pub selected: Option<usize>,
+    /// The search has caught up with the terminal; `total` is final until more output comes.
+    pub complete: bool,
+}
+
+/// Columns `start..=end` of viewport row `row`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Span {
+    pub row: u16,
+    pub start: u16,
+    pub end: u16,
+}
+
+/// A search hit on a row: columns `start..=end`, and whether it is the selected one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Match {
+    pub start: u16,
+    pub end: u16,
+    pub selected: bool,
 }
 
 impl Snapshot {
@@ -92,6 +124,11 @@ pub struct Row {
     pub cells: Vec<Cell>,
     /// The selected columns, inclusive, if the selection touches this row.
     pub selection: Option<(u16, u16)>,
+    /// The find bar's hits on this row, left to right.
+    pub matches: Vec<Match>,
+    /// The columns, inclusive, of the link under the pointer while Cmd is held, if it's on this
+    /// row ([`Snapshot::link`]).
+    pub link: Option<(u16, u16)>,
 }
 
 impl Row {

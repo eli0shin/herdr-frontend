@@ -127,9 +127,16 @@ fn main(s: &State, cx: &mut Cx<State>) -> El {
             Some(terminal) => terminal.view(&face, &s.look),
             None => el().key(pane_key(&pane)).w_full().h_full().fill(background),
         };
+        let bars = address.as_deref().map(|a| {
+            let scrollbar = viewer.and_then(|v| scrollbar(s, v, a, rect.w, &face));
+            (scrollbar, crate::view::find::view(s, &pane, a, rect.w))
+        });
+        let (scrollbar, find) = bars.unwrap_or((None, None));
         el().absolute(rect.x, rect.y)
             .size(rect.w, rect.h)
             .child(pane_input(body, &pane))
+            .children(scrollbar)
+            .children(find)
     });
     let rects = s.model.pane_rects();
     let grips = rects
@@ -252,12 +259,64 @@ fn grip(s: &State, pane: &str, rect: model::Rect) -> Option<El> {
     Some(grip)
 }
 
+/// The pane's scrollbar, with `pane_scrollbars` on (`view::terminal::scrollbar`): over the
+/// lane right of the grid, the height of the grid. Pressing or dragging scrolls there.
+fn scrollbar(
+    s: &State,
+    viewer: &crate::state::Viewer,
+    address: &str,
+    pane_w: f32,
+    face: &crate::view::terminal::font::Face,
+) -> Option<El> {
+    use crate::view::terminal::scrollbar::{INSET, LANE, THUMB, thumb};
+    if !s.config.settings.pane_scrollbars {
+        return None;
+    }
+    let pane = viewer.pane.as_ref()?;
+    let snap = &pane.snapshot;
+    if snap.active_screen == terminal::ActiveScreen::Alternate || snap.cols <= 4 {
+        return None;
+    }
+    let (cell_w, cell_h) = face.cell_pt();
+    let scale = face.scale;
+    let track = f32::from(snap.rows) * cell_h;
+    let sb = snap.scrollbar;
+    let (top, len) = thumb(sb.total, sb.offset, sb.len, track, cell_h)?;
+    let grid_right = pane.padding.left as f32 / scale + f32::from(snap.cols) * cell_w;
+    let left = grid_right.min(pane_w - LANE).max(0.0);
+    let lane_w = pane_w - left;
+    let c = &s.chrome;
+    let x = lane_w - THUMB - INSET;
+    let dragging = address.to_owned();
+    Some(
+        el().key("scrollbar")
+            .absolute(left, pane.padding.top as f32 / scale)
+            .size(lane_w, track)
+            .on_drag(move |s: &mut State, d, tx| s.scrollbar_drag(&dragging, d, track, tx))
+            .child(
+                el().absolute(x + THUMB / 2.0 - 0.5, 0.0)
+                    .size(1.0, track)
+                    .fill(c.muted.alpha(0.35))
+                    .inert(),
+            )
+            .child(
+                el().key("scrollbar-thumb")
+                    .absolute(x, top)
+                    .size(THUMB, len)
+                    .radius(THUMB / 2.0)
+                    .fill(c.muted)
+                    .inert(),
+            ),
+    )
+}
+
 /// A pane's body with the handlers that give its terminal the keyboard and the mouse. `pane`
 /// is [`crate::state::PEEK`] for the peek's terminal.
 pub fn pane_input(body: El, pane: &str) -> El {
     let p = || pane.to_owned();
     let (focus, typing, releasing, dragging, hovering, wheeling, menu, dropping) =
         (p(), p(), p(), p(), p(), p(), p(), p());
+    let leaving = p();
     body.focusable(true)
         .pointer_buttons([PointerButton::Middle])
         .on_key(move |s: &mut State, ev, tx| s.typed(&typing, ev, tx))
@@ -265,6 +324,11 @@ pub fn pane_input(body: El, pane: &str) -> El {
         .on_focus_change(move |s: &mut State, gained, tx| s.pane_focus(&focus, gained, tx))
         .on_drag(move |s: &mut State, d, tx| s.pane_drag(&dragging, d, tx))
         .on_pointer_move_local(move |s: &mut State, p, tx| s.pane_hover(&hovering, p, tx))
+        .on_hover_change(move |s: &mut State, inside, tx| {
+            if !inside {
+                s.pane_left(&leaving, tx)
+            }
+        })
         .on_wheel(move |s: &mut State, ev, tx| s.pane_wheel(&wheeling, &ev, tx))
         .on_secondary_press_local(move |s: &mut State, p, tx| s.pane_right_click(&menu, p, tx))
         .on_drop_files(move |s: &mut State, paths, tx| s.pane_dropped(&dropping, paths, tx))

@@ -551,6 +551,57 @@ Ghostty does. Install the selection with `OPT_SELECTION` so the render state rep
 - Set the scrollback limits explicitly. Optionally compress idle scrollback with
   `ghostty_terminal_compress` on an idle timer.
 
+### What herdr-frontend does (ticket 019)
+
+- **Whole lines, as Ghostty scrolls** (`State::pane_wheel`). A notch is three lines and trackpad
+  travel adds up to a line per cell height (Ghostty's `mouse-scroll-multiplier` defaults, which
+  Eli's config keeps); the screen always sits on its rows. Pixel-smooth scrolling (the overscan
+  above) isn't drawn, because Ghostty has none (`AGENTS.md`: terminal behavior follows Eli's
+  Ghostty). `terminal_scroll_speed` multiplies notches and trackpad travel, for the scrollback
+  and for the wheel buttons and arrows a program hears. Part of a notch counts as a whole one
+  (Ghostty's `scrollCallback`), and a notch moves at least a line. Rune divides the wheel's
+  points by the zoom and the app multiplies them back, so lines are counted to a thousandth
+  before whole lines are taken (`state::whole`): nine notches at zoom 1.1 are 27 lines, not 26.
+- **Scrollbar** (`pane_scrollbars`, `view::terminal::scrollbar`): Herdr app's lane, rail and
+  4-point thumb, hidden on the alternate screen, below five columns and with no scrollback.
+  Dragging the thumb, or pressing beside it, scrolls with `Scroll::Row`; the bottom row is
+  `Scroll::Bottom`, so output is followed again.
+- **Find** (`cmd-f`, `terminal::Vt::find`, `view::find`). Each terminal owns a `ghostty_search`,
+  made with its first query. While it has one, every snapshot first runs the search to
+  completion on the worker (so new output is searched as it comes), then reads the counts and the
+  viewport's hits as cells, which go on the rows (`Row::matches`, so a row whose hits change is a
+  new row to the row caches). Hits take Ghostty's search colors over the cell's own: black on
+  golden yellow (`search-background` `#FFE082`), the selected one black on soft peach
+  (`search-selected-background` `#F2A57E`), with the selection over both (`generic.zig`). Enter
+  selects the next hit up into history (`ghostty_search_select_next`, wrapping), Shift+Enter the
+  next down; the viewport scrolls to a hit off screen. The bar is Herdr app's: top right, at most
+  460 × 38, "k / n", "n matches", "No matches", "Searching…". Escape closes it and gives the
+  keyboard back to the pane; the query stays and `cmd-f` brings it back selected.
+- **Links** (`terminal::links`, `terminal::Vt::link_at`). An OSC 8 hyperlink (the run of cells on
+  its row with the same URI), else Ghostty's URL and path pattern over the soft-wrapped line under
+  the cell, read from the rows the last snapshot showed. While Cmd is held the link under the
+  pointer is underlined as Ghostty marks it: its cells go on their rows (`Row::link`), which draw
+  them a single underline, or a double one where the program underlined them already (Pi's
+  links are SGR 4 and OSC 8), in the cell's underline color or final text color. Pressing or
+  letting go of Cmd with no motion updates it (`App::on_modifiers`), and the pointer leaving the
+  pane takes it away. Cmd-click on the underlined link never reaches the program or the
+  selection (anywhere else it is a click, as in Ghostty's `mouseButtonCallback`): the worker
+  answers `Output::Link`, and
+  `Action::OpenLink` decides (`model::links`, Eli's `nvim-links`). A URL goes to Rune's opener
+  (`Tx::open_url`, which opens `http:`, `https:` and `mailto:`, and refuses other schemes with a
+  toast). A `file:` URI is the path it names, with no place, as Herdr hands it to link handlers:
+  Pi prints every path it reads or edits that way. A path is looked up on the
+  pane's machine with `machine.exec` (`links::FIND`, a POSIX `sh` script that never evaluates the
+  clicked text), as written and then without its period and `:42:7`. A file Neovim edits opens in
+  `nvim +42 -- path` (or `"+call cursor(42, 7)"`) in a split to the right of the clicked pane, on
+  its machine, in its folder; anything else here goes to `Tx::open_path`, and nothing opens on
+  another machine. A failed lookup shows a toast. Cmd-clicking a terminal address peeks it,
+  ahead of any link there (`docs/review-and-peek.md`).
+- **Select all** (`terminal.select_all`, palette only in Eli's keys) selects the scrollback and
+  the screen; **copy on select** follows `copy_on_select`. The terminal right-click menu is ticket
+  026's: a right-click steps `Action::TerminalMenu` unless the terminal sends right-clicks to its
+  program.
+
 ### Kitty graphics
 
 Read placements with the render-state image iterator. `IMAGE_PLACEMENTS_GENERATION` tells us
@@ -640,8 +691,9 @@ is needed.
     the worker (`AUTOSCROLL_EVERY`). Releasing copies the selection (`copy_on_select`), and the
     middle button pastes.
   - Wheel: a notch is three lines (Ghostty's multiplier) and a trackpad scrolls a line per cell
-    height. The wheel goes to a tracking program as wheel buttons; on the alternate screen it
-    becomes arrow keys; otherwise it scrolls the scrollback.
+    height, both times `terminal_scroll_speed`. The wheel goes to a tracking program as wheel
+    buttons; on the alternate screen it becomes arrow keys; otherwise it scrolls the scrollback,
+    whole lines only (§2 "What herdr-frontend does (ticket 019)").
   - Right-clicks go to the program only when the terminal is labelled
     `herdr.right-click=program`; otherwise they open the terminal menu (ticket 026).
   - Only the terminal in use (the focused pane, in the window in front) sends its program
@@ -958,6 +1010,8 @@ Each stage ends with tests in `cargo test` plus a fixture or screenshot check.
    several code points, which Rune still shapes.
 6. **Input:** keys (kitty, consumed mods, releases), IME preedit, mouse, paste, focus.
 7. **Scrollback:** viewport and scrollbar, smooth scroll with overscan, search, OSC 8 and links.
+   Built in ticket 019 (§2 "What herdr-frontend does (ticket 019)"), without pixel-smooth
+   scrolling: Ghostty scrolls whole lines.
 8. **Copy/visual mode** (§6).
 9. **Kitty graphics.**
 10. **Multi-viewer sizing** with herdr-core (§4). Built in ticket 031: the policy, its tests on

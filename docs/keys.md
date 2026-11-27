@@ -85,10 +85,11 @@ at once with that toast, so it can't hold the keyboard unseen. The window draws 
 the palette, the pickers (the new-space folder picker and the PR finder too), the prompt and
 confirm dialogs, the menus, the settings dialog (`docs/popups.md`), the sidebar's sort menu, the
 agent-jump bar (`docs/sidebar.md`) and the machine popups (`docs/machines.md`). The
-terminal's sends, paste, copy and paste-image run
-in the terminal that has the keyboard: the peeked one while a peek is open
-(`docs/review-and-peek.md`), else the focused pane's (`docs/research/terminal-rendering.md` §3); find and select all say "not
-yet" until ticket 019.
+terminal's sends, paste, copy and paste-image run in the terminal that has the keyboard: the
+peeked one while a peek is open (`docs/review-and-peek.md`), else the focused pane's
+(`docs/research/terminal-rendering.md` §3). Find (`cmd-f`, the terminal's find bar) and select
+all run in the focused pane's terminal (§2 "What herdr-frontend does (ticket 019)"); in the
+peek, find says "not yet".
 
 ## Keys help
 

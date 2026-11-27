@@ -16,12 +16,15 @@ use crate::input::{
     KeyAction, KeyEvent, Mods, MouseAction, MouseEvent, OptionAsAlt, PasteRejected,
 };
 
+mod find;
+mod link;
 mod select;
 
 use crate::snapshot::{
     ActiveScreen, Cell, CellFlags, Colors, Cursor, CursorStyle, Dirty, Grapheme, Modes, Rgb, Row,
-    RowId, Scrollbar, Snapshot, Underline, Width,
+    RowId, Scrollbar, Snapshot, Span, Underline, Width,
 };
+pub use link::Link;
 pub use select::AUTOSCROLL_EVERY;
 
 /// How a terminal starts.
@@ -221,6 +224,13 @@ pub struct Vt {
     /// What the last snapshot was built with: rows from other colors or widths are stale.
     built_with: Option<(Colors, u16)>,
     generation: u64,
+    /// The find bar's search, from its first query on.
+    finder: Option<find::Finder>,
+    /// The viewport rows of the last snapshot, where links are looked up.
+    shown: Vec<Arc<Row>>,
+    /// The cell under the pointer while Cmd is held, and the link there's cells.
+    hovered: Option<(u16, u16)>,
+    underlined: Vec<Span>,
 }
 
 impl Vt {
@@ -339,6 +349,10 @@ impl Vt {
                 rows_by_id: HashMap::new(),
                 built_with: None,
                 generation: 0,
+                finder: None,
+                shown: Vec::new(),
+                hovered: None,
+                underlined: Vec::new(),
             };
             vt.set_scrollback(config.scrollback);
             vt.set_theme(&config.theme);
@@ -544,6 +558,7 @@ impl Vt {
         // SAFETY: `term`, the render state, the iterators and the encoders are live. Row and
         // cell data are read before the next update, and every out pointer has its key's type.
         unsafe {
+            self.refresh_find();
             let state = self.effects().state;
             if self.effects().hold.is_none() {
                 self.effects_mut().meta = update(state, self.term);
@@ -606,16 +621,18 @@ impl Vt {
                 ) == GHOSTTY_SUCCESS)
                     .then_some((range.start_x, range.end_x));
 
+                let matches = self.matches_on(screen.len() as u16);
+                // A kept row may carry an old hover; it's put right below.
                 let kept = (has_id && !full && !row_dirty)
                     .then(|| self.rows_by_id.get(&id))
                     .flatten()
-                    .filter(|row| row.selection == selection)
+                    .filter(|row| row.selection == selection && row.matches == matches)
                     .cloned();
                 let row = match kept {
                     Some(row) => row,
                     None => {
                         rebuilt = true;
-                        Arc::new(self.read_row(id, selection, &colors))
+                        Arc::new(self.read_row(id, selection, matches, &colors))
                     }
                 };
                 if has_id {
@@ -659,6 +676,24 @@ impl Vt {
             );
 
             self.generation += 1;
+            self.shown = screen.clone();
+            self.refresh_hover();
+            // The hovered link's cells go on their rows, for the row to underline them.
+            for (y, row) in screen.iter_mut().enumerate() {
+                let link = self
+                    .underlined
+                    .iter()
+                    .find(|s| usize::from(s.row) == y)
+                    .map(|s| (s.start, s.end));
+                if row.link != link {
+                    *row = Arc::new(Row {
+                        link,
+                        ..(**row).clone()
+                    });
+                    self.rows_by_id.insert(row.id, row.clone());
+                    rebuilt = true;
+                }
+            }
             Snapshot {
                 generation: self.generation,
                 cols,
@@ -687,6 +722,8 @@ impl Vt {
                 // Borrowed strings, copied before the next terminal call.
                 title: terminal_string(self.term, GHOSTTY_TERMINAL_DATA_TITLE),
                 pwd: terminal_string(self.term, GHOSTTY_TERMINAL_DATA_PWD),
+                find: self.found(),
+                link: self.underlined.clone(),
             }
         }
     }
@@ -696,6 +733,7 @@ impl Vt {
         &mut self,
         id: RowId,
         selection: Option<(u16, u16)>,
+        matches: Vec<crate::snapshot::Match>,
         colors: &Colors,
     ) -> Row {
         // SAFETY: the caller positioned `rows_iter` on a row of the current render state.
@@ -720,6 +758,8 @@ impl Vt {
                 wrapped,
                 cells,
                 selection,
+                matches,
+                link: None,
             }
         }
     }
@@ -989,6 +1029,9 @@ impl Drop for Vt {
         // SAFETY: each handle was created in `new` and is freed exactly once, the terminal last
         // of those it refers to.
         unsafe {
+            if let Some(finder) = &mut self.finder {
+                finder.free();
+            }
             self.selector.free(self.term);
             ghostty_mouse_event_free(self.mouse_event);
             ghostty_mouse_encoder_free(self.mouse);

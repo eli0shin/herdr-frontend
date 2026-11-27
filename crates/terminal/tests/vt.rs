@@ -560,3 +560,136 @@ fn a_drag_held_past_the_top_scrolls_back_and_keeps_selecting() {
     select(&mut vt, SelectAction::Release, at(3, 1), 1);
     assert!(vt.has_selection());
 }
+
+#[test]
+fn find_counts_hits_in_the_scrollback_and_marks_those_on_screen() {
+    let mut vt = Vt::new(&config());
+    vt.write(&lines(100));
+    vt.find("line 9");
+    let s = vt.snapshot();
+    // line 9 and line 90 to 99.
+    let found = s.find.expect("searching");
+    assert_eq!(
+        (found.total, found.selected, found.complete),
+        (11, None, true)
+    );
+    // On screen (lines 78 to 100): 90 to 99, matched on their first six columns.
+    let marked: Vec<String> = s
+        .screen
+        .iter()
+        .filter(|r| !r.matches.is_empty())
+        .map(|r| r.text().trim_end().to_owned())
+        .collect();
+    assert_eq!(marked.len(), 10, "{marked:?}");
+    let first = &s.screen[12];
+    assert_eq!(first.text().trim_end(), "line 90");
+    assert_eq!(first.matches.len(), 1);
+    assert_eq!((first.matches[0].start, first.matches[0].end), (0, 5));
+
+    // Next goes up from the bottom; the selected hit is marked.
+    assert!(vt.find_next(false));
+    let s = vt.snapshot();
+    assert_eq!(s.find.unwrap().selected, Some(0));
+    let selected: Vec<String> = s
+        .screen
+        .iter()
+        .filter(|r| r.matches.iter().any(|m| m.selected))
+        .map(|r| r.text().trim_end().to_owned())
+        .collect();
+    assert_eq!(selected, ["line 99"]);
+
+    // Back from the newest wraps to the oldest, line 9, and scrolls to it.
+    assert!(vt.find_next(true));
+    let s = vt.snapshot();
+    assert_eq!(s.find.unwrap().selected, Some(10));
+    assert!(!s.scrollbar.at_bottom);
+    assert!(
+        s.screen
+            .iter()
+            .any(|r| r.text().trim_end() == "line 9" && r.matches.iter().any(|m| m.selected))
+    );
+
+    // New output is searched too.
+    vt.scroll(Scroll::Bottom);
+    vt.write(b"line 9 again\r\n");
+    assert_eq!(vt.snapshot().find.unwrap().total, 12);
+
+    // An empty query stops it.
+    vt.find("");
+    let s = vt.snapshot();
+    assert_eq!(s.find, None);
+    assert!(s.screen.iter().all(|r| r.matches.is_empty()));
+}
+
+#[test]
+fn links_are_urls_paths_and_hyperlinks_under_a_cell() {
+    let mut vt = Vt::new(&Config {
+        cols: 20,
+        rows: 4,
+        ..config()
+    });
+    vt.write(b"see https://a.com ok\r\n");
+    // A path that wraps onto the next row, and an OSC 8 hyperlink.
+    vt.write(b"at ./src/vt/link.rs:42\r\n\x1b]8;;https://b.org/x\x1b\\click\x1b]8;;\x1b\\ me");
+    vt.snapshot();
+    let link = vt.link_at_cell(6, 0).expect("the url");
+    assert_eq!(link.target, "https://a.com");
+    assert!(!link.hyperlink);
+    assert_eq!(
+        link.spans,
+        [terminal::Span {
+            row: 0,
+            start: 4,
+            end: 16
+        }]
+    );
+    assert_eq!(vt.link_at_cell(1, 0), None, "plain text");
+
+    let link = vt.link_at_cell(0, 2).expect("the wrapped path");
+    assert_eq!(link.target, "./src/vt/link.rs:42");
+    assert_eq!(
+        link.spans,
+        [
+            terminal::Span {
+                row: 1,
+                start: 3,
+                end: 19
+            },
+            terminal::Span {
+                row: 2,
+                start: 0,
+                end: 1
+            }
+        ]
+    );
+
+    let link = vt.link_at_cell(2, 3).expect("the hyperlink");
+    assert_eq!(
+        (link.target.as_str(), link.hyperlink),
+        ("https://b.org/x", true)
+    );
+    assert_eq!(
+        link.spans,
+        [terminal::Span {
+            row: 3,
+            start: 0,
+            end: 4
+        }]
+    );
+
+    // Hovering underlines it; leaving takes the underline away.
+    assert!(vt.hover(Some((25.0, 3.0 * 22.0 + 5.0))));
+    assert_eq!(vt.snapshot().link, link.spans);
+    assert!(vt.hover(None));
+    assert!(vt.snapshot().link.is_empty());
+}
+
+#[test]
+fn select_all_takes_the_scrollback_too() {
+    let mut vt = Vt::new(&config());
+    vt.write(&lines(30));
+    vt.select_all();
+    let text = vt.selection_text().expect("selected");
+    assert!(text.starts_with("line 1\nline 2\n"), "{text:?}");
+    assert!(text.trim_end().ends_with("line 30"), "{text:?}");
+}

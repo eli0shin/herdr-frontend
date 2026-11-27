@@ -258,6 +258,12 @@ pub(crate) enum Pending {
     },
     /// A `herdr.seen` write; one that fails is tried again after the core's next news.
     Seen(SeenWrite),
+    /// A Cmd-clicked path being looked up on its pane's machine ([`crate::links`]).
+    Link {
+        pane: String,
+        local: bool,
+        lookup: crate::links::Lookup,
+    },
 }
 
 /// herdr-frontend's state.
@@ -1076,7 +1082,44 @@ impl Model {
             }
             Pending::Keep(keep) => self.kept(keep, result, fx),
             // Exec calls answer with `Event::Executed`.
-            Pending::Navigate { .. } | Pending::Folders { .. } => {}
+            Pending::Navigate { .. } | Pending::Folders { .. } | Pending::Link { .. } => {}
+        }
+    }
+
+    /// A `machine.exec` came back: the Neovim navigation, the new-space folder lookup or the
+    /// link lookup it was for.
+    fn executed(&mut self, token: Token, result: Result<ExecResult, RpcError>, fx: &mut Effects) {
+        let Some(pending) = self.pending.remove(&token) else {
+            return;
+        };
+        match pending {
+            Pending::Navigate {
+                address,
+                pane,
+                tab,
+                direction,
+            } => self.navigated(address, pane, tab, direction, result, fx),
+            Pending::Folders { opening, lookup } => {
+                // What it printed when it exited 0, else nothing (`new-space/main.js` `output`).
+                let output = match &result {
+                    Ok(r) if r.succeeded() => r.stdout_text(),
+                    _ => String::new(),
+                };
+                if let Some(ns) = self.new_space.as_mut().filter(|ns| ns.opening == opening) {
+                    ns.answered(lookup, output);
+                }
+            }
+            Pending::Link {
+                pane,
+                local,
+                lookup,
+            } => self.link_found(&pane, local, &lookup, result, fx),
+            Pending::Launch { .. }
+            | Pending::Adopt(_)
+            | Pending::CheckClosed { .. }
+            | Pending::Park { .. }
+            | Pending::Seen(_)
+            | Pending::Keep(_) => {}
         }
     }
 
@@ -1116,27 +1159,15 @@ impl Model {
     /// `nvim --remote-send` came back (`cfg/mods/navigator-status/navigation.js` `navigate`):
     /// Neovim took the key, or it couldn't run (an error toast), or the labeled Neovim is gone,
     /// so its label is cleared and the pane moves, if focus hasn't moved meanwhile.
-    fn executed(&mut self, token: Token, result: Result<ExecResult, RpcError>, fx: &mut Effects) {
-        let (address, pane, tab, direction) = match self.pending.remove(&token) {
-            Some(Pending::Navigate {
-                address,
-                pane,
-                tab,
-                direction,
-            }) => (address, pane, tab, direction),
-            Some(Pending::Folders { opening, lookup }) => {
-                // What it printed when it exited 0, else nothing (`new-space/main.js` `output`).
-                let output = match &result {
-                    Ok(r) if r.succeeded() => r.stdout_text(),
-                    _ => String::new(),
-                };
-                if let Some(ns) = self.new_space.as_mut().filter(|ns| ns.opening == opening) {
-                    ns.answered(lookup, output);
-                }
-                return;
-            }
-            _ => return,
-        };
+    fn navigated(
+        &mut self,
+        address: String,
+        pane: String,
+        tab: Option<String>,
+        direction: Direction,
+        result: Result<ExecResult, RpcError>,
+        fx: &mut Effects,
+    ) {
         let failed = match result {
             Err(error) => Some(error.message),
             Ok(r) if r.timed_out => Some(format!(

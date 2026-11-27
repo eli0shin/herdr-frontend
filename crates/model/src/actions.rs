@@ -9,6 +9,7 @@ use crate::action::{Action, CopyAction, Direction, Edge, Popup, PopupAction, Spl
 use crate::effect::{Effect, Effects, Level, Pick, Request, TerminalCommand, Toast};
 use crate::folders::{self, Lookup, NewSpace};
 use crate::geometry;
+use crate::links;
 use crate::machines::{MachineAction, MachineCall};
 use crate::mode::{
     self, Confirm, Confirmed, CopyState, JumpPopup, ListPopup, Menu, Mode, PopupState, Prompt,
@@ -249,7 +250,8 @@ impl Model {
             Action::Peek(address) => self.open_peek(&address, fx),
             Action::ClosePeek => self.peek = None,
             Action::KeepPeek => self.keep_peeked(fx),
-            Action::FoldSubagents(_) | Action::OpenLink { .. } => fx.push(Effect::NotYet(action)),
+            Action::FoldSubagents(_) => fx.push(Effect::NotYet(action)),
+            Action::OpenLink { pane, link } => self.open_link(&pane, &link, fx),
         }
     }
 
@@ -419,6 +421,107 @@ impl Model {
             container: fresh_id_on("s", m),
         };
         self.launch(machine, &folder, launch, Vec::new(), None, fx);
+    }
+
+    /// A Cmd-click on a link in pane `pane` ([`crate::links`]): a URL goes to the system's
+    /// opener; a path or a `file:` URI is looked up on the pane's machine, and the answer
+    /// ([`Model::link_found`]) opens it.
+    fn open_link(&mut self, pane: &str, link: &str, fx: &mut Effects) {
+        let Some(address) = self.world.address_of(pane).map(str::to_owned) else {
+            return;
+        };
+        let machine = machine_of(&address).map(str::to_owned);
+        // A `file:` URI (Pi's OSC 8 links) names a file on the pane's machine, as a path does.
+        let file_uri = link
+            .get(..5)
+            .is_some_and(|s| s.eq_ignore_ascii_case("file:"));
+        if links::has_scheme(link) && !file_uri {
+            fx.push(Effect::Open(link.to_owned()));
+            return;
+        }
+        let Some(lookup) = links::Lookup::of(link) else {
+            return;
+        };
+        let cwd = self
+            .world
+            .folder_of(&address)
+            .unwrap_or_default()
+            .to_owned();
+        let exec = herdr_proto::methods::MachineExec {
+            argv: lookup.argv(&cwd),
+            on: machine.clone(),
+            timeout: Some(links::LOOKUP_TIMEOUT),
+            ..Default::default()
+        };
+        self.call(
+            fx,
+            Request::Exec(exec),
+            Some(Pending::Link {
+                pane: pane.to_owned(),
+                local: machine.is_none(),
+                lookup,
+            }),
+        );
+    }
+
+    /// Where a clicked path turned out to be: a file Neovim edits opens in Neovim to the right
+    /// of the pane, anything else here goes to the system's opener; a path found nowhere, or
+    /// anything but a Neovim file on another machine, opens nothing. A lookup that couldn't run
+    /// says so.
+    pub(crate) fn link_found(
+        &mut self,
+        pane: &str,
+        local: bool,
+        lookup: &links::Lookup,
+        result: Result<herdr_proto::methods::ExecResult, herdr_proto::RpcError>,
+        fx: &mut Effects,
+    ) {
+        let output = match result {
+            Ok(output) => output,
+            Err(error) => {
+                fx.push(Effect::Toast(Toast::new(
+                    Level::Error,
+                    "Couldn't open the link",
+                    error.message,
+                )));
+                return;
+            }
+        };
+        if !output.succeeded() {
+            return;
+        }
+        let Some(found) = links::found(lookup, &output.stdout_text()) else {
+            return;
+        };
+        if found.file && links::is_neovim_file(&found.path) {
+            let argv = links::neovim(&found.path, found.place);
+            self.split_running(pane, argv, fx);
+        } else if local {
+            fx.push(Effect::Open(found.path));
+        }
+    }
+
+    /// A split to the right of `pane` running `argv`, on the pane's machine, in its terminal's
+    /// folder.
+    fn split_running(&mut self, pane: &str, argv: Vec<String>, fx: &mut Effects) {
+        if self.world.tab_of(pane).is_none() {
+            return;
+        }
+        let machine = machine_of(pane).map(str::to_owned);
+        let m = machine.as_deref();
+        let folder = self
+            .world
+            .address_of(pane)
+            .and_then(|a| self.world.folder_of(a))
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.new_folder());
+        let launch = Launch::Split {
+            target: pane.to_owned(),
+            axis: Axis::Row,
+            pane: fresh_id_on("p", m),
+            container: fresh_id_on("s", m),
+        };
+        self.launch(machine, &folder, launch, argv, None, fx);
     }
 
     /// `pane.close`: the focused pane and its terminal. A tab's last pane closes the tab.

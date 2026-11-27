@@ -53,6 +53,7 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-machine-filter", shell_machine_filter),
     ("shell-machines", shell_machines),
     ("shell-machine-add", shell_machine_add),
+    ("shell-find", shell_find),
 ];
 
 /// The app on the demo core ([`fixtures::demo_core`]): the sidebar, the tab strip with `work`
@@ -389,6 +390,20 @@ Host vps-eu vps
             },
         ),
     );
+}
+
+/// The demo core with the colors pane's find bar open (`cmd-f`) on `bg`, its hits marked and
+/// the newest one selected.
+fn shell_find(s: &mut State) {
+    shell(s);
+    s.step(0.0, model::Action::FocusPane("pn-2".into()));
+    s.settle();
+    s.step(0.0, model::Action::Terminal(model::TerminalAction::Search));
+    s.search("t2", "bg");
+    if let Some(viewer) = s.viewers.get("t2") {
+        viewer.terminal.find_next(false);
+    }
+    s.settle();
 }
 
 /// `fixture` alone in a focused pane: what the Ghostty pixel diff compares, at Ghostty's

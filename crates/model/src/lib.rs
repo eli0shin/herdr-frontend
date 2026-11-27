@@ -9,6 +9,7 @@
 //! - [`action`]: every action of the keybinding table (`feature-inventory.md` §22).
 //! - [`keys`]: chords in Eli's key syntax, the key file and the default keymap.
 //! - [`help`]: the keys help's rows, from the keymap.
+//! - [`links`]: what a Cmd-click on a link opens (Eli's `nvim-links`).
 //! - [`names`]: what tabs are called on screen, and the tab bar's pills.
 //! - [`mode`]: who has the keyboard: normal, a prefix sequence, a popup, copy mode.
 //! - [`popups`]: what the pickers, the palette and the menus list, and what picking runs.
@@ -36,6 +37,7 @@ pub mod folders;
 pub mod geometry;
 pub mod help;
 pub mod keys;
+pub mod links;
 pub mod machines;
 pub mod mode;
 mod model;

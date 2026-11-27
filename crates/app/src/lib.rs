@@ -42,6 +42,7 @@ pub fn app() -> App<State> {
     App::new(spec())
         .font_smoothing(FontSmoothing::Off)
         .on_focus(State::on_focus)
+        .on_modifiers(State::on_modifiers)
         .on_ime(State::on_ime)
 }
 
