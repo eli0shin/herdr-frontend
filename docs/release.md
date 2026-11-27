@@ -65,9 +65,9 @@ and the other scripts don't count. A PR that touches those files but changes not
 3. A push or PR made with the workflow's `GITHUB_TOKEN` starts no workflows, so `version.yml` starts
    `ci` on `changeset-release/main` itself (`ci.yml` takes `workflow_dispatch`). The version PR's
    head commit gets its `ci` check like any other PR. The `changeset check` doesn't run on it.
-4. Merging the version PR leaves `main` with no changesets. The next `version.yml` run checks that
-   the three files agree, then runs `changeset git-tag`, which tags `v<version>` (skipped when the
-   tag exists). The action pushes the tag and creates the GitHub Release `v<version>`, its notes
+4. Merging the version PR leaves `main` with no changesets. The `version.yml` run for that merge
+   checks that the three files agree, then runs `changeset git-tag`, which tags `v<version>`
+   (skipped when the tag exists). The action pushes the tag and creates the GitHub Release `v<version>`, its notes
    that version's `CHANGELOG.md` entry.
 
    A run only tags when `main` has no changesets. So merge the version PR after the run for the
