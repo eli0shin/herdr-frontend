@@ -50,6 +50,19 @@ pub struct Snapshot {
     /// The link under the pointer while Cmd is held, for its underline: one span per row it
     /// covers, in the viewport.
     pub link: Vec<Span>,
+    /// Copy mode, while it runs. Its cursor is [`Snapshot::cursor`] then.
+    pub copy: Option<CopyView>,
+}
+
+/// What copy mode's bar shows of the terminal.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CopyView {
+    /// The cursor's row, counted from 1 at the top of the scrollback.
+    pub row: usize,
+    /// Rows in the scrollback and on the screen.
+    pub total: usize,
+    /// What the last command said ("Pattern not found: foo").
+    pub message: Option<String>,
 }
 
 /// Where a search over the screen and scrollback stands.

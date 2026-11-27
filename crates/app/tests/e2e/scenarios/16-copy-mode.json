@@ -1,12 +1,18 @@
 {
   "title": "Copy mode",
   "inventory": "§16",
-  "notes": "Ctrl+G [ on a shell with history: motions and a visual selection.",
+  "notes": "Ctrl+G [ on a shell with history: Vim's motions over the scrollback (counts, gg, words, Ctrl+D), a / search, a visual line selection and a block, and leaving with Esc. Herdr app's copy-mode mod takes its keys through the overlay, which the harness can't type into; only herdr-frontend moves. Yanking to the clipboard is covered by the headless tests (crates/app/tests/copy_mode.rs), so the harness never touches Eli's clipboard.",
   "steps": [
     {"name": "the split tab", "do": "space.select", "args": {"index": 1}},
     {"name": "some history", "send": {"terminal": "{{t:w1}}", "text": "seq 1 60"}, "wait": 0.5},
     {"name": "copy mode", "keys": "ctrl-g [", "herdr-app": {"do": "mod.open", "args": {"name": "copy-mode"}}},
-    {"name": "move and select", "keys": "k k k v k k", "herdr-app": {"skip": "keys go to herdr-frontend only"}},
+    {"name": "up with a count", "keys": "1 0 k", "herdr-app": {"skip": "keys go to herdr-frontend only"}},
+    {"name": "the top of history", "keys": "g g w", "herdr-app": {"skip": "keys go to herdr-frontend only"}},
+    {"name": "half a page down", "keys": "ctrl-d", "herdr-app": {"skip": "keys go to herdr-frontend only"}},
+    {"name": "search", "type": "/42", "herdr-app": {"skip": "keys go to herdr-frontend only"}},
+    {"name": "to the match", "keys": "enter", "herdr-app": {"skip": "keys go to herdr-frontend only"}},
+    {"name": "select lines", "keys": "shift-v k k", "herdr-app": {"skip": "keys go to herdr-frontend only"}},
+    {"name": "a block", "keys": "ctrl-v", "herdr-app": {"skip": "keys go to herdr-frontend only"}},
     {"name": "leave", "keys": "escape escape", "herdr-app": {"do": "overlay.close"}}
   ]
 }

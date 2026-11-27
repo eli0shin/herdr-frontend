@@ -47,8 +47,11 @@ window without moving focus.
 - **The keyboard** goes to the peeked terminal (`Focus::Peek`, element `peek-terminal`), and so
   does Esc, because agents use it. A popup can open over the peek and gives the keyboard back to
   it when it closes. The focused pane stays focused behind the peek, but doesn't draw as focused.
-- **Terminal commands follow the keyboard** (`Model::keyboard_terminal`): copy, paste, `send:`
-  bindings, pastes, dropped files and copy mode go to the peeked terminal.
+- **Terminal commands follow the keyboard** (`Model::keyboard_terminal`): copy, paste, select
+  all, `send:` bindings, pastes, dropped files and copy mode go to the peeked terminal. Copy mode
+  (`ctrl-g [`) runs in the peeked terminal's buffer with its bar over the peek; leaving it (or a
+  press beside its bar) gives the keyboard back to the peek, which stays open. Closing the peek
+  ends copy mode. Find (`cmd-f`) is the one exception: the peek has no find bar.
 - **The size.** While the peek has the keyboard and the window is in front, the peeked terminal
   is the one in use (`herdr-core-protocol.md` §4). It takes the size of the peek's terminal area,
   then gives it back when the peek closes (FOCUS(0)).

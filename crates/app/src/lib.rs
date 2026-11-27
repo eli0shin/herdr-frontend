@@ -130,7 +130,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     } else {
         view::shell::view(s, cx)
     };
-    let popup = view::popup::view(s, cx);
+    let popup = view::popup::view(s, cx).or_else(|| view::copy::view(s));
     let peek = view::peek::view(s, cx);
     let toasts = toast::view(s);
     let zoom = s.zoom();

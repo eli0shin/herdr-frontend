@@ -13,7 +13,7 @@ use crate::links;
 use crate::machines::{MachineAction, MachineCall};
 use crate::mode::{
     self, Confirm, Confirmed, CopyState, JumpPopup, ListPopup, Menu, Mode, PopupState, Prompt,
-    Rename, Visual,
+    Rename,
 };
 use crate::model::{EDITOR_LABEL, Launch, Model, NAVIGATE_TIMEOUT, Pending};
 use crate::popups;
@@ -35,8 +35,7 @@ impl Model {
             Action::TabMenu(tab) => {
                 if let Some(space) = self.world.space_of(&tab).filter(|s| s.tab(&tab).is_some()) {
                     let menu = Menu::tab(&tab, &space.id);
-                    self.close_mode(fx);
-                    self.open_popup(PopupState::Menu(menu));
+                    self.open_popup(PopupState::Menu(menu), fx);
                 }
             }
             Action::TabClose => {
@@ -63,10 +62,10 @@ impl Model {
             }
             Action::TabRename => {
                 if let Some(tab) = self.shown_tab().map(|t| t.id.clone()) {
-                    self.rename(Rename::Tab(tab));
+                    self.rename(Rename::Tab(tab), fx);
                 }
             }
-            Action::RenameTabOf(tab) => self.rename(Rename::Tab(tab)),
+            Action::RenameTabOf(tab) => self.rename(Rename::Tab(tab), fx),
             Action::MoveTab { tab, to } => {
                 if self.world.tab(&tab).is_some() {
                     self.edit(Intent::MoveTab { tab, to }, fx);
@@ -108,12 +107,12 @@ impl Model {
             }
             Action::SpaceRename => {
                 if let Some(space) = self.active_space().map(|s| s.id.clone()) {
-                    self.rename(Rename::Space(space));
+                    self.rename(Rename::Space(space), fx);
                 }
             }
             Action::SpaceClose => {
                 if let Some(space) = self.active_space().map(|s| s.id.clone()) {
-                    self.ask_close_space(&space);
+                    self.ask_close_space(&space, fx);
                 }
             }
             Action::AgentNext | Action::AgentPrev => {
@@ -183,8 +182,7 @@ impl Model {
             Action::Copy(copy) => self.copy(copy, fx),
             Action::TerminalMenu(pane) => {
                 if let Some(menu) = popups::terminal_menu(self, &pane) {
-                    self.close_mode(fx);
-                    self.open_popup(PopupState::Menu(menu));
+                    self.open_popup(PopupState::Menu(menu), fx);
                 }
             }
             Action::SpaceNew(machine) => self.new_space(machine, None, fx),
@@ -244,7 +242,7 @@ impl Model {
                 }
             }
             Action::EditFile(path) => self.edit_file(&path, fx),
-            Action::RenamePaneOf(pane) => self.rename(Rename::Pane(pane)),
+            Action::RenamePaneOf(pane) => self.rename(Rename::Pane(pane), fx),
             Action::Machine(action) => self.machine(action, fx),
             Action::CopyText(text) => fx.push(Effect::Clipboard(text)),
             Action::Peek(address) => self.open_peek(&address, fx),
@@ -550,7 +548,7 @@ impl Model {
         };
         if space.tabs.len() == 1 {
             let space = space.id.clone();
-            self.ask_close_space(&space);
+            self.ask_close_space(&space, fx);
             return;
         }
         let addresses = space
@@ -567,7 +565,7 @@ impl Model {
         }
     }
 
-    fn ask_close_space(&mut self, id: &str) {
+    fn ask_close_space(&mut self, id: &str, fx: &mut Effects) {
         let Some(space) = self.world.space(id) else {
             return;
         };
@@ -578,11 +576,14 @@ impl Model {
             space.tabs.len(),
             panes
         );
-        self.open_popup(PopupState::Confirm(Confirm {
-            title: "Close space?".into(),
-            detail,
-            then: Confirmed::CloseSpace(id.to_owned()),
-        }));
+        self.open_popup(
+            PopupState::Confirm(Confirm {
+                title: "Close space?".into(),
+                detail,
+                then: Confirmed::CloseSpace(id.to_owned()),
+            }),
+            fx,
+        );
     }
 
     pub(crate) fn close_space(&mut self, id: &str, fx: &mut Effects) {
@@ -859,11 +860,10 @@ impl Model {
         }
     }
 
-    fn open_popup(&mut self, state: PopupState) {
-        if let Mode::Copy(_) = self.mode {
-            // Leaving copy mode for a popup: the popup replaces it.
-            self.mode = Mode::Normal;
-        }
+    /// Opens a popup in place of whatever holds the keyboard. Copy mode it replaces ends on the
+    /// terminal too (`TerminalCommand::CopyEnd`), so it doesn't keep its cursor and pinned view.
+    fn open_popup(&mut self, state: PopupState, fx: &mut Effects) {
+        self.close_mode(fx);
         self.mode = Mode::Popup(state);
     }
 
@@ -894,7 +894,7 @@ impl Model {
             }
             _ => PopupState::List(ListPopup::new(popup)),
         };
-        self.open_popup(state);
+        self.open_popup(state, fx);
     }
 
     /// The new-space picker opens: it offers the focused terminal's folder at once and asks the
@@ -942,7 +942,7 @@ impl Model {
 
     /// A rename prompt for a tab, space or pane, its current name selected (an unnamed pane's is
     /// empty). A second rename while one is open closes it instead of stacking another.
-    fn rename(&mut self, rename: Rename) {
+    fn rename(&mut self, rename: Rename, fx: &mut Effects) {
         if let Mode::Popup(PopupState::Prompt(_)) = self.mode {
             self.mode = Mode::Normal;
             return;
@@ -959,7 +959,7 @@ impl Model {
             Rename::Machine(name) => self.world.machine(Some(name)).and(Some(name.clone())),
         };
         if let Some(value) = value {
-            self.open_popup(PopupState::Prompt(Prompt { rename, value }));
+            self.open_popup(PopupState::Prompt(Prompt { rename, value }), fx);
         }
     }
 
@@ -1065,8 +1065,7 @@ impl Model {
                 else {
                     return;
                 };
-                self.close_mode(fx);
-                self.open_popup(PopupState::Menu(crate::machines::machine_menu(&view)));
+                self.open_popup(PopupState::Menu(crate::machines::machine_menu(&view)), fx);
             }
             MachineAction::Connect(name) => fx.push(Effect::Machine(MachineCall::Connect(name))),
             MachineAction::Add(target) => {
@@ -1077,18 +1076,20 @@ impl Model {
             }
             MachineAction::Rename(name) => {
                 self.close_mode(fx);
-                self.rename(Rename::Machine(name));
+                self.rename(Rename::Machine(name), fx);
             }
             MachineAction::Remove(name) => {
                 if self.world.machine(Some(&name)).is_none() {
                     return;
                 }
-                self.close_mode(fx);
-                self.open_popup(PopupState::Confirm(Confirm {
-                    title: "Remove machine?".into(),
-                    detail: format!("{name}: its terminals keep running there."),
-                    then: Confirmed::RemoveMachine(name),
-                }));
+                self.open_popup(
+                    PopupState::Confirm(Confirm {
+                        title: "Remove machine?".into(),
+                        detail: format!("{name}: its terminals keep running there."),
+                        then: Confirmed::RemoveMachine(name),
+                    }),
+                    fx,
+                );
             }
         }
     }
@@ -1129,45 +1130,38 @@ impl Model {
             address: address.clone(),
             command: TerminalCommand::CopyStart,
         });
-        self.mode = Mode::Copy(CopyState {
-            address,
-            visual: None,
-        });
+        self.mode = Mode::Copy(CopyState::new(address));
     }
 
+    /// A named copy-mode command (`copy_mode.<name>`, Eli's `copy-mode.escape`): the keys it
+    /// stands for, through the grammar.
     fn copy(&mut self, action: CopyAction, fx: &mut Effects) {
-        let Mode::Copy(copy) = &mut self.mode else {
-            return;
-        };
-        let address = copy.address.clone();
-        let command = |command| Effect::Terminal {
-            address: address.clone(),
-            command,
-        };
-        match action {
-            CopyAction::SelectChars | CopyAction::SelectLines => {
-                let kind = if action == CopyAction::SelectChars {
-                    Visual::Chars
-                } else {
-                    Visual::Lines
-                };
-                // The same key again drops the selection.
-                copy.visual = (copy.visual != Some(kind)).then_some(kind);
-                fx.push(command(TerminalCommand::CopySelect(copy.visual)));
+        for &key in mode::copy_keys(action) {
+            if !matches!(self.mode, Mode::Copy(_)) {
+                break;
             }
-            CopyAction::Escape if copy.visual.is_some() => {
-                copy.visual = None;
-                fx.push(command(TerminalCommand::CopySelect(None)));
-            }
-            CopyAction::Yank => {
-                if copy.visual.is_some() {
-                    fx.push(command(TerminalCommand::CopyYank));
-                }
-                self.close_mode(fx);
-            }
-            CopyAction::Quit | CopyAction::Escape => self.close_mode(fx),
-            motion => fx.push(command(TerminalCommand::CopyMove(motion))),
+            self.copy_key(key, fx);
         }
+    }
+
+    /// A key in copy mode, through its Vim grammar: the commands it makes go to the terminal,
+    /// and a yank, `q`, Ctrl-C or the last Esc ends copy mode after them. False for a key copy
+    /// mode doesn't read, which the window's own bindings may take.
+    pub(crate) fn copy_key(&mut self, key: copy_mode::Key, fx: &mut Effects) -> bool {
+        let Mode::Copy(copy) = &mut self.mode else {
+            return false;
+        };
+        let step = copy.vim.key(key);
+        for command in step.commands {
+            fx.push(Effect::Terminal {
+                address: copy.address.clone(),
+                command: TerminalCommand::Copy(command),
+            });
+        }
+        if step.leave {
+            self.close_mode(fx);
+        }
+        step.taken
     }
 }
 

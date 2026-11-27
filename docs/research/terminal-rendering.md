@@ -929,6 +929,58 @@ libghostty-vt has every primitive this needs. The motion engine is ours.
 **Caveat.** An untracked reference dies on any terminal change (`guides/grid.md` "When a
 reference dies"). Never keep one across a `vt_write`.
 
+### What herdr-frontend does (ticket 020)
+
+- **Two halves, one pure crate** (`crates/copy-mode`). Its grammar (`Vim`) turns keys into
+  commands: counts, the `g`, `f`/`t`, `m`, `'` and `` ` `` prefixes, the `y` operator, text
+  objects after `i`/`a`, and the `/`/`?` prompt. It needs no text, so the model runs it as keys
+  arrive (`Mode::Copy`) and knows at once when copy mode ends; the commands go to the terminal
+  as `TerminalCommand::Copy`. Its engine (`Session`) runs a command over a `Buffer` of rows,
+  read lazily and at most once per command. The worker runs it on the live terminal
+  (`terminal::Vt::copy_run`); the motion tests run it on text fixtures.
+- **Rows and lines.** Positions are screen points (rows from the oldest scrollback row).
+  `j`/`k`, `0`/`^`/`$`, `H`/`M`/`L` and the page keys go by the screen's rows, as the mod did.
+  Words, `f`/`t`, `%`, paragraphs and text objects read a soft-wrapped row and the rows it
+  continues on as one line, and walk it as Vim walks a file (`fwd_word`, `bck_word`,
+  `end_word`, `findpar`): each line's end is a place of its own that counts as a blank, and the
+  blank cells after a row's text aren't part of its line, so an empty row is an empty line.
+- **Reading the buffer** goes through grid references with the `SCREEN` tag, a cell at a time
+  (`CODEPOINT` and `WIDE`; a wide character's spacer is no place for the cursor), with
+  `ROW_DATA_WRAP` for the soft wrap. The rows a command reads are cached for that command only.
+- **Tracked references** hold the cursor, the visual anchor and the marks between commands, so
+  they stay on their text while output scrolls it, history is pruned or the grid reflows. A
+  cursor whose text was pruned, or a switch to the other screen, starts copy mode over at the
+  bottom of the view.
+- **The view** is pinned from the start: its top row is a tracked reference, and after each write
+  the view scrolls back to it (`Scroll::Row`) if output moved it. `Scroll::Row` alone isn't
+  enough: a view on the active area's top keeps following output. After each command the view
+  scrolls the least that shows the cursor, and centers on a cursor more than half a view away,
+  as Vim does after a long jump. Ctrl-U/D/B/F/E/Y move the view and the cursor together.
+- **The selection** is the terminal's own (`OPT_SELECTION`; a rectangle for Ctrl-V), so the
+  render state draws it in the rows. A yank installs the range and formats it as `selection_text`
+  does (`UNWRAP`, `TRIM`): the same text Ghostty copies, so the blanks at the end of a copied line
+  are left out, even a space `yw` ends on. It comes out as `Output::Yanked`, for the clipboard,
+  and the app tells the model (`Event::CopyYanked`), which ends copy mode. A yank that copies
+  nothing (no match, no word past a line's text, only blanks) sends nothing: copy mode goes on
+  and the bar says why, as Vim stays put.
+- **Repeated text objects** grow a selection, as Vim's do: words and paragraphs take the next
+  ones past the cursor's end (`viwiw`, blanks counting as a word for `iw`), brackets go a level
+  out (`va(a(`, and `vi(` on one character takes the level around).
+- **Search** (`/`, `?`, `n`, `N`, `*`, `#`) uses a `ghostty_search` of its own, apart from the
+  find bar's: literal, ASCII letters either case, as the find bar matches. `DATA_MATCHES` lists
+  every match on the screen and in the scrollback; the engine takes the first after (or before)
+  the cursor, wrapping. `*` and `#` keep only whole-word matches. Its hits are marked on the rows
+  in the find colors while copy mode runs, the one under the cursor as the selected one.
+- **Start and end.** Copy mode starts at the program's cursor, or at the bottom of the view when
+  that's scrolled out of it, and drops any selection. While it runs, snapshots carry its cursor
+  as the cursor (a steady block, drawn solid though the bar has the keyboard) and `Snapshot::copy`
+  (the cursor's row, the rows in all, the last message) for the bar. Leaving drops the selection
+  and returns the view to the bottom when the screen has history.
+- **Departures from Vim:** `y` with nothing selected waits for a motion (Vim's operator), where
+  the mod left; Enter and Cmd+C still copy a selection or just leave. Space selects characters
+  (the mod's key). `G` goes to the last row with text, not past the blank rows under the prompt.
+  Search is literal, not a pattern.
+
 ## 7. How opencode-rune does it
 
 - **Build** (`crates/terminal/build.rs`):

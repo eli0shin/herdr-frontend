@@ -47,6 +47,11 @@ pub enum Place {
 /// `body` in the popup frame at `place`. `key` is the box's: the focus goes there when the
 /// popup has no field.
 pub fn frame(s: &State, key: &str, place: Place, body: El) -> El {
+    frame_closing(s, key, place, body, Action::Popup(PopupAction::Close))
+}
+
+/// [`frame`], with a press outside running `close` (copy mode's bar leaves copy mode).
+pub fn frame_closing(s: &State, key: &str, place: Place, body: El, close: Action) -> El {
     let c = &s.chrome;
     let (vw, vh) = s.view_size();
     let span = |v: f32, full: f32| if v <= 1.0 { full * v } else { v };
@@ -67,12 +72,12 @@ pub fn frame(s: &State, key: &str, place: Place, body: El) -> El {
         // A press inside stays inside.
         .on_press(|_: &mut State| {})
         .child(body);
-    let close = |s: &mut State, tx: &mut rune::Tx| s.act(Action::Popup(PopupAction::Close), tx);
+    let again = close.clone();
     let scrim = el()
         .key(SCRIM)
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-        .on_press_tx(close)
-        .on_secondary_press(move |s: &mut State, _, tx| close(s, tx));
+        .on_press_tx(move |s: &mut State, tx| s.act(close.clone(), tx))
+        .on_secondary_press(move |s: &mut State, _, tx| s.act(again.clone(), tx));
     match place {
         Place::Dialog { height, .. } => {
             let boxed = match height {

@@ -268,19 +268,30 @@ impl Menu {
     }
 }
 
-/// What copy mode has selected.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Visual {
-    Chars,
-    Lines,
-}
+pub use copy_mode::Visual;
 
-/// Copy mode: the terminal it runs in and its selection kind. The cursor and selection live in
-/// the terminal's own buffer (ticket 020).
+/// Copy mode: the terminal it runs in and the Vim grammar reading its keys
+/// ([`copy_mode::Vim`]: counts, pending keys, the visual mode, the `/` prompt). The cursor,
+/// selection, marks and search live with the terminal's own buffer, on its worker
+/// (`terminal::Vt::copy_run`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CopyState {
     pub address: String,
-    pub visual: Option<Visual>,
+    pub vim: copy_mode::Vim,
+}
+
+impl CopyState {
+    pub fn new(address: impl Into<String>) -> CopyState {
+        CopyState {
+            address: address.into(),
+            vim: copy_mode::Vim::default(),
+        }
+    }
+
+    /// What's selected, if anything.
+    pub fn visual(&self) -> Option<Visual> {
+        self.vim.visual()
+    }
 }
 
 impl Mode {
@@ -374,38 +385,96 @@ fn jump_key(chord: Chord) -> Option<Action> {
     }
 }
 
-/// What a key does in copy mode (`feature-inventory.md` §16). `None`: nothing; copy mode holds
-/// the keyboard, so the key goes nowhere else either.
+/// What a key does in copy mode before the Vim grammar reads it: Cmd+C copies and leaves, as
+/// `y` does (`feature-inventory.md` §22).
 pub fn copy_key(chord: Chord) -> Option<Action> {
+    match (chord.key, chord.mods) {
+        (Key::Char('c'), CMD) => Some(Action::Copy(CopyAction::Yank)),
+        _ => None,
+    }
+}
+
+/// A press as copy mode's grammar reads it: the character it typed (`G` for Shift+G, `$` for
+/// Shift+4), Ctrl with a letter, or a named key. `None` for a chord with Cmd or Alt, and other
+/// keys copy mode doesn't read; those go to the window's own bindings.
+pub fn vim_key(press: Press) -> Option<copy_mode::Key> {
+    use copy_mode::Key as V;
+    if let Some(Chord {
+        key: Key::Char(c),
+        mods,
+    }) = press.typed
+        && !mods.command_like()
+    {
+        return Some(V::Char(c));
+    }
+    let Chord { key, mods } = press.chord;
+    if mods.cmd || mods.alt {
+        return None;
+    }
+    if mods.ctrl {
+        return match key {
+            Key::Char(c) if c.is_ascii_lowercase() && !mods.shift => Some(V::Ctrl(c)),
+            _ => None,
+        };
+    }
+    Some(match key {
+        Key::Char(c) if mods.shift => V::Char(shifted(c)),
+        Key::Char(c) => V::Char(c),
+        Key::Space => V::Char(' '),
+        Key::Escape => V::Escape,
+        Key::Enter => V::Enter,
+        Key::Backspace => V::Backspace,
+        Key::Left => V::Left,
+        Key::Right => V::Right,
+        Key::Up => V::Up,
+        Key::Down => V::Down,
+        Key::Home => V::Home,
+        Key::End => V::End,
+        Key::PageUp => V::PageUp,
+        Key::PageDown => V::PageDown,
+        Key::Tab | Key::Delete | Key::F(_) => return None,
+    })
+}
+
+/// The character Shift makes of a key on a US layout, for a press that came without its typed
+/// spelling (a letter's capital always does).
+fn shifted(c: char) -> char {
+    const PLAIN: &str = "`1234567890-=[]\\;',./";
+    const SHIFTED: &str = "~!@#$%^&*()_+{}|:\"<>?";
+    match PLAIN.chars().position(|p| p == c) {
+        Some(i) => SHIFTED.chars().nth(i).unwrap_or(c),
+        None => c.to_ascii_uppercase(),
+    }
+}
+
+/// The keys a named copy-mode command (the key file's `copy_mode.<name>`) stands for.
+pub fn copy_keys(action: CopyAction) -> &'static [copy_mode::Key] {
     use CopyAction as C;
-    let Chord { key, mods } = chord;
-    let action = match (key, mods) {
-        (Key::Char('h') | Key::Left, Mods::NONE) => C::Left,
-        (Key::Char('j') | Key::Down, Mods::NONE) => C::Down,
-        (Key::Char('k') | Key::Up, Mods::NONE) => C::Up,
-        (Key::Char('l') | Key::Right, Mods::NONE) => C::Right,
-        (Key::Char('0') | Key::Home, Mods::NONE) => C::LineStart,
-        (Key::Char('^'), Mods::NONE | SHIFT) | (Key::Char('6'), SHIFT) => C::FirstText,
-        (Key::Char('$'), Mods::NONE | SHIFT) | (Key::Char('4'), SHIFT) | (Key::End, Mods::NONE) => {
-            C::LineEnd
-        }
-        (Key::Char('g'), Mods::NONE) => C::Top,
-        (Key::Char('g'), SHIFT) => C::Bottom,
-        (Key::Char('h'), SHIFT) => C::ViewTop,
-        (Key::Char('m'), SHIFT) => C::ViewMiddle,
-        (Key::Char('l'), SHIFT) => C::ViewBottom,
-        (Key::Char('u'), CTRL) => C::HalfPageUp,
-        (Key::Char('d'), CTRL) => C::HalfPageDown,
-        (Key::Char('b'), CTRL) | (Key::PageUp, Mods::NONE) => C::PageUp,
-        (Key::Char('f'), CTRL) | (Key::PageDown, Mods::NONE) => C::PageDown,
-        (Key::Char('v') | Key::Space, Mods::NONE) => C::SelectChars,
-        (Key::Char('v'), SHIFT) => C::SelectLines,
-        (Key::Char('y') | Key::Enter, Mods::NONE) | (Key::Char('c'), CMD) => C::Yank,
-        (Key::Char('q'), Mods::NONE) | (Key::Char('c'), CTRL) => C::Quit,
-        (Key::Escape, Mods::NONE) => C::Escape,
-        _ => return None,
-    };
-    Some(Action::Copy(action))
+    use copy_mode::Key as V;
+    match action {
+        C::Left => &[V::Char('h')],
+        C::Down => &[V::Char('j')],
+        C::Up => &[V::Char('k')],
+        C::Right => &[V::Char('l')],
+        // Home rather than `0`, which a count would take as a digit.
+        C::LineStart => &[V::Home],
+        C::FirstText => &[V::Char('^')],
+        C::LineEnd => &[V::Char('$')],
+        C::Top => &[V::Char('g'), V::Char('g')],
+        C::Bottom => &[V::Char('G')],
+        C::ViewTop => &[V::Char('H')],
+        C::ViewMiddle => &[V::Char('M')],
+        C::ViewBottom => &[V::Char('L')],
+        C::HalfPageUp => &[V::Ctrl('u')],
+        C::HalfPageDown => &[V::Ctrl('d')],
+        C::PageUp => &[V::Ctrl('b')],
+        C::PageDown => &[V::Ctrl('f')],
+        C::SelectChars => &[V::Char('v')],
+        C::SelectLines => &[V::Char('V')],
+        C::Yank => &[V::Enter],
+        C::Quit => &[V::Char('q')],
+        C::Escape => &[V::Escape],
+    }
 }
 
 /// Agent-jump labels for `count` rows: 1-9 and 0, then home-row letters; with more rows than
@@ -645,49 +714,42 @@ mod tests {
     }
 
     #[test]
-    fn copy_mode_reads_its_table() {
-        use CopyAction as C;
-        for (k, a) in [
-            ("h", C::Left),
-            ("left", C::Left),
-            ("j", C::Down),
-            ("down", C::Down),
-            ("k", C::Up),
-            ("up", C::Up),
-            ("l", C::Right),
-            ("right", C::Right),
-            ("0", C::LineStart),
-            ("home", C::LineStart),
-            ("^", C::FirstText),
-            ("shift-6", C::FirstText),
-            ("$", C::LineEnd),
-            ("shift-4", C::LineEnd),
-            ("end", C::LineEnd),
-            ("g", C::Top),
-            ("shift-g", C::Bottom),
-            ("shift-h", C::ViewTop),
-            ("shift-m", C::ViewMiddle),
-            ("shift-l", C::ViewBottom),
-            ("ctrl-u", C::HalfPageUp),
-            ("ctrl-d", C::HalfPageDown),
-            ("ctrl-b", C::PageUp),
-            ("pageup", C::PageUp),
-            ("ctrl-f", C::PageDown),
-            ("pagedown", C::PageDown),
-            ("v", C::SelectChars),
-            ("space", C::SelectChars),
-            ("shift-v", C::SelectLines),
-            ("y", C::Yank),
-            ("enter", C::Yank),
-            ("cmd-c", C::Yank),
-            ("q", C::Quit),
-            ("ctrl-c", C::Quit),
-            ("escape", C::Escape),
+    fn copy_mode_reads_keys_as_vim_does() {
+        use copy_mode::Key as V;
+        let typed = |chord: &str, typed: Option<&str>| Press {
+            chord: Chord::parse(chord).unwrap(),
+            typed: typed.map(|t| Chord::parse(t).unwrap()),
+        };
+        for (press, key) in [
+            (typed("h", None), Some(V::Char('h'))),
+            (typed("shift-g", None), Some(V::Char('G'))),
+            (typed("shift-4", Some("$")), Some(V::Char('$'))),
+            (typed("shift-4", None), Some(V::Char('$'))),
+            (typed("shift-[", None), Some(V::Char('{'))),
+            (typed("shift-'", None), Some(V::Char('"'))),
+            (typed("space", None), Some(V::Char(' '))),
+            (typed("ctrl-d", None), Some(V::Ctrl('d'))),
+            (typed("ctrl-v", None), Some(V::Ctrl('v'))),
+            (typed("escape", None), Some(V::Escape)),
+            (typed("enter", None), Some(V::Enter)),
+            (typed("pageup", None), Some(V::PageUp)),
+            (typed("cmd-t", None), None),
+            (typed("alt-h", None), None),
+            (typed("ctrl-shift-d", None), None),
+            (typed("tab", None), None),
         ] {
-            assert_eq!(copy_key(chord(k)), Some(Action::Copy(a)), "{k}");
+            assert_eq!(vim_key(press), key, "{press}");
         }
-        assert_eq!(copy_key(chord("x")), None);
-        assert_eq!(copy_key(chord("cmd-t")), None);
+        assert_eq!(
+            copy_key(chord("cmd-c")),
+            Some(Action::Copy(CopyAction::Yank))
+        );
+        assert_eq!(copy_key(chord("y")), None, "the grammar reads y");
+        // Every named command stands for keys.
+        for action in CopyAction::ALL {
+            assert!(!copy_keys(action).is_empty(), "{action:?}");
+        }
+        assert_eq!(copy_keys(CopyAction::Top), [V::Char('g'), V::Char('g')]);
     }
 
     #[test]
@@ -748,13 +810,7 @@ mod tests {
             .holds_keyboard()
         );
         assert!(Mode::Popup(list(Popup::Help)).holds_keyboard());
-        assert!(
-            Mode::Copy(CopyState {
-                address: "t".into(),
-                visual: None
-            })
-            .holds_keyboard()
-        );
+        assert!(Mode::Copy(CopyState::new("t")).holds_keyboard());
         assert_eq!(list(Popup::Help).popup(), Some(Popup::Help));
         assert_eq!(
             PopupState::Jump(JumpPopup::default()).popup(),

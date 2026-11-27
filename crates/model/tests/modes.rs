@@ -5,9 +5,9 @@ mod support;
 
 use herdr_proto::{StatusState, Terminal};
 use herdr_shared::Displayed;
-use model::mode::{CopyState, PopupState, Visual};
+use model::mode::{PopupState, Visual};
 use model::{
-    Action, AppCommand, Chord, CopyAction, Effect, Event, Focus, Mode, Pick, Popup, PopupAction,
+    Action, AppCommand, Chord, Effect, Event, Focus, Mode, Pick, Popup, PopupAction,
     TerminalAction, TerminalCommand, View,
 };
 use support::*;
@@ -333,51 +333,77 @@ fn past_36_rows_the_first_letter_waits_for_the_second() {
 
 #[test]
 fn copy_mode_selects_copies_and_leaves() {
+    use model::copy_mode::{Command, Motion};
     let mut core = agents();
     let mut m = connected(&mut core);
     let t = |command| Effect::Terminal {
         address: "t1".into(),
         command,
     };
+    let copy = |command| t(TerminalCommand::Copy(command));
+    let go = |motion, count| copy(Command::Move { motion, count });
     let fx = press(&mut m, "ctrl-g [", true);
     assert!(fx.list.contains(&t(TerminalCommand::CopyStart)));
     assert!(fx.list.contains(&Effect::Focus(Focus::Popup)));
-    let copy = |m: &model::Model| match m.mode() {
+    let state = |m: &model::Model| match m.mode() {
         Mode::Copy(c) => c.clone(),
         other => panic!("{other:?}"),
     };
-    assert_eq!(
-        copy(&m),
-        CopyState {
-            address: "t1".into(),
-            visual: None
-        }
-    );
+    assert_eq!(state(&m).address, "t1");
+    assert_eq!(state(&m).visual(), None);
     let fx = press(&mut m, "k", true);
+    assert!(fx.list.contains(&go(Motion::Up, None)));
+    // Counts and two-key motions: the grammar waits, then sends one command.
+    assert!(press(&mut m, "3", true).list.is_empty());
+    let fx = press(&mut m, "w", true);
     assert!(
         fx.list
-            .contains(&t(TerminalCommand::CopyMove(CopyAction::Up)))
+            .contains(&go(Motion::WordForward { big: false }, Some(3)))
     );
+    press(&mut m, "g", true);
+    assert_eq!(state(&m).vim.typed(), "g");
+    let fx = press(&mut m, "g", true);
+    assert!(fx.list.contains(&go(Motion::Top, None)));
+    let fx = press(&mut m, "shift-g", true);
+    assert!(fx.list.contains(&go(Motion::Bottom, None)));
+    let fx = press(&mut m, "ctrl-d", true);
+    assert!(fx.list.contains(&go(Motion::HalfPageDown, None)));
     assert!(
         press(&mut m, "x", true).handled,
         "copy mode holds the keyboard"
     );
-    // v selects, v again drops; V selects lines; Esc drops, Esc again leaves.
+    // v selects, v again drops; V selects lines; Ctrl-V a block; Esc drops, Esc again leaves.
     let fx = press(&mut m, "v", true);
     assert!(
         fx.list
-            .contains(&t(TerminalCommand::CopySelect(Some(Visual::Chars))))
+            .contains(&copy(Command::Visual(Some(Visual::Chars))))
     );
     let fx = press(&mut m, "v", true);
-    assert!(fx.list.contains(&t(TerminalCommand::CopySelect(None))));
+    assert!(fx.list.contains(&copy(Command::Visual(None))));
     press(&mut m, "shift-v", true);
-    assert_eq!(copy(&m).visual, Some(Visual::Lines));
+    assert_eq!(state(&m).visual(), Some(Visual::Lines));
+    let fx = press(&mut m, "ctrl-v", true);
+    assert!(
+        fx.list
+            .contains(&copy(Command::Visual(Some(Visual::Block))))
+    );
+    assert!(
+        !fx.list.iter().any(|e| matches!(
+            e,
+            Effect::Terminal {
+                command: TerminalCommand::Action(TerminalAction::Paste),
+                ..
+            }
+        )),
+        "Ctrl-V is copy mode's, not paste"
+    );
     press(&mut m, "escape", true);
-    assert_eq!(copy(&m).visual, None);
+    assert_eq!(state(&m).visual(), None);
     let fx = press(&mut m, "escape", true);
     assert!(fx.list.contains(&t(TerminalCommand::CopyEnd)));
     assert_eq!(*m.mode(), Mode::Normal);
-    // y with a selection copies, then leaves; without, just leaves.
+    // y with a selection copies, then leaves once the terminal says it copied something (a
+    // yank that finds nothing stays); Enter without one just leaves.
     press(&mut m, "ctrl-g [", true);
     press(&mut m, "space", true);
     let fx = press(&mut m, "y", true);
@@ -387,14 +413,89 @@ fn copy_mode_selects_copies_and_leaves() {
             .filter(|e| matches!(e, Effect::Terminal { .. }))
             .cloned()
             .collect::<Vec<_>>(),
-        [t(TerminalCommand::CopyYank), t(TerminalCommand::CopyEnd)]
+        [copy(Command::Yank)]
     );
+    assert!(
+        matches!(m.mode(), Mode::Copy(_)),
+        "waiting for the terminal"
+    );
+    m.step(m.now(), Event::CopyYanked("t2".into()));
+    assert!(matches!(m.mode(), Mode::Copy(_)), "another terminal's yank");
+    let fx = m.step(m.now(), Event::CopyYanked("t1".into()));
+    assert!(fx.list.contains(&t(TerminalCommand::CopyEnd)));
+    assert_eq!(*m.mode(), Mode::Normal);
     press(&mut m, "ctrl-g [", true);
     let fx = press(&mut m, "enter", true);
-    assert!(!fx.list.contains(&t(TerminalCommand::CopyYank)));
+    assert!(!fx.list.contains(&copy(Command::Yank)));
     assert!(fx.list.contains(&t(TerminalCommand::CopyEnd)));
+    // y and a motion yanks it and leaves; Cmd+C copies the selection and leaves.
     press(&mut m, "ctrl-g [", true);
+    press(&mut m, "y", true);
+    assert!(matches!(m.mode(), Mode::Copy(_)), "y waits for its motion");
+    let fx = press(&mut m, "shift-4", true);
+    assert!(fx.list.contains(&copy(Command::YankMotion {
+        motion: Motion::LineEnd,
+        count: None
+    })));
+    m.step(m.now(), Event::CopyYanked("t1".into()));
+    assert_eq!(*m.mode(), Mode::Normal);
+    press(&mut m, "ctrl-g [", true);
+    press(&mut m, "v", true);
+    let fx = press(&mut m, "cmd-c", true);
+    assert!(fx.list.contains(&copy(Command::Yank)));
+    m.step(m.now(), Event::CopyYanked("t1".into()));
+    assert_eq!(*m.mode(), Mode::Normal);
+    // The search prompt types its query; Enter searches.
+    press(&mut m, "ctrl-g [", true);
+    for k in ["/", "f", "o", "o"] {
+        press(&mut m, k, true);
+    }
+    assert_eq!(
+        state(&m).vim.prompt().map(|p| p.query.clone()).as_deref(),
+        Some("foo")
+    );
+    let fx = press(&mut m, "enter", true);
+    assert!(fx.list.contains(&go(
+        Motion::Search {
+            query: "foo".into(),
+            backward: false
+        },
+        None
+    )));
     press(&mut m, "ctrl-c", true);
+    assert_eq!(*m.mode(), Mode::Normal);
+}
+
+#[test]
+fn a_popup_opened_from_copy_mode_ends_it_on_the_terminal_too() {
+    let mut core = agents();
+    let mut m = connected(&mut core);
+    // F2 and Shift+F2 aren't copy mode's: the window's renames open over it.
+    for key in ["f2", "shift-f2"] {
+        press(&mut m, "ctrl-g [", true);
+        let fx = press(&mut m, key, true);
+        assert!(
+            fx.list.contains(&Effect::Terminal {
+                address: "t1".into(),
+                command: TerminalCommand::CopyEnd,
+            }),
+            "{key}: {:?}",
+            fx.list
+        );
+        assert!(matches!(m.mode(), Mode::Popup(_)), "{key}: {:?}", m.mode());
+        press(&mut m, "escape", false);
+    }
+}
+
+#[test]
+fn copy_mode_leaves_the_windows_own_keys_to_the_window() {
+    let mut core = agents();
+    let mut m = connected(&mut core);
+    press(&mut m, "ctrl-g [", true);
+    // Cmd+T is the window's: a new tab, and copy mode ends as the keyboard leaves t1.
+    let before = core.doc(None).space("sp1").unwrap().tabs.len();
+    key(&mut m, &mut core, "cmd-t", true);
+    assert_eq!(core.doc(None).space("sp1").unwrap().tabs.len(), before + 1);
     assert_eq!(*m.mode(), Mode::Normal);
 }
 
@@ -872,17 +973,18 @@ fn a_key_files_popup_and_copy_keys_come_before_their_own() {
     drive(&mut m, &mut core, Action::FocusPane("p1".into()));
     press(&mut m, "ctrl-g [", true);
     assert!(matches!(m.mode(), Mode::Copy(_)));
-    let fx = press(&mut m, "j", true);
-    assert!(fx.list.contains(&Effect::Terminal {
+    let go = |motion| Effect::Terminal {
         address: "t1".into(),
-        command: TerminalCommand::CopyMove(CopyAction::Up),
-    }));
+        command: TerminalCommand::Copy(model::copy_mode::Command::Move {
+            motion,
+            count: None,
+        }),
+    };
+    let fx = press(&mut m, "j", true);
+    assert!(fx.list.contains(&go(model::copy_mode::Motion::Up)));
     // Copy mode's own keys still work where the file doesn't bind them.
     let fx = press(&mut m, "l", true);
-    assert!(fx.list.contains(&Effect::Terminal {
-        address: "t1".into(),
-        command: TerminalCommand::CopyMove(CopyAction::Right),
-    }));
+    assert!(fx.list.contains(&go(model::copy_mode::Motion::Right)));
     press(&mut m, "x", true);
     assert_eq!(*m.mode(), Mode::Normal, "x yanks and leaves");
 }
@@ -895,10 +997,7 @@ fn elis_copy_mode_escape_drops_the_selection_then_leaves() {
     press(&mut m, "ctrl-g [", true);
     press(&mut m, "v", true);
     press(&mut m, "escape", true);
-    assert!(matches!(
-        m.mode(),
-        Mode::Copy(CopyState { visual: None, .. })
-    ));
+    assert!(matches!(m.mode(), Mode::Copy(c) if c.visual().is_none()));
     press(&mut m, "escape", true);
     assert_eq!(*m.mode(), Mode::Normal);
 }

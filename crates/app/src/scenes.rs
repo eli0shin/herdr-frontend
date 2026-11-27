@@ -54,6 +54,7 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-machines", shell_machines),
     ("shell-machine-add", shell_machine_add),
     ("shell-find", shell_find),
+    ("shell-copy-mode", shell_copy_mode),
 ];
 
 /// The app on the demo core ([`fixtures::demo_core`]): the sidebar, the tab strip with `work`
@@ -402,6 +403,20 @@ fn shell_find(s: &mut State) {
     s.search("t2", "bg");
     if let Some(viewer) = s.viewers.get("t2") {
         viewer.terminal.find_next(false);
+    }
+    s.settle();
+}
+
+/// Copy mode in the colors pane (`ctrl-g [`): three rows selected as lines from the view's
+/// top, the bar at the window's top saying VISUAL LINE and the cursor's row.
+fn shell_copy_mode(s: &mut State) {
+    shell(s);
+    s.step(0.0, model::Action::FocusPane("pn-2".into()));
+    s.settle();
+    s.step(0.0, model::Action::CopyMode);
+    for key in ["shift-h", "j", "w", "shift-v", "j", "j"] {
+        let chord = model::Chord::parse(key).expect("a key");
+        s.step(0.0, model::Event::key(chord, false));
     }
     s.settle();
 }

@@ -11,6 +11,8 @@ use std::ptr;
 
 use ghostty_vt_sys::*;
 
+use copy_mode::Pos;
+
 use super::{Vt, ok};
 use crate::snapshot::{Found, Match};
 
@@ -25,6 +27,67 @@ pub(super) struct Finder {
 }
 
 impl Finder {
+    /// An idle search over `term`; free it with [`Finder::free`] before the terminal.
+    pub(super) fn new(term: GhosttyTerminal) -> Finder {
+        let mut search: GhosttySearch = ptr::null_mut();
+        // SAFETY: `term` is live; the caller frees the search before it.
+        ok(
+            unsafe { ghostty_search_new(ptr::null(), &mut search, term) },
+            "ghostty_search_new",
+        );
+        Finder {
+            search,
+            needle: String::new(),
+            found: Found::default(),
+            hits: Vec::new(),
+        }
+    }
+
+    /// The query searched for; empty while idle.
+    pub(super) fn needle(&self) -> &str {
+        &self.needle
+    }
+
+    /// Sets the query (empty: idle). False if it was already the query.
+    pub(super) fn set(&mut self, needle: &str) -> bool {
+        if self.needle == needle {
+            return false;
+        }
+        self.needle = needle.to_owned();
+        let value = GhosttyString {
+            ptr: needle.as_ptr(),
+            len: needle.len(),
+        };
+        // SAFETY: the search and its terminal are live; the bytes are copied during the call.
+        ok(
+            unsafe {
+                ghostty_search_set(
+                    self.search,
+                    GHOSTTY_SEARCH_OPT_NEEDLE,
+                    (&raw const value).cast(),
+                )
+            },
+            "SEARCH_OPT_NEEDLE",
+        );
+        if needle.is_empty() {
+            self.found = Found::default();
+            self.hits.clear();
+        }
+        true
+    }
+
+    /// The hits on viewport row `y`, as of the last refresh.
+    pub(super) fn hits_on(&self, y: u16) -> Vec<Match> {
+        if self.needle.is_empty() {
+            return Vec::new();
+        }
+        self.hits
+            .iter()
+            .filter(|(row, _)| *row == y)
+            .map(|(_, m)| *m)
+            .collect()
+    }
+
     /// # Safety
     ///
     /// `self.search` was made for `term`, which is still live, and nothing uses `self` after.
@@ -42,43 +105,11 @@ impl Vt {
             if needle.is_empty() {
                 return;
             }
-            let mut search: GhosttySearch = ptr::null_mut();
-            // SAFETY: `term` is live; the search is freed before it in `Drop`.
-            ok(
-                unsafe { ghostty_search_new(ptr::null(), &mut search, self.term) },
-                "ghostty_search_new",
-            );
-            self.finder = Some(Finder {
-                search,
-                needle: String::new(),
-                found: Found::default(),
-                hits: Vec::new(),
-            });
+            // Freed before the terminal in `Drop`.
+            self.finder = Some(Finder::new(self.term));
         }
         let finder = self.finder.as_mut().expect("made above");
-        if finder.needle == needle {
-            return;
-        }
-        finder.needle = needle.to_owned();
-        let value = GhosttyString {
-            ptr: needle.as_ptr(),
-            len: needle.len(),
-        };
-        // SAFETY: the search and its terminal are live; the bytes are copied during the call.
-        ok(
-            unsafe {
-                ghostty_search_set(
-                    finder.search,
-                    GHOSTTY_SEARCH_OPT_NEEDLE,
-                    (&raw const value).cast(),
-                )
-            },
-            "SEARCH_OPT_NEEDLE",
-        );
-        if needle.is_empty() {
-            finder.found = Found::default();
-            finder.hits.clear();
-        } else {
+        if finder.set(needle) && !needle.is_empty() {
             self.refresh_find();
         }
     }
@@ -115,17 +146,16 @@ impl Vt {
         self.finder.as_ref().map(|f| f.found)
     }
 
-    /// The hits on viewport row `y`, as of the last refresh.
+    /// The hits on viewport row `y`, as of the last refresh: copy mode's search while it has
+    /// one, else the find bar's.
     pub(super) fn matches_on(&self, y: u16) -> Vec<Match> {
-        match &self.finder {
-            Some(f) if !f.needle.is_empty() => f
-                .hits
-                .iter()
-                .filter(|(row, _)| *row == y)
-                .map(|(_, m)| *m)
-                .collect(),
-            _ => Vec::new(),
+        if let Some(hits) = self.copy_matches_on(y) {
+            return hits;
         }
+        self.finder
+            .as_ref()
+            .map(|f| f.hits_on(y))
+            .unwrap_or_default()
     }
 
     fn active_search(&self) -> Option<GhosttySearch> {
@@ -138,9 +168,22 @@ impl Vt {
     /// Brings the search up to date with the terminal and reads its counts and the viewport's
     /// hits. A snapshot calls it first, so new output is searched as it arrives.
     pub(super) fn refresh_find(&mut self) {
-        let Some(search) = self.active_search() else {
-            return;
-        };
+        let size = self.effects().size;
+        if let Some(finder) = self.finder.as_mut().filter(|f| !f.needle.is_empty()) {
+            // SAFETY: the finder was made for this live terminal.
+            unsafe { finder.refresh(self.term, size.columns, size.rows) };
+        }
+    }
+}
+
+impl Finder {
+    /// Brings the search up to date with `term` and reads its counts and the viewport's hits.
+    ///
+    /// # Safety
+    ///
+    /// The search was made for `term`, which is live, and the search has a query.
+    pub(super) unsafe fn refresh(&mut self, term: GhosttyTerminal, cols: u16, rows: u16) {
+        let search = self.search;
         // SAFETY: the search and its terminal are live; every out pointer has its key's type,
         // and the selection buffer has room for `cap` entries. The matches are grid refs that
         // die with the next terminal change, so they're turned into viewport cells here.
@@ -168,56 +211,25 @@ impl Vt {
                 (&raw mut chosen).cast(),
             ) == GHOSTTY_SUCCESS;
 
-            let mut buffer = GhosttySelectionBuffer {
-                ptr: ptr::null_mut(),
-                cap: 0,
-                len: 0,
-            };
-            let mut matches = Vec::new();
-            match ghostty_search_get(
-                search,
-                GHOSTTY_SEARCH_DATA_VIEWPORT_MATCHES,
-                (&raw mut buffer).cast(),
-            ) {
-                GHOSTTY_OUT_OF_SPACE if buffer.len > 0 => {
-                    matches = vec![GhosttySelection::default(); buffer.len];
-                    buffer = GhosttySelectionBuffer {
-                        ptr: matches.as_mut_ptr(),
-                        cap: matches.len(),
-                        len: 0,
-                    };
-                    if ghostty_search_get(
-                        search,
-                        GHOSTTY_SEARCH_DATA_VIEWPORT_MATCHES,
-                        (&raw mut buffer).cast(),
-                    ) != GHOSTTY_SUCCESS
-                    {
-                        buffer.len = 0;
-                    }
-                    matches.truncate(buffer.len);
-                }
-                _ => {}
-            }
-
-            let size = self.effects().size;
-            let (cols, rows) = (size.columns.max(1), size.rows.max(1));
+            let matches = selections(search, GHOSTTY_SEARCH_DATA_VIEWPORT_MATCHES);
+            let (cols, rows) = (cols.max(1), rows.max(1));
             let mut hits = Vec::new();
             for m in &matches {
                 let mut equal = false;
                 if has_chosen {
-                    ghostty_terminal_selection_equal(self.term, m, &chosen, &mut equal);
+                    ghostty_terminal_selection_equal(term, m, &chosen, &mut equal);
                 }
                 let mut start = GhosttyPointCoordinate::default();
                 let mut end = GhosttyPointCoordinate::default();
                 let ends = (
                     ghostty_terminal_point_from_grid_ref(
-                        self.term,
+                        term,
                         &m.start,
                         GHOSTTY_POINT_TAG_VIEWPORT,
                         &mut start,
                     ),
                     ghostty_terminal_point_from_grid_ref(
-                        self.term,
+                        term,
                         &m.end,
                         GHOSTTY_POINT_TAG_VIEWPORT,
                         &mut end,
@@ -253,13 +265,74 @@ impl Vt {
                 }
             }
             hits.sort_by_key(|(y, m)| (*y, m.start));
-            let finder = self.finder.as_mut().expect("searching");
-            finder.found = Found {
+            self.found = Found {
                 total,
                 selected,
                 complete: status == GHOSTTY_SEARCH_STATUS_COMPLETE,
             };
-            finder.hits = hits;
+            self.hits = hits;
+        }
+    }
+
+    /// Every match on the screen and in the scrollback, run to completion first: where each
+    /// starts and the cell it ends on, as screen points (rows from the oldest scrollback row),
+    /// in reading order. Literal; ASCII letters match either case.
+    ///
+    /// # Safety
+    ///
+    /// As [`Finder::refresh`].
+    pub(super) unsafe fn all(&mut self, term: GhosttyTerminal) -> Vec<(Pos, Pos)> {
+        // SAFETY: the caller's contract; each match is converted before the terminal changes.
+        unsafe {
+            ok(ghostty_search_run(self.search), "ghostty_search_run");
+            let matches = selections(self.search, GHOSTTY_SEARCH_DATA_MATCHES);
+            let point = |r: &GhosttyGridRef| {
+                let mut at = GhosttyPointCoordinate::default();
+                (ghostty_terminal_point_from_grid_ref(term, r, GHOSTTY_POINT_TAG_SCREEN, &mut at)
+                    == GHOSTTY_SUCCESS)
+                    .then(|| Pos::new(at.y as usize, usize::from(at.x)))
+            };
+            let mut all: Vec<(Pos, Pos)> = matches
+                .iter()
+                .filter_map(|m| {
+                    let (a, b) = (point(&m.start)?, point(&m.end)?);
+                    Some((a.min(b), a.max(b)))
+                })
+                .collect();
+            all.sort();
+            all
+        }
+    }
+}
+
+/// A search's list of matches (`what`: all of them, or the viewport's), copied out.
+///
+/// # Safety
+///
+/// `search` is live; the matches' grid refs are valid until the terminal next changes.
+unsafe fn selections(search: GhosttySearch, what: GhosttySearchData) -> Vec<GhosttySelection> {
+    let mut buffer = GhosttySelectionBuffer {
+        ptr: ptr::null_mut(),
+        cap: 0,
+        len: 0,
+    };
+    // SAFETY: the caller's contract; a null buffer asks for the count, then `matches` has room.
+    unsafe {
+        match ghostty_search_get(search, what, (&raw mut buffer).cast()) {
+            GHOSTTY_OUT_OF_SPACE if buffer.len > 0 => {
+                let mut matches = vec![GhosttySelection::default(); buffer.len];
+                buffer = GhosttySelectionBuffer {
+                    ptr: matches.as_mut_ptr(),
+                    cap: matches.len(),
+                    len: 0,
+                };
+                if ghostty_search_get(search, what, (&raw mut buffer).cast()) != GHOSTTY_SUCCESS {
+                    buffer.len = 0;
+                }
+                matches.truncate(buffer.len);
+                matches
+            }
+            _ => Vec::new(),
         }
     }
 }
