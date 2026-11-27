@@ -21,6 +21,9 @@ core: never break the shared layout documents, labels, or terminal state that He
   off-screen). Never port a workaround; build what it was working around, the way Ghostty or the
   intent does. Terminal look and behavior follow Eli's Ghostty config
   (`~/.dotfiles/home/.config/ghostty/config`). If unsure whether something is a workaround, ask.
+- Switching is instant: focusing an agent, tab, pane or terminal swaps what's shown with no
+  transition, fade, flash or highlight animation, as Herdr does. Status animations Eli's mods
+  draw (the working spinner) are fine; anything that animates to draw attention is not.
 - No native OS notifications and no sounds, ever. Attention shows in the app only (sidebar,
   markers, in-app toasts).
 - When you need "the latest" version of anything, look it up live without putting a version or
