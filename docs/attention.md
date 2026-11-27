@@ -8,7 +8,8 @@ native notification or plays a sound.
 The rules are pure logic: `crates/herdr-shared/src/attention.rs` (`Attention`, `alert`) and
 `labels.rs` (`SeenTracker`). `crates/model/src/model.rs` runs them on every step, and the app
 draws toasts in `crates/app/src/toast.rs`. `crates/model/tests/attention.rs` and
-`crates/app/tests/attention.rs` test them headless.
+`crates/app/tests/attention.rs` test them headless, and the `shell-alerts` scene shows two alert
+toasts (`just snap shell-alerts`).
 
 ## Status and markers
 
