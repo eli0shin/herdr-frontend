@@ -68,6 +68,11 @@ def colors():
     out.append("Punctuation: ~!@#$%^&*()_+{}|:\"<>? -> => != == <= >= /* */ // www fi fl\r\n")
     out.append("Wide: 日本語のテキスト and 한국어 and emoji 🙂🚀 end\r\n")
     out.append("Marks: café naïve e\u0301 a\u0308 Ωμέγα Привет\r\n")
+    out.append("Underlines: ")
+    for code, name in (("4:1", "single"), ("4:2", "double"), ("4:3", "curly"), ("4:4", "dotted"), ("4:5", "dashed")):
+        out.append(sgr(code) + name + RESET + " ")
+    out.append(sgr("4:3") + sgr("58:2::244:71:71") + "error curl" + RESET + " ")
+    out.append(sgr("4:4", 33) + sgr("58:5:4") + "dots" + RESET + "\r\n")
     out.append(CSI + "2 q")  # a steady block
     out.append(CSI + "29;1H" + "$ ")
     return "".join(out)

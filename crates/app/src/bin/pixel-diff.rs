@@ -5,9 +5,10 @@
 //!
 //! Both images are 2x captures with the grid at their top left: Ghostty's window and our
 //! `--snap`. The screen is replayed into a terminal to tell each cell's kind, so the report can
-//! say how text, box-drawing lines, other sprites and backgrounds each compare. For text it also
-//! measures where the ink sits in each cell, which is what the glyph placement gate asks. The
-//! diff image shows Ghostty's pixels dimmed, with every differing pixel in red.
+//! say how text, decorated text, sprites and backgrounds each compare, and how each sprite
+//! character does on its own. For text it also measures where the ink sits in each cell, which
+//! is what the glyph placement gate asks. The diff image shows Ghostty's pixels dimmed, with
+//! every differing pixel in red.
 
 use std::fs::File;
 use std::io::BufWriter;
@@ -73,8 +74,10 @@ enum Kind {
     Blank,
     /// A narrow character the regular face draws, on the row's line.
     Text,
-    /// A box-drawing line our renderer draws as Ghostty's sprite does.
-    Lines,
+    /// Text with an underline, strikethrough or overline.
+    Decorated,
+    /// A character our renderer draws as Ghostty's sprite does.
+    Sprite,
     /// A character Ghostty draws as a sprite that we still take from a font.
     FontSprite,
     /// A wide, fallback or multi-code-point cell, pinned to its column.
@@ -83,22 +86,15 @@ enum Kind {
     Cursor,
 }
 
-const KINDS: [Kind; 6] = [
+const KINDS: [Kind; 7] = [
     Kind::Blank,
     Kind::Text,
-    Kind::Lines,
+    Kind::Decorated,
+    Kind::Sprite,
     Kind::FontSprite,
     Kind::Pinned,
     Kind::Cursor,
 ];
-
-/// Ghostty's sprite ranges (`ghostty:src/font/sprite/Face.zig`).
-fn ghostty_sprite(c: char) -> bool {
-    matches!(c as u32,
-        0x2500..=0x259F | 0x2800..=0x28FF | 0x25E2..=0x25E5 | 0x25F8..=0x25FA | 0x25FF
-        | 0x1FB00..=0x1FBEF | 0x1CC1B..=0x1CEAF | 0xE0B0..=0xE0BF | 0xE0D2 | 0xE0D4
-        | 0xF5D0..=0xF60D)
-}
 
 #[derive(Default, Clone, Copy)]
 struct Tally {
@@ -148,7 +144,11 @@ fn ink(img: &Image, x0: usize, y0: usize, w: usize, h: usize) -> (f64, f64, f64)
     }
 }
 
-fn kinds(snapshot: &Snapshot, face: &herdr_frontend::view::terminal::font::Face) -> Vec<Kind> {
+/// Each cell's kind, and its character if it's a sprite.
+fn kinds(
+    snapshot: &Snapshot,
+    face: &herdr_frontend::view::terminal::font::Face,
+) -> Vec<(Kind, Option<char>)> {
     let cursor = snapshot.cursor.position.filter(|_| snapshot.cursor.visible);
     let mut kinds = Vec::new();
     for (y, row) in snapshot.screen.iter().enumerate() {
@@ -160,29 +160,45 @@ fn kinds(snapshot: &Snapshot, face: &herdr_frontend::view::terminal::font::Face)
                 (Some(c), None) => Some(c),
                 _ => None,
             };
+            let decorated = cell.underline != terminal::Underline::None
+                || cell.flags.contains(terminal::CellFlags::STRIKETHROUGH)
+                || cell.flags.contains(terminal::CellFlags::OVERLINE);
+            let sprite_char = single.filter(|&c| sprite::ghostty_draws(c));
             let kind = if cursor == Some((x as u16, y as u16)) {
                 Kind::Cursor
+            } else if let Some(c) = sprite_char {
+                if sprite::drawn(c) {
+                    Kind::Sprite
+                } else {
+                    Kind::FontSprite
+                }
             } else if spill > 0 {
                 Kind::Pinned
             } else if text.is_empty() || text == " " || cell.width == Width::SpacerHead {
-                Kind::Blank
+                if decorated {
+                    Kind::Decorated
+                } else {
+                    Kind::Blank
+                }
             } else if cell.width == Width::Wide || single.is_none() {
                 Kind::Pinned
-            } else if let Some(c) = single {
-                if sprite::lines(c, &face.metrics).is_some() {
-                    Kind::Lines
-                } else if ghostty_sprite(c) {
-                    Kind::FontSprite
-                } else if face.covers(c) {
-                    Kind::Text
+            } else if single.is_some_and(|c| face.covers(c)) {
+                if decorated {
+                    Kind::Decorated
                 } else {
-                    Kind::Pinned
+                    Kind::Text
                 }
             } else {
-                Kind::Blank
+                Kind::Pinned
             };
             spill = if cell.width == Width::Wide { 1 } else { 0 };
-            kinds.push(kind);
+            // Sprites and pinned cells are each listed by their character too.
+            let listed = match kind {
+                Kind::Sprite | Kind::FontSprite => sprite_char,
+                Kind::Pinned if !text.is_empty() => text.chars().next(),
+                _ => None,
+            };
+            kinds.push((kind, listed));
         }
     }
     kinds
@@ -219,24 +235,29 @@ fn run(args: &[String]) -> Result<(), String> {
     let snapshot = fixtures::replay(&bytes, cols, rows, &theme);
     let kinds = kinds(&snapshot, &face);
 
-    let mut tallies = [Tally::default(); 6];
+    let mut tallies = [Tally::default(); 7];
+    let mut by_char: std::collections::BTreeMap<char, Tally> = Default::default();
     let mut total = Tally::default();
     let mut diff = vec![0u8; w * h * 4];
     // Text placement: centroid offsets (ours − Ghostty) and ink ratios.
     let (mut n, mut dx, mut dy, mut adx, mut ady, mut ratio) = (0usize, 0.0, 0.0, 0.0, 0.0, 0.0);
     for cy in 0..usize::from(rows) {
         for cx in 0..usize::from(cols) {
-            let kind = kinds[cy * usize::from(cols) + cx];
+            let (kind, sprite_char) = kinds[cy * usize::from(cols) + cx];
             let t = &mut tallies[KINDS.iter().position(|&k| k == kind).unwrap_or(0)];
             t.cells += 1;
             total.cells += 1;
+            let mut own = Tally {
+                cells: 1,
+                ..Tally::default()
+            };
             let mut same = true;
             for y in cy * ch..(cy + 1) * ch {
                 for x in cx * cw..(cx + 1) * cw {
                     let (a, b) = (g.px(x, y), o.px(x, y));
                     let d = (0..3).map(|c| a[c].abs_diff(b[c])).max().unwrap_or(0);
                     let sum: u64 = (0..3).map(|c| u64::from(a[c].abs_diff(b[c]))).sum();
-                    for tally in [&mut *t, &mut total] {
+                    for tally in [&mut *t, &mut total, &mut own] {
                         tally.pixels += 1;
                         tally.abs_sum += sum;
                         for (k, limit) in [0, 16, 64].into_iter().enumerate() {
@@ -258,6 +279,17 @@ fn run(args: &[String]) -> Result<(), String> {
             if same {
                 t.identical_cells += 1;
                 total.identical_cells += 1;
+                own.identical_cells += 1;
+            }
+            if let Some(c) = sprite_char {
+                let e = by_char.entry(c).or_default();
+                e.cells += 1;
+                e.pixels += own.pixels;
+                e.abs_sum += own.abs_sum;
+                e.identical_cells += own.identical_cells;
+                for k in 0..3 {
+                    e.over[k] += own.over[k];
+                }
             }
             if kind == Kind::Text {
                 let (gw, gx, gy) = ink(&g, cx * cw, cy * ch, cw, ch);
@@ -303,6 +335,23 @@ fn run(args: &[String]) -> Result<(), String> {
             ady / n,
             ratio / n
         );
+    }
+    if !by_char.is_empty() {
+        println!();
+        println!("sprites and pinned cells, by character (the cells holding each):");
+        println!();
+        println!(
+            "| char | cells | identical | pixels differing | > 16 | > 64 | mean abs diff (0-255) |"
+        );
+        println!("| --- | --- | --- | --- | --- | --- | --- |");
+        for (c, t) in &by_char {
+            let drawn = if sprite::drawn(*c) || !sprite::ghostty_draws(*c) {
+                ""
+            } else {
+                " (font)"
+            };
+            println!("{}", t.line(&format!("`{c}` U+{:04X}{drawn}", *c as u32)));
+        }
     }
     if let [out, ..] = rest {
         let file = File::create(out).map_err(|e| format!("{out}: {e}"))?;

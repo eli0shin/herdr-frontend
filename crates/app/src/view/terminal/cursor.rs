@@ -6,7 +6,7 @@ use terminal::{CursorStyle, Snapshot, Width};
 
 use super::font::Face;
 use super::look::{Look, color};
-use super::sprite::{self, PxRect, rect_pt};
+use super::sprite::{self, PxRect, alpha_box_pt, rect_pt};
 
 /// What the cursor looks like this frame: its cell, how many columns it covers, and its shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,17 +163,28 @@ fn under_block(snapshot: &Snapshot, place: &CursorPlace, face: &Face, look: &Loo
     let w = f32::from(place.width) * cell_w;
     let mut chars = text_str.chars();
     if let (Some(c), None) = (chars.next(), chars.next())
-        && let Some(boxes) = sprite::lines(c, &face.metrics)
+        && let Some(glyph) = sprite::glyph(c, place.width as u8, &face.metrics)
     {
         let mut shape = Shape::new();
-        for b in boxes {
-            shape = shape.fill(rect_pt(b, face.scale), ink);
+        for &b in &glyph.boxes {
+            let ink = ink.alpha(f32::from(b.alpha) / 255.0);
+            shape = shape.fill(alpha_box_pt(b, 0, face.scale), ink);
         }
         return Some(
             canvas(shape)
                 .key("cursor-text")
                 .absolute(0.0, 0.0)
                 .size(w, cell_h),
+        );
+    }
+    if let Some(g) = super::rows::atlas_glyph_at(row, usize::from(place.col), face) {
+        let s = face.scale;
+        let ink = look.cursor_text.unwrap_or(colors.background);
+        return Some(
+            el().key("cursor-text")
+                .absolute(g.x as f32 / s, g.top as f32 / s)
+                .size(g.width as f32 / s, g.height as f32 / s)
+                .pixels(&g.pixels(ink, 1.0)),
         );
     }
     let mut style = face.style();

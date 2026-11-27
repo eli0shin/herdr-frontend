@@ -36,7 +36,15 @@ pub const NVIM_SPLITS: Fixture = Fixture {
     bytes: include_bytes!("../fixtures/nvim-splits.bin"),
 };
 
-pub const ALL: [&Fixture; 3] = [&COLORS, &BOXES, &NVIM_SPLITS];
+/// The Neovim checklist (`nvim-checklist.lua`): splits, a rounded float, undercurls in their
+/// colors, a statusline with Nerd Font icons and Powerline separators, CJK, emoji, and the
+/// cmdline with the cursor in it (`fixtures/README.md` has the command line).
+pub const NVIM_CHECKLIST: Fixture = Fixture {
+    name: "nvim-checklist",
+    bytes: include_bytes!("../fixtures/nvim-checklist.bin"),
+};
+
+pub const ALL: [&Fixture; 4] = [&COLORS, &BOXES, &NVIM_SPLITS, &NVIM_CHECKLIST];
 
 impl Fixture {
     /// The fixture's screen, replayed into a fresh terminal with `theme`'s colors.

@@ -1,6 +1,7 @@
 # Renderer gates: `rune::grid` against Ghostty
 
-Ticket `012-terminal-renderer-mvp-on-rune-grid`. Measured 2026-11-26 on an Apple M1 Pro (8 cores),
+Ticket `012-terminal-renderer-mvp-on-rune-grid`, with gate 1 and the fidelity work measured in
+ticket `018-terminal-rendering-fidelity-for-neovim`. Measured 2026-11-26 on an Apple M1 Pro (8 cores),
 macOS 27, built-in 2x display, against Rune `4918969f` and Ghostty.app 1.4.0. The font is
 JetBrains Mono 2.304 at 14 pt, the face Ghostty embeds, so both apps use the same file. Its cell is
 17 × 37 px at 2x. This doc answers the four gates in
@@ -10,27 +11,26 @@ JetBrains Mono 2.304 at 14 pt, the face Ghostty embeds, so both apps use the sam
 
 **Stay on `rune::grid`.** Nothing measured here argues for the custom `Compositor` pass:
 
+- **Gate 1 (glyph placement) passes.** Over 2,700 text cells on three screens, our glyphs' ink sits
+  0.1 px left of Ghostty's and level with it (within 0.005 px), with the same ink weight (ratio
+  1.000). No text pixel is off by more than 64 of 255.
 - **Gate 3 (many panes) passes** with room to spare. The worst case, a screen's worth of new text
   every frame split over up to nine panes, takes at most 4.2 ms of the 8.3 ms frame at 120 Hz.
-- **Gate 2 (sprites): the box-drawing lines pass in our own rendering.** They come out
-  pixel-exact, Ghostty's boxes on whole device pixels with no antialiasing, at 1x and at 2x. The
-  other sprites still come from the font; that's the fidelity ticket's work, and grid's vector
-  layer can carry them.
+- **Gate 2 (sprites) passes.** Box drawing, blocks, braille, Ghostty's geometric shapes and
+  Powerline, and all five underline styles, are drawn on a port of Ghostty's sprite canvas and
+  its z2d rasterizer. Against Ghostty, 335 sprite cells have no pixel off by more than 16 of 255,
+  blocks and braille are identical, and every underline style, undercurl included, is identical.
 - **Gate 4 (layering) passes for the MVP.** Below-text kitty images will need two grids per pane,
   which is a contained change.
-- **Gate 1 (glyph placement) isn't measured yet.** The Ghostty captures it needs couldn't be taken
-  for this ticket (see [The pixel diff](#the-pixel-diff)). The one earlier comparison put our
-  glyphs within a third of a pixel of Ghostty's, and the known horizontal difference is smaller
-  than a quarter pixel. Nothing there suggests a failure, but it's an open gate.
-
 Follow-ups for later tickets:
 
-- **Ticket 018:** run `just ghostty-diff` with the screen unlocked and record gate 1 here, with the
-  text ink ratio now that font smoothing is off. Then port the rest of `sprite/draw/*` and check
-  each sprite in the same diff.
-- **Gate 1, if the diff shows it:** grid can't shift a row's line by less than a pixel, so it can't
-  add Ghostty's centering offset of `(cell − advance) / 2`. Ask Rune for a fractional x offset on
-  `GridRow`'s line; it's one addition in `paint_grid`.
+- **The 0.1 px:** grid can't shift a row's line by less than a pixel, so it can't add Ghostty's
+  centering offset of `(cell − advance) / 2` (0.1 px for JetBrains Mono at 14 pt, 0.215 px for
+  Operator Mono at 18.7 pt). It's under the gate, but closing it means asking Rune for a
+  fractional x offset on `GridRow`'s line, one addition in `paint_grid`.
+- **Sprites not ported yet:** Symbols for Legacy Computing (U+1FB00 to U+1FBEF and its
+  supplement) and branch drawing (U+F5D0 to U+F60D) still come from the font. `pixel-diff` lists
+  them as `FontSprite`.
 - **Kitty graphics:** build the two-grid pane for below-text placements, and measure it.
 
 ## What was built
@@ -56,10 +56,10 @@ The renderer lives in `crates/app/src/view/terminal/`:
     and thicknesses.
   - `RowCache` hands an unchanged row (the same snapshot `Arc`) back as the same `Rc<GridRow>`. A
     new face, look or default color clears it.
-- `sprite.rs`: Ghostty's `linesChar` (`sprite/draw/box.zig`), ported for the 109 box-drawing line
-  characters it draws: light, heavy and double lines, corners, tees, crosses and half lines. They
-  go into the row's vector layer at whole device pixels. The character stays in the line, drawn
-  transparent, so a screen reader still reads it.
+- `sprite/`: Ghostty's sprite face (ticket 018; see [Fidelity](#fidelity)). The character stays
+  in the line, drawn transparent, so a screen reader still reads it.
+- `glyph/`: the glyph atlas for wide, fallback, emoji and icon cells (ticket 018; see
+  [Fidelity](#fidelity)).
 - `cursor.rs`: block, bar, underline and hollow block in Ghostty's geometry
   (`sprite/draw/special.zig`), as an overlay. An unfocused pane shows a hollow block. A cursor on
   a wide character covers both cells. The glyph under a block cursor is drawn again in the
@@ -77,8 +77,9 @@ The renderer lives in `crates/app/src/view/terminal/`:
 window. That's how Ghostty rasterizes by default (`font-thicken = false`); see
 [Font smoothing](#font-smoothing).
 
-The scenes `terminal-colors`, `terminal-boxes`, `terminal-nvim`, `terminal-selection` and
-`terminal-panes` draw the fixture screens in `crates/app/fixtures/` (`just snap terminal-nvim`).
+The scenes `terminal-colors`, `terminal-boxes`, `terminal-nvim`, `terminal-nvim-checklist`,
+`terminal-selection` and `terminal-panes` draw the fixture screens in `crates/app/fixtures/`
+(`just snap terminal-nvim`).
 `tests/terminal_view.rs` checks them headless:
 
 - the grid is the terminal's size at the pane's top left;
@@ -87,7 +88,7 @@ The scenes `terminal-colors`, `terminal-boxes`, `terminal-nvim`, `terminal-selec
 - four panes each draw;
 - an unchanged row isn't built again.
 
-The unit tests in `rows.rs`, `cursor.rs` and `sprite.rs` pin the color rules, runs, pinning,
+The unit tests in `rows.rs`, `cursor.rs`, `sprite/` and `glyph/` pin the color rules, runs, pinning,
 decorations, sprite boxes and cursor shapes.
 
 ## The pixel diff
@@ -113,80 +114,78 @@ Limits:
 
 - It needs Screen Recording permission for the terminal that runs it, and an unlocked screen.
   Ghostty creates no window while the screen is locked, or when it's started in the background
-  (`open -g`). The screen locked partway through this ticket, so the final captures weren't
-  taken.
+  (`open -g`); `ghostty-capture` then fails with "no window for Ghostty".
 - It shows a Ghostty window for about three seconds per screen. It types and clicks nothing.
 - It's macOS at 2x only, with JetBrains Mono at 14 pt. Eli's Operator Mono Book Herdr isn't
   installed system-wide, so Ghostty can't load it with a clean config.
 
 ## Results
 
-One full run came before the screen locked. It was on the `colors` screen at a 177 × 51 grid, and
-it predates two harness fixes: the capture wasn't converted to sRGB yet, and our renderer still
-had Rune's default font smoothing on. It found:
+Ticket 018 ran `scripts/ghostty-diff` on all screens at a 177 × 51 grid, with the final harness
+(captures converted to sRGB, our font smoothing off). Per screen, after the sprite and underline
+work:
 
-| cells | count | identical | pixels differing | > 16 | > 64 | mean abs diff (0-255) |
+| screen | cells | identical | pixels differing | > 16 | > 64 | mean abs diff (0-255) |
 | --- | --- | --- | --- | --- | --- | --- |
-| Blank | 8525 | 7990 | 6.26% | 3.16% | 0.63% | 0.80 |
-| Text | 473 | 12 | 28.64% | 15.29% | 4.21% | 7.13 |
-| Pinned | 28 | 0 | 29.05% | 24.46% | 15.21% | 21.74 |
-| Cursor | 1 | 1 | 0.00% | 0.00% | 0.00% | 0.00 |
-| all | 9027 | 8003 | 7.51% | 3.86% | 0.87% | 1.20 |
+| `colors` | 9027 | 8267 | 3.42% | 0.30% | 0.02% | 0.11 |
+| `boxes` | 9027 | 8735 | 0.39% | 0.11% | 0.00% | 0.03 |
+| `nvim` (before the sprite work) | 9027 | 6543 | 9.17% | 1.15% | 0.02% | 0.37 |
 
-- **Text ink:** over 461 cells, ours minus Ghostty, the centroid was dx −0.083 px (mean |dx|
-  0.087) and dy −0.317 px (mean |dy| 0.318). The ink weight ratio was 1.294.
-- **Colors:** the background matched exactly (`#1e1e1e` in both). Saturated colors in the 256-color
-  cube and the palette differed, because the capture was still in Display P3. Converting it to
-  sRGB fixes that; on a later, partial capture the cube's colors and the 16-color text matched.
+By kind of cell:
+
+- **Blank** cells match but for a faint fringe (2.4% of their pixels, none over 16): neighboring
+  glyphs' antialiasing, 0.1 px apart (gate 1).
+- **Text** cells differ in about 19% of their pixels, 4% by more than 16 and none by more than 64:
+  the same 0.1 px. See [Gate 1](#gate-1-glyph-placement).
+- **Sprites** and **decorations**: see [Gate 2](#gate-2-sprites).
+- **Pinned** cells (wide, fallback and emoji): see [Fidelity](#fidelity).
+- **Colors** match exactly, the background (`#1e1e1e`) included.
 
 ## Gate 1: glyph placement
 
-**Not measured yet.** The earlier run's numbers point the right way but can't settle it, for
-three reasons:
+**Passes.** The text ink of every text cell, ours minus Ghostty:
 
-- Rune's font smoothing was still on, which grows every glyph's outline.
-- Only 461 text cells were measured.
-- No run was made with the final harness.
+| screen | text cells | centroid dx (px) | mean \|dx\| | centroid dy (px) | mean \|dy\| | ink weight ratio |
+| --- | --- | --- | --- | --- | --- | --- |
+| `colors` | 428 | −0.097 | 0.097 | +0.002 | 0.005 | 1.000 |
+| `boxes` | 191 | −0.100 | 0.100 | +0.001 | 0.004 | 1.001 |
+| `nvim` | 2094 | −0.098 | 0.098 | +0.002 | 0.003 | 1.000 |
 
-What's known:
-
-- **Horizontal.** Ghostty centers each glyph in the rounded cell by `(cell − advance) / 2`
-  (`ghostty:src/font/face/coretext.zig:363-378`). Grid places the line's glyphs one cell apart
-  from the cell's left edge (the tracking), so they sit that far to the left of Ghostty's:
-  - 0.1 px for JetBrains Mono at 14 pt and 2x;
-  - 0.215 px for Eli's Operator Mono at 18.7 pt and 2x.
-
-  The run's dx of −0.083 px fits the first. Grid snaps each row's origin to a whole device pixel,
-  so the renderer can't add the offset.
-- **Vertical.** Ghostty puts the baseline on a whole pixel, `cell_baseline` up from the cell's
-  bottom. Rune centers the line box in the line height, then snaps the baseline. Worked out for
-  both fonts at 2x, the two land on the same pixel row: 29 px from the cell's top for JetBrains
-  Mono, 36 for Operator Mono. The `terminal-boxes` snap confirms the first: the bottom of the `L`
-  in row 0 is the pixel row just above y = 29. The run's dy of −0.3 px may come from the
-  smoothing's dilation; the next run will tell.
+- **Horizontal.** Every glyph sits 0.1 px left of Ghostty's, the offset predicted here before:
+  Ghostty centers each glyph in the rounded cell by `(cell − advance) / 2`
+  (`ghostty:src/font/face/coretext.zig:363-378`), and grid places the line's glyphs one cell apart
+  from the cell's left edge. For JetBrains Mono at 14 pt and 2x that's 0.1 px. Grid snaps each
+  row's origin to a whole device pixel, so the renderer can't add it (see the follow-ups).
+- **Vertical.** Level, within 0.005 px. Ghostty puts the baseline on a whole pixel,
+  `cell_baseline` up from the cell's bottom; Rune centers the line box in the line height and
+  snaps the baseline, and for both fonts at 2x the two land on the same pixel row (29 px from the
+  cell's top for JetBrains Mono, 36 for Operator Mono). The −0.3 px of the first, smoothed run was
+  the smoothing's dilation.
+- **Weight.** The same: the ratio is 1.000 with font smoothing off (it was 1.294 with it on).
 
 ## Gate 2: sprites
 
-**The box-drawing lines pass in our rendering.** `sprite.rs` ports Ghostty's `linesChar` for its
-109 characters, and the unit tests pin the boxes to Ghostty's formulas. In the snaps, every line
-lands on whole device pixels in the line color, with no antialiasing on its edges:
+**Passes.** Every sprite this port draws (see [Fidelity](#fidelity)) comes out within 16 of 255 of
+Ghostty's, most of them identical. From the `boxes` and `colors` screens:
 
-- a light `│` and `─` are 2 px at 2x and 1 px at 1x;
-- a heavy `┃` is 2 px at 1x.
+| sprites | cells | identical | pixels differing | > 16 | > 64 |
+| --- | --- | --- | --- | --- | --- |
+| all ported sprites | 335 | 236 | 1.81% | 0.00% | 0.00% |
+| box-drawing lines, dashes, corners, tees, crosses | 262 | 187 | ≤ 3.1% a character | 0.00% | 0.00% |
+| arcs `╭╮╯╰` | 8 | 0 | ≤ 5.0% | 0.00% | 0.00% |
+| diagonals `╱╲╳` | 3 | 0 | ≤ 1.9% | 0.00% | 0.00% |
+| blocks, shades, quadrants | 33 | 33 | 0.00% | 0.00% | 0.00% |
+| braille | 16 | 16 | 0.00% | 0.00% | 0.00% |
+| geometric shapes `◢◣◤◥◸◹◺◿` | 8 | 0 | ≤ 1.0% | 0.00% | 0.00% |
+| Powerline `` | 5 | 0 | ≤ 54% | 0.00% | 0.00% |
+| underlines (single, double, curly, dotted, dashed) | — | identical rows | 0.00% | 0.00% | 0.00% |
 
-Ghostty fills the same boxes at full coverage, so the two should be pixel-identical. The
-Ghostty diff will confirm it. Its `Lines` row counts these cells apart from the others.
-
-Everything else Ghostty draws as a sprite still comes from the font: arcs, dashes, diagonals,
-blocks, shades, braille, Powerline and legacy computing. That's ticket 018, which can draw them
-the same way.
-
-- **Arcs and diagonals need antialiased vector paths.** Grid's vector layer draws those too.
-- **Blocks, shades and braille** are boxes like the lines.
-- **Shades** are partial-alpha fills.
-
-If a path doesn't match Ghostty's raster closely enough, the fallback is the research doc's:
-rasterize it once per cell size with tiny-skia and draw it as an image cell.
+- The differences are rounding of a level or two in a color channel: an arc's antialiased pixels
+  are byte-identical to Ghostty's in the channel checked, and the Powerline cells differ by at
+  most a level across their colored fill.
+- The `─` and `│` cells that differ at all do so where a neighbor's glyph reaches into them.
+- The underlines were compared row by row in cells with no descender: the undercurl (with its
+  round caps), the dots and the dashes are Ghostty's pixels exactly, in the underline color.
 
 ## Gate 3: many panes
 
@@ -270,6 +269,123 @@ to say (it's not measured here).
 **Passes for the MVP.** Below-text images are the one known case that needs the two-grid
 arrangement. That's a contained change inside the pane view, not a reason to leave grid.
 
+## Fidelity
+
+Ticket 018, stage 5 of [`terminal-rendering.md` §8](terminal-rendering.md#staged-plan).
+
+### Sprites
+
+`crates/app/src/view/terminal/sprite/` is Ghostty's sprite face (`ghostty:src/font/sprite/` at
+`v1.4.0`):
+
+- `canvas.rs` is its canvas: an alpha-only surface the cell's size plus a quarter cell of padding
+  on each side, so a sprite can reach past its cell as Ghostty's do.
+- `raster.rs` ports the z2d 0.13 fill Ghostty pins (`40af3e84`):
+  - curves flattened by de Casteljau subdivision to 0.1 px, and arcs split as z2d splits them;
+  - edges at 4× scale, sampled 4 × 4 a pixel, crossings rounded to a quarter pixel;
+  - alpha `16 × coverage − 1`, composited in z2d's integer arithmetic.
+
+  Strokes become fills of the same region: a quad per segment, z2d's pen as a disc at round
+  joins and caps, a wedge at miter joins, all wound the same way. That region is what z2d's own
+  outline encloses, and the measured arcs, diagonals and undercurl match its pixels.
+- `box_drawing.rs`, `blocks.rs` (blocks, braille, geometric shapes), `powerline.rs` and
+  `special.rs` (the underline styles, strikethrough, overline) port the `sprite/draw/*.zig`
+  files of those ranges.
+
+A finished canvas becomes boxes of one alpha each, merged along rows and down columns. The row's
+vector layer fills them at whole device pixels in the cell's color at that alpha. Rune blends
+8-bit targets in sRGB-encoded space, as Ghostty does on macOS (`alpha-blending = native`), so a
+partly covered pixel comes out the same. Each sprite is drawn once per code point and cell size.
+
+The decorations follow Ghostty's `rebuildRow`: every cell draws its own underline, strikethrough
+and overline sprite, a wide character's spacer too, so a curl or dots start again in each cell.
+The underline takes the underline color (SGR 58) if one is set.
+
+Where it differs from Ghostty:
+
+- **Underlines draw over the text.** Ghostty draws them under the glyphs; grid's vector layer is
+  above the row's line. Only pixels where a descender crosses an underline of another color
+  differ.
+- **A sprite reaching into the next row** (an underline set low by its font) is painted under
+  that row's background fill, where Ghostty paints all backgrounds first.
+- **Inner strokes** (`` `` and the outlined triangles `◸◹◺◿`) stroke the path inset by
+  half the line width directly, rather than through z2d's path offsetter. The triangles measured
+  within 1% of pixels, none over 16; the two outlined half circles aren't in a screen yet.
+- **Not ported yet:** Symbols for Legacy Computing and branch drawing still come from the font.
+
+### Glyph atlas
+
+`crates/app/src/view/terminal/glyph/` draws the cells the row's line can't place the way Ghostty
+does: wide characters, characters the terminal font lacks, emoji and Nerd Font icons. Each is
+rasterized once, with the same CoreText calls as Ghostty's `coretext.zig` `renderGlyph`, and drawn
+as an image over the grid at its device pixels. Its pinned text stays in the row, drawn
+transparent, so the row still reads.
+
+- **Fallback** follows Ghostty's resolver:
+  1. the Symbols Nerd Font 3.4.0 Ghostty embeds (bundled in `assets/fonts/`, MIT);
+  2. Apple Color Emoji for emoji presentation;
+  3. fallback faces already loaded;
+  4. CoreText's fallback for the character, scaled to match the terminal font's ideograph width
+     (Ghostty's `ic_width` size adjustment).
+
+  A variation selector picks the presentation; without one, it's the Unicode
+  `Emoji_Presentation` property (from the `emoji-data.txt` of the uucode Ghostty pins), as in
+  Ghostty's `CodepointResolver`.
+- **Constraints** port `RenderOptions.Constraint`:
+  - every emoji covers its cells, centered, with 2.5% side padding;
+  - Nerd Font icons follow Ghostty's generated table (`glyph/tables.rs`, from
+    `scripts/gen_ghostty_tables.py`);
+  - other symbol-like characters shrink to fit;
+  - a symbol followed by a blank cell may take two cells (`constraintWidth`).
+- **Rasterizing** is antialiased with no font smoothing, subpixel positioned without quantizing,
+  with the glyph's box constrained and centered in the rounded cell, and bitmap (sbix) glyphs
+  quantized to whole pixels. Text glyphs are alpha masks drawn in the cell's color; a block cursor
+  draws one again in the cursor-text color.
+- **Color glyphs are drawn in sRGB.** Ghostty draws them in Display P3 because its surface is P3;
+  Rune's is sRGB, so sRGB gives the colors Ghostty shows.
+
+Measured on the `colors` screen's 28 pinned cells, before and after the atlas (the atlas run drew
+emoji in Display P3 and didn't yet reuse loaded fallback faces):
+
+| | pixels differing | > 16 | > 64 | mean abs diff (0-255) |
+| --- | --- | --- | --- | --- |
+| before (Rune's pinned text) | 28.46% | 22.78% | 14.59% | 21.09 |
+| atlas | 20.74% | 14.90% | 5.73% | 10.39 |
+
+- Kanji `日本語` came out within 2.5% of pixels, none over 16.
+- The kana and Hangul came from a different fallback face than Ghostty's. Ghostty uses a face
+  it has already loaded before asking CoreText again, so the kana take the kanji's face. The
+  atlas now does the same.
+- The emoji had Ghostty's size and place (no pixel over 64) but not its colors, which the sRGB
+  fix addresses.
+
+**Not measured yet:** those two fixes, and the Neovim checklist screen, need a Ghostty capture.
+That's ticket `037-ghostty-diffs-for-the-neovim-checklist-and-glyph-atlas`
+(`scripts/ghostty-diff colors nvim-checklist`).
+
+What it doesn't take yet:
+
+- **Clusters of several code points** (combining marks, emoji ZWJ sequences, skin tones) stay
+  pinned cells that Rune shapes, as before.
+- **Bold and italic** cells fall back to the fallback faces' regular style.
+- **Off macOS**, every such cell stays a pinned cell.
+
+### Neovim checklist
+
+`fixtures/nvim-checklist.bin` (scene `terminal-nvim-checklist`, `tests/terminal_view.rs`) and the
+`nvim-checklist` screen of `scripts/ghostty-diff` run `fixtures/nvim-checklist.lua`.
+
+| item | how it draws | Ghostty diff |
+| --- | --- | --- |
+| splits | `│` separators as sprites; the `nvim` screen | lines ≤ 3.1% of pixels, none over 16; the checklist screen in ticket 037 |
+| floats | rounded border: `╭╮╯╰` arcs and `─│` lines as sprites | arcs ≤ 5%, none over 16; the checklist screen in ticket 037 |
+| undercurl | per-cell curl sprites in the SGR 58 color; dotted and dashed too | identical |
+| statusline icons | Nerd Font glyphs through the atlas with Ghostty's constraints; Powerline separators as sprites | separators within 16; icons not measured yet (ticket 037) |
+| cmdline | text on the line, the cursor in it | not measured yet (ticket 037) |
+| cursor | the cell's whole-pixel box, the glyph under a block redrawn | identical on every screen measured; the cmdline cursor in ticket 037 |
+| CJK and emoji | the atlas | see [Glyph atlas](#glyph-atlas); the last fixes not measured yet (ticket 037) |
+| ligatures off | `calt` and `liga` off, as Ghostty's `-calt`, `-liga` | `-> => != fi fl` measure as text |
+
 ## Font smoothing
 
 Rune draws text on macOS with CoreText's font smoothing on by default
@@ -279,5 +395,4 @@ carried 29% more ink than Ghostty's (ratio 1.294).
 
 So `herdr_frontend::app()` sets `FontSmoothing::Off`, Rune's CoreText pipeline without the
 dilation. Rune applies it per window, so the app's own text (sidebar, tabs, palette) draws the
-same way. The ratio with smoothing off is for the next Ghostty run to
-measure.
+same way. With it off, the ratio is 1.000 ([Gate 1](#gate-1-glyph-placement)).
