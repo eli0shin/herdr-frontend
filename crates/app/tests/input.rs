@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use herdr_frontend::config::settings::Settings;
 use herdr_frontend::fixtures::demo_core;
 use herdr_frontend::link::{Fake, Out, Upload};
 use herdr_frontend::{SIZE, State, app};
@@ -378,6 +379,26 @@ fn a_program_tracking_the_mouse_hears_clicks_drags_and_the_wheel() {
         String::from_utf8(typed(&fake, from)).unwrap(),
         "\x1b[<64;3;2M".repeat(3)
     );
+}
+
+#[test]
+fn a_notch_is_three_lines_at_any_zoom() {
+    let (mut rt, fake, _) = runtime();
+    // Eli's zoom: Rune hands wheel deltas over in the zoomed view's points.
+    rt.state.with_settings(Settings {
+        zoom: 1.1,
+        ..Settings::fixture()
+    });
+    frames(&mut rt, 3);
+    shell(&mut rt, &fake, "$ ");
+    program(&mut rt, &fake, b"\x1b[?1000h\x1b[?1006h");
+    let from = mark(&fake);
+    let (x, y) = cell(&rt, 2, 1);
+    // Two notches.
+    rt.wheel_xy(x, y, 0.0, 2.0 * 40.0 / 1.1);
+    frames(&mut rt, 2);
+    let sent = String::from_utf8(typed(&fake, from)).unwrap();
+    assert_eq!(sent.matches("\x1b[<64;").count(), 6, "{sent:?}");
 }
 
 #[test]

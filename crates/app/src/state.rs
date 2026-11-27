@@ -85,7 +85,7 @@ pub const SPLIT_GAP: f32 = 1.0;
 /// How long a scene or test waits for a terminal to settle.
 const SETTLE: Duration = Duration::from_secs(5);
 
-/// The points Rune gives a notched mouse wheel's step on macOS (its `LINE_POINTS`).
+/// The window points Rune gives a notched mouse wheel's step on macOS (its `LINE_POINTS`).
 const WHEEL_NOTCH: f32 = 40.0;
 
 /// Lines a notch scrolls: Ghostty's default wheel multiplier, which Herdr app keeps.
@@ -1846,7 +1846,8 @@ impl State {
             ev.dy
         };
         let lines = if ev.notch || !ev.precise {
-            let ticks = dy / WHEEL_NOTCH;
+            // Rune hands the delta over in the zoomed view's points; a notch is 40 window points.
+            let ticks = dy * self.zoom() / WHEEL_NOTCH;
             if ticks == 0.0 {
                 0
             } else {
