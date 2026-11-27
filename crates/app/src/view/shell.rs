@@ -4,7 +4,8 @@
 //! root row
 //! ├─ sidebar   366 pt: its 38 pt top row drags the window ("Agents"), the list below (later)
 //! └─ work column
-//!    ├─ tabs   38 pt: drags the window; the shown space's tabs (a placeholder strip)
+//!    ├─ tabs   38 pt: drags the window; the shown space's tabs (a placeholder strip), and at
+//!    │         its right end the keys of a sequence part-way through (`ctrl-g …`)
 //!    └─ main   the shown tab's panes, bare, with a 1 pt gap that shows the border color
 //! ```
 //!
@@ -111,10 +112,36 @@ fn tabs(s: &State) -> El {
         .pt(6.0)
         .pb(3.0)
         .pl(10.0)
+        .pr(10.0)
         .gap(4.0)
         .fill(color(c.chrome))
         .window_drag()
         .children(pills)
+        .child(el().grow(1.0))
+        .children(prefix(s))
+}
+
+/// The prefix indicator: the keys of a sequence part-way through (`ctrl-g …`), at the tab
+/// strip's right end until the next key or the prefix timeout.
+fn prefix(s: &State) -> Option<El> {
+    let c = &s.chrome;
+    let keys = s.model.mode().pending_keys()?;
+    let typed: Vec<String> = keys.iter().map(|p| p.to_string()).collect();
+    Some(
+        el().key("prefix")
+            .h(TAB)
+            .px(10.0)
+            .items_center()
+            .radius(6.0)
+            .fill(color(c.raised))
+            .border(1.0, color(c.border))
+            .child(
+                text(format!("{} \u{2026}", typed.join(" ")))
+                    .key("prefix-keys")
+                    .font(label())
+                    .color(color(c.text)),
+            ),
+    )
 }
 
 /// The shown tab's panes where the model's geometry puts them, or what the core is doing.

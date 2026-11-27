@@ -492,13 +492,7 @@ fn renaming_a_tab_prompts_with_its_name_and_writes_it_trimmed() {
     assert_eq!(prompt.rename, Rename::Tab("tb1".into()));
     assert_eq!(prompt.value, "");
     // Typing goes to the field, not the terminal or the keymap.
-    let fx = m.step(
-        m.now(),
-        Event::Key {
-            chord: model::Chord::char('w'),
-            terminal: true,
-        },
-    );
+    let fx = m.step(m.now(), Event::key(model::Chord::char('w'), true));
     assert!(!fx.handled);
     drive(
         &mut m,

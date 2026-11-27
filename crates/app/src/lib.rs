@@ -4,13 +4,16 @@
 //! shows. [`State`] holds the model and the core [`link::Link`]; [`view`] draws the shell
 //! (`view::shell`) around the shown tab's live terminals.
 
+pub mod chord;
 pub mod control;
 pub mod fixtures;
 pub mod home;
+pub mod keyfile;
 pub mod keys;
 pub mod link;
 mod scenes;
 pub mod state;
+pub mod toast;
 pub mod view;
 pub mod window;
 
@@ -85,15 +88,30 @@ pub fn spec() -> AppSpec<State> {
 }
 
 /// The whole window: the shell around the shown tab's terminals ([`view::shell`]), or, in the
-/// renderer's fixture scenes, their panes alone.
+/// renderer's fixture scenes, their panes alone; the open popup and the toasts over it. Its
+/// root previews every key for the keymap ([`State::preview_key`]).
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
-    if s.panes.is_empty() {
-        if s.status == state::Status::Offline && s.model.shown_tab().is_none() {
-            return hello();
+    let content = if !s.panes.is_empty() {
+        fixture_panes(s, cx)
+    } else if s.status == state::Status::Offline && s.model.shown_tab().is_none() {
+        hello()
+    } else {
+        view::shell::view(s, cx)
+    };
+    let popup = match s.model.mode() {
+        model::Mode::Popup(model::PopupState::List(list)) if list.popup == model::Popup::Help => {
+            Some(view::help::view(s, list))
         }
-        return view::shell::view(s, cx);
-    }
-    fixture_panes(s, cx)
+        _ => None,
+    };
+    let toasts = toast::view(&s.toasts, &s.chrome);
+    el().key("window")
+        .w_full()
+        .h_full()
+        .on_key_preview(State::preview_key)
+        .child(content)
+        .children(popup)
+        .children(toasts)
 }
 
 /// The app's name in the middle, before any core: the hello window.

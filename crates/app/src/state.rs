@@ -27,19 +27,25 @@ use std::time::Duration;
 
 use herdr_proto::Display;
 use herdr_proto::methods::TerminalAttach;
-use model::{Action, Effect, Event, Focus, Input, Model, View};
-use rune::{KeyEvent, Tx};
+use model::mode::{PopupState, Rename};
+use model::{
+    Action, AppCommand, CopyAction, Effect, Event, Focus, Input, Level, Model, Popup, PopupAction,
+    Toast, View,
+};
+use rune::{KeyEvent, TextEdit, Tx};
 use serde_json::{Map, Value, json};
 use terminal::{GridSize, Output, Padding, PaddingBalance, ScreenSize, Size, Terminal, Theme};
 
 use crate::control::{self, Control};
 use crate::home::{Home, VIEW};
-use crate::keys;
+use crate::keyfile::{self, Loaded, Watcher};
 use crate::link::{Link, News, Offline, Out};
+use crate::toast::{self, Toasts};
 use crate::view::terminal::TerminalPane;
 use crate::view::terminal::font::{Face, Font};
 use crate::view::terminal::look::{self, ChromeColors, Look};
 use crate::window::Keeper;
+use crate::{chord, keys};
 
 /// The terminal font's size until settings land: Ghostty's and Herdr app's 14 pt default.
 pub const TERMINAL_POINTS: f32 = 14.0;
@@ -123,6 +129,8 @@ struct Ui {
     focus: Option<Focus>,
     /// The next frame to ask Rune for.
     wake: Option<f64>,
+    /// Window commands for Rune: quit, close, maximize.
+    window: Vec<AppCommand>,
 }
 
 /// The window's tab area, as laid out.
@@ -170,6 +178,18 @@ pub struct State {
     /// When the model asked to be stepped with [`Event::Tick`] ([`Effect::WakeAt`]).
     tick_at: Option<f64>,
     now: f64,
+    /// The in-app toasts on screen.
+    pub toasts: Toasts,
+    /// The key file's thread, once the app is set up with a home.
+    keys: Option<Watcher>,
+    /// The key file's text as read at start, for that thread.
+    keys_read: Option<String>,
+    /// How often that thread reads the file.
+    pub keys_every: Duration,
+    /// The open popup's filter field.
+    pub help_filter: TextEdit,
+    /// Something only the view shows changed (a toast, the prefix indicator): draw a frame.
+    redraw: bool,
 }
 
 impl Default for State {
@@ -203,8 +223,22 @@ impl State {
             .and_then(|text| View::from_json(&text).ok())
             .unwrap_or_default();
         let (theme, look) = look::arctic();
+        let mut model = Model::with_view(user_home(), view);
+        let mut toasts = Toasts::default();
+        let mut keys_read = None;
+        if let Some(home) = &home {
+            let start = keyfile::load(home.dir());
+            model.set_keymap(start.keymap);
+            if let Some(why) = start.problem {
+                toasts.push(
+                    Toast::new(Level::Error, "keys.json can't be used", why),
+                    0.0,
+                );
+            }
+            keys_read = start.text;
+        }
         let mut s = State {
-            model: Model::with_view(user_home(), view),
+            model,
             link,
             started: false,
             waker: None,
@@ -229,6 +263,12 @@ impl State {
             ui: Ui::default(),
             tick_at: None,
             now: 0.0,
+            toasts,
+            keys: None,
+            keys_read,
+            keys_every: keyfile::EVERY,
+            help_filter: TextEdit::default(),
+            redraw: false,
         };
         s.window_sized(crate::SIZE.0, crate::SIZE.1);
         s
@@ -292,13 +332,72 @@ impl State {
         self.in_use.as_deref()
     }
 
-    /// Steps the model and carries out what it asks.
-    pub fn step(&mut self, now: f64, input: impl Into<Input>) {
+    /// Steps the model and carries out what it asks. True when it used the key (always, for
+    /// anything but a key).
+    pub fn step(&mut self, now: f64, input: impl Into<Input>) -> bool {
         self.now = self.now.max(now);
+        let before = self.model.mode().clone();
         let effects = self.model.step(self.now, input);
+        let handled = effects.handled;
         for effect in effects {
             self.carry_out(effect);
         }
+        if *self.model.mode() != before {
+            self.redraw = true;
+            self.mode_changed(&before);
+        }
+        handled
+    }
+
+    /// The keyboard went to a new mode. A popup or copy mode the window doesn't draw yet would
+    /// hold every key unseen, so it closes at once with a "not yet" toast; the help opens with
+    /// an empty filter and says how many rows it has.
+    fn mode_changed(&mut self, before: &model::Mode) {
+        let mode = self.model.mode().clone();
+        match &mode {
+            model::Mode::Popup(PopupState::List(list)) if list.popup == Popup::Help => {
+                let opened = before
+                    .popup()
+                    .and_then(PopupState::popup)
+                    .is_none_or(|p| p != Popup::Help);
+                if opened {
+                    self.help_filter = TextEdit::default();
+                }
+                let rows = crate::view::help::shown(self, list).len();
+                if rows != list.rows {
+                    self.step(self.now, Event::PopupRows(rows));
+                }
+            }
+            model::Mode::Popup(state) => {
+                let action = match state {
+                    PopupState::List(list) => Action::Open(list.popup),
+                    PopupState::Jump(_) => Action::Open(Popup::AgentJump),
+                    PopupState::Prompt(p) => match p.rename {
+                        Rename::Tab(_) => Action::TabRename,
+                        Rename::Space(_) => Action::SpaceRename,
+                    },
+                    PopupState::Confirm(_) => Action::SpaceClose,
+                };
+                self.not_yet(&action);
+                self.step(self.now, Action::Popup(PopupAction::Close));
+            }
+            model::Mode::Copy(_) => {
+                self.not_yet(&Action::CopyMode);
+                self.step(self.now, Action::Copy(CopyAction::Quit));
+            }
+            model::Mode::Normal | model::Mode::Prefix { .. } => {}
+        }
+    }
+
+    /// Shows a toast.
+    pub fn toast(&mut self, toast: Toast) {
+        let due = self.toasts.push(toast, self.now);
+        self.wake_at(due);
+        self.redraw = true;
+    }
+
+    fn not_yet(&mut self, action: &Action) {
+        self.toast(toast::not_yet(action));
     }
 
     fn carry_out(&mut self, effect: Effect) {
@@ -315,6 +414,20 @@ impl State {
                     home.save(VIEW, self.model.saved_view().to_json());
                 }
             }
+            Effect::App(command) => self.app_command(command),
+            Effect::Toast(toast) => self.toast(toast),
+            Effect::NotYet(action) => self.not_yet(&action),
+            // The terminal's own commands (sends, paste, copy, search) are ticket 015's and
+            // 019's; until then they say so.
+            Effect::Terminal { command, .. } => match command {
+                model::TerminalCommand::Action(action) => self.not_yet(&Action::Terminal(action)),
+                // Copy mode says "not yet" once, as it closes (`State::mode_changed`).
+                model::TerminalCommand::CopyStart
+                | model::TerminalCommand::CopyMove(_)
+                | model::TerminalCommand::CopySelect(_)
+                | model::TerminalCommand::CopyYank
+                | model::TerminalCommand::CopyEnd => {}
+            },
             // A `do` call's answer that came in a later step: `space.new`'s, once its terminal
             // runs.
             Effect::Answer { id, reply } => {
@@ -322,13 +435,70 @@ impl State {
                     control.answer(id, reply);
                 }
             }
-            // Toasts, alerts, pickers, copy mode and app commands come with their tickets.
-            Effect::Terminal { .. }
-            | Effect::App(_)
-            | Effect::Toast(_)
-            | Effect::Alert(_)
-            | Effect::Pick { .. }
-            | Effect::NotYet(_) => {}
+            // The help has nothing to pick; the other list popups come with their tickets (and
+            // close before a pick, `State::mode_changed`). Alerts are ticket 025's.
+            Effect::Pick { .. } | Effect::Alert(_) => {}
+        }
+    }
+
+    /// An app command: the window's own are Rune's, the sidebar is this state's, the escape
+    /// hatch resets the key file; the rest aren't built yet.
+    fn app_command(&mut self, command: AppCommand) {
+        match command {
+            AppCommand::Quit | AppCommand::CloseWindow | AppCommand::Maximize => {
+                self.ui.window.push(command)
+            }
+            AppCommand::ToggleSidebar => {
+                self.sidebar = match self.sidebar {
+                    Some(_) => None,
+                    None => Some(SIDEBAR),
+                };
+                self.redraw = true;
+            }
+            AppCommand::Reset => {
+                self.model.set_keymap(model::Keymap::eli());
+                match &self.keys {
+                    // The file goes aside on the key thread; it says where.
+                    Some(keys) => keys.reset(),
+                    None => {
+                        self.toast(Toast::new(Level::Info, "Keys reset", "Eli's keys are back"))
+                    }
+                }
+            }
+            // macOS's menu hides the app on ⌘H and ⌥⌘H before the window sees them.
+            AppCommand::Hide
+            | AppCommand::HideOthers
+            | AppCommand::ZoomIn
+            | AppCommand::ZoomOut
+            | AppCommand::ZoomReset
+            | AppCommand::LayoutSwitch => self.not_yet(&Action::App(command)),
+        }
+    }
+
+    /// What the key file's thread found.
+    fn hear_keys(&mut self) {
+        let Some(keys) = &self.keys else { return };
+        let news: Vec<Loaded> = std::iter::from_fn(|| keys.next()).collect();
+        for loaded in news {
+            match loaded {
+                Loaded::Keys(keymap) => {
+                    self.model.set_keymap(keymap);
+                    self.redraw = true;
+                }
+                Loaded::Bad(why) => {
+                    self.toast(Toast::new(Level::Error, "keys.json can't be used", why))
+                }
+                Loaded::Reset(Ok(aside)) => self.toast(Toast::new(
+                    Level::Info,
+                    "Keys reset",
+                    format!("Eli's keys are back; yours are in {aside}"),
+                )),
+                Loaded::Reset(Err(why)) => self.toast(Toast::new(
+                    Level::Info,
+                    "Keys reset",
+                    format!("Eli's keys are back ({why})"),
+                )),
+            }
         }
     }
 
@@ -336,10 +506,20 @@ impl State {
         self.ui.wake = Some(self.ui.wake.map_or(at, |w| w.min(at)));
     }
 
-    /// Hands the focus and wakes the steps asked for to Rune.
+    /// Hands the focus, the window commands and the wakes asked for to Rune.
     fn apply_ui(&mut self, tx: &mut Tx) {
-        if let Some(Focus::Pane(pane)) = self.ui.focus.take() {
-            tx.focus_when_shown(pane_key(&pane), false);
+        match self.ui.focus.take() {
+            Some(Focus::Pane(pane)) => tx.focus_when_shown(pane_key(&pane), false),
+            Some(Focus::Popup) => tx.focus_when_shown(crate::view::help::FILTER, false),
+            Some(Focus::None) | None => {}
+        }
+        for command in std::mem::take(&mut self.ui.window) {
+            match command {
+                AppCommand::Quit => tx.quit(),
+                AppCommand::CloseWindow => tx.close_window(),
+                AppCommand::Maximize => tx.toggle_maximized(),
+                _ => {}
+            }
         }
         if let Some(at) = self.ui.wake.take() {
             tx.wake_at(at);
@@ -356,6 +536,13 @@ impl State {
         {
             self.tick_at = None;
             self.step(now, Event::Tick);
+        }
+        self.hear_keys();
+        if self.toasts.expire(now) {
+            self.redraw = true;
+        }
+        if let Some(due) = self.toasts.next_due() {
+            self.wake_at(due);
         }
         // Before the link, so a fake core answers the calls a `do` made in this same pump.
         let mut changed = self.drain_control(now);
@@ -374,7 +561,7 @@ impl State {
         changed |= self.keep_viewers();
         changed |= self.fit(now);
         changed |= self.drain_terminals();
-        changed
+        changed | std::mem::take(&mut self.redraw)
     }
 
     /// Runs the requests the control socket took (`ls`, `status`, `do`) through the model, and
@@ -384,11 +571,16 @@ impl State {
             return false;
         };
         let facts = window_facts(&self.font);
+        let before = self.model.mode().clone();
         let Some(fx) = control.drain(&mut self.model, now, &facts) else {
             return false;
         };
         for effect in fx.list {
             self.carry_out(effect);
+        }
+        // A `do` can open a popup or copy mode as a key does.
+        if *self.model.mode() != before {
+            self.mode_changed(&before);
         }
         true
     }
@@ -432,7 +624,9 @@ impl State {
                 self.step(now, Event::Lost);
             }
             News::Unavailable(why) => self.status = Status::Down(why),
-            News::Event(event) => self.step(now, event),
+            News::Event(event) => {
+                self.step(now, event);
+            }
             News::Restarted(addresses) => {
                 for address in addresses {
                     if let Some(viewer) = self.viewers.get_mut(&address) {
@@ -794,15 +988,27 @@ impl State {
 
     // ---- Rune hooks -------------------------------------------------------------------------
 
-    /// `AppSpec::setup`: the waker other threads wake the UI with; the control socket and the
-    /// link start here. The socket goes first: macOS has no `SOCK_CLOEXEC`, so an `hc` the link
-    /// spawned while the socket was being made would keep it open.
+    /// `AppSpec::setup`: the waker other threads wake the UI with; the control socket, the link
+    /// and the key file's thread start here. The socket goes first: macOS has no
+    /// `SOCK_CLOEXEC`, so an `hc` the link spawned while the socket was being made would keep it
+    /// open.
     pub fn setup(s: &mut State, waker: rune::Waker) {
         s.waker = Some(waker.clone());
         s.serve(waker.clone());
         if !s.started {
-            s.link.start(waker);
+            s.link.start(waker.clone());
             s.started = true;
+        }
+        if s.keys.is_none()
+            && let Some(home) = &s.home
+        {
+            let known = s.keys_read.take();
+            s.keys = Some(Watcher::start(
+                home.dir().to_owned(),
+                known,
+                s.keys_every,
+                waker,
+            ));
         }
     }
 
@@ -881,13 +1087,63 @@ impl State {
         true
     }
 
-    /// `AppSpec::on_key`: with nothing focused, typing goes to the focused pane, which takes the
-    /// keyboard back.
+    /// An action from the window (a click, the popup's field), stepped and carried out.
+    pub fn act(&mut self, action: Action, tx: &mut Tx) {
+        self.step(tx.clock(), action);
+        self.pump(tx.clock());
+        self.apply_ui(tx);
+    }
+
+    /// A key through the one keymap and mode machine. `terminal`: a terminal pane has the
+    /// keyboard. True when the model used it, so it goes no further.
+    pub fn keymap_key(&mut self, ev: &KeyEvent, terminal: bool, tx: &mut Tx) -> bool {
+        let Some(press) = chord::press(ev, tx.key_base()) else {
+            return false;
+        };
+        let handled = self.step(tx.clock(), Event::Key { press, terminal });
+        self.pump(tx.clock());
+        self.apply_ui(tx);
+        handled
+    }
+
+    /// The root's `El::on_key_preview`: every key while something has focus, before the
+    /// focused element sees it (`docs/research/rune.md` §4). With nothing focused previews
+    /// don't run; [`State::on_key`] reads those keys instead, so none is read twice.
+    pub fn preview_key(s: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
+        let Some(focused) = tx.focused() else {
+            return false;
+        };
+        let terminal = focused.starts_with("pane-");
+        let in_field = focused == crate::view::help::FILTER;
+        let handled = s.keymap_key(ev, terminal, tx);
+        if handled || !s.model.mode().holds_keyboard() {
+            return handled;
+        }
+        // An open popup keeps the keyboard: its field types what the popup leaves, and nothing
+        // else gets a key, nor does Tab move focus out of it to a pane behind.
+        if in_field && ev.key != rune::Key::Tab {
+            return false;
+        }
+        tx.focus(crate::view::help::FILTER, false);
+        true
+    }
+
+    /// `AppSpec::on_key`: with nothing focused, the keymap, then typing into the model's focused
+    /// pane, which takes the keyboard back. Keys a focused element passed on (`tx.focused()` is
+    /// set) already went through the keymap in [`State::preview_key`], and go nowhere.
     pub fn on_key(s: &mut State, ev: &KeyEvent, tx: &mut Tx) -> bool {
         if tx.focused().is_some() {
             return false;
         }
-        let Some(pane) = s.model.focused_pane() else {
+        let pane = s.model.focused_pane();
+        if s.keymap_key(ev, pane.is_some(), tx) {
+            return true;
+        }
+        // An open popup's typing goes to its field, never the terminal behind it.
+        if s.model.mode().holds_keyboard() {
+            return false;
+        }
+        let Some(pane) = pane.or_else(|| s.model.focused_pane()) else {
             return false;
         };
         let typed = s.typed(&pane, ev, tx);

@@ -23,6 +23,9 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-no-spaces", shell_no_spaces),
     ("shell-connecting", shell_connecting),
     ("shell-core-down", shell_core_down),
+    ("shell-keys-help", shell_keys_help),
+    ("shell-prefix", shell_prefix),
+    ("shell-not-yet", shell_not_yet),
 ];
 
 /// The app on the demo core ([`fixtures::demo_core`]): the sidebar, the tab strip with `work`
@@ -67,6 +70,29 @@ fn shell_connecting(s: &mut State) {
 fn shell_core_down(s: &mut State) {
     s.connect(Box::new(Offline));
     s.status = Status::Down("hc connect: no core is running".into());
+}
+
+/// The demo core with the keys help open (`cmd-/`), filtered to the pane keys.
+fn shell_keys_help(s: &mut State) {
+    shell(s);
+    s.step(0.0, model::Action::Open(model::Popup::Help));
+    s.help_filter.text = "pane".into();
+    s.step(
+        0.0,
+        model::Action::Popup(model::PopupAction::Query("pane".into())),
+    );
+}
+
+/// The demo core part-way through a sequence: `ctrl-g` pressed, the indicator waiting.
+fn shell_prefix(s: &mut State) {
+    shell(s);
+    s.step(0.0, model::Event::key(model::Chord::ctrl('g'), true));
+}
+
+/// The demo core after a key whose feature isn't built: its "not yet" toast.
+fn shell_not_yet(s: &mut State) {
+    shell(s);
+    s.step(0.0, model::Action::Review);
 }
 
 /// `fixture` alone in a focused pane: what the Ghostty pixel diff compares.
