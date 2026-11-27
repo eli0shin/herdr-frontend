@@ -1,3 +1,8 @@
+// Portions of this file are ported from Herdr app (https://github.com/herdrdev/herdr-app at
+// v0.1.18, 9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c), licensed under the Apache License 2.0
+// (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend. See
+// THIRD-PARTY-NOTICES.md.
+
 //! Machines (`feature-inventory.md` §9), as pure rules: the machine filter's rows and what its
 //! keys do to the hidden list (Eli's `agent-machines` mod, `filter.js`), how a machine's line
 //! reads in the Machines dialog and what to run when it needs you (Herdr app's Settings →

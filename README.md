@@ -81,5 +81,5 @@ Rune is pinned to one `dev` rev in `Cargo.toml`; bump it as `docs/research/rune.
 MIT ([LICENSE](LICENSE)), copyright Eli Oshinsky. herdr-frontend ports code from Ghostty (MIT),
 Herdr app (Apache-2.0) and z2d (MPL-2.0), and bundles libghostty-vt, fonts and icons under their
 own licenses. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) lists each with its license. One
-file keeps a license other than MIT: `crates/app/src/view/terminal/sprite/raster.rs`, the z2d port,
-is MPL-2.0.
+source file keeps a license other than MIT: `crates/app/src/view/terminal/sprite/raster.rs`, the
+z2d port, is MPL-2.0.

@@ -1,3 +1,8 @@
+// Portions of this file are ported from Herdr app (https://github.com/herdrdev/herdr-app at
+// v0.1.18, 9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c), licensed under the Apache License 2.0
+// (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend. See
+// THIRD-PARTY-NOTICES.md.
+
 //! The keys help (`cmd-/`, `feature-inventory.md` §10): a 640 × 520 dialog over the window
 //! listing every binding from the keymap ([`model::help::rows`]), grouped spaces, tabs, panes,
 //! agents, terminal, window (then popups and copy mode), with keys outside `global` and

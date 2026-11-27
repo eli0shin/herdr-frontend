@@ -1,3 +1,8 @@
+// Portions of this file are ported from Herdr app (https://github.com/herdrdev/herdr-app at
+// v0.1.18, 9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c), licensed under the Apache License 2.0
+// (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend. See
+// THIRD-PARTY-NOTICES.md.
+
 //! In-app toasts (`feature-inventory.md` §8, Eli's `eli-toast`): 340 × 72 cards at the window's
 //! bottom right, 16 pt in, stacked upward with 8 pt gaps, the oldest at the bottom as Herdr app
 //! stacks them. Each shows a level dot, a 13 pt semibold title and a 12 pt muted body, one line

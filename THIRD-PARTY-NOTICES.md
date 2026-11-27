@@ -50,20 +50,47 @@ changed where its design differs. Each carries a notice saying so.
 | `crates/model/src/actions.rs` | `src/window.rs` `resize_pane`; `src/model.rs` `move_pane` |
 | `crates/model/src/checkouts.rs` | `src/window.rs` `track_folders`, `folder_info`, `recheck` |
 | `crates/model/src/control.rs` | `src/commands.rs` (the commands, `validate_args`, `shorthand`); `src/window.rs` `world`, `control`, `shown_agent`, `new_space`, `pane.close` |
-| `crates/model/src/model.rs` | `src/window.rs` `keep_terminal`, `require_document`, `alert`, `notify_launch_failure`, `share_seen`, `track_folders`, `run_key`; `src/mirror.rs` `View::apply_machine` |
-| `crates/model/src/peek.rs` | `src/window.rs` `peek_terminal`, `keep_terminal`; `src/links.rs` |
+| `crates/model/src/model.rs` | `src/window.rs` `keep_terminal`, `require_document`, `alert`, `notify_launch_failure`, `share_seen`, `track_folders`, `run_key`; `src/mirror.rs` `View::apply_machine`; `defaults/mods/tabs/main.js` and `defaults/mods/toast/main.js` (through Eli's `eli-tabs` and `eli-toast` clones) |
+| `crates/model/src/peek.rs` | `src/window.rs` `peek_terminal`, `keep_terminal`; `src/links.rs`; `defaults/mods/peek/main.js` |
 | `crates/model/src/shell.rs` | `src/window.rs` `agent_argv`, `unix_agent_argv`; `src/remote_shell.rs` `launch` |
-| `crates/model/src/view.rs` | `src/mirror.rs` `View`; `src/model.rs` `Tab::focus` |
+| `crates/model/src/view.rs` | `src/mirror.rs` `View`; `src/model.rs` `Tab::focus`; `defaults/frame/palette/main.js` (recent commands) |
 | `crates/model/src/world.rs` | `src/model.rs` (tab titles, folder names) |
+| `crates/model/src/agents.rs` | `defaults/mods/agents/main.js` (through Eli's `eli-agents` clone): the Agents list's sections, rows, order and space colors |
+| `crates/model/src/effect.rs` | `defaults/mods/toast/main.js` (the toast and its login card) |
+| `crates/model/src/help.rs` | `defaults/mods/help/main.js`; `defaults/mods/menu/main.js` `shortcut` |
+| `crates/model/src/machines.rs` | `defaults/mods/machine-add/main.js` (`shellArg`, ssh config hosts, `add`'s errors); `defaults/frame/settings/main.js` (Settings → Machines) |
+| `crates/model/src/mode.rs` | `defaults/mods/menu/main.js`, `defaults/frame/palette/main.js` (popup and menu keys) |
+| `crates/model/src/popups.rs` | `defaults/mods/menu/main.js`, `defaults/frame/palette/main.js` (the menus and the palette's commands); `src/window.rs` `publish` |
 | `crates/app/src/control.rs` | `src/control.rs` (the control socket, `parse_args`) |
+| `crates/app/src/state.rs` | `src/terminal.rs` `quote_paths`, `paste_image`; `src/window/pane_drag.rs` `PaneDrag` |
+| `crates/app/src/toast.rs` | `defaults/mods/toast/main.js` (through Eli's `eli-toast` clone) |
+| `crates/app/src/config/settings.rs` | `src/settings.rs` `next_zoom`, `ZOOM_MIN`, `ZOOM_MAX`, `ui_font_size` |
+| `crates/app/src/view/dialog.rs` | `defaults/mods/prompt/main.js`, `defaults/mods/confirm/main.js` |
+| `crates/app/src/view/help.rs` | `defaults/mods/help/main.js` |
+| `crates/app/src/view/icons.rs` | The path data of the shipped mods' SVG icons: `defaults/mods/workspace-chrome/*.svg` (spinner, monitor, server, search and the others it names), `defaults/mods/pane/close.svg`, `defaults/mods/terminals-bar/command.svg`, `defaults/frame/palette/command.svg`; `defaults/mods/menu/main.js` `menuIcon`. Many are Lucide icons (ISC, see "Icons"). |
+| `crates/app/src/view/list.rs` | `defaults/mods/picker/main.js`, `defaults/frame/palette/main.js` (how a list scrolls with its cursor) |
+| `crates/app/src/view/machines.rs` | `defaults/mods/machine-add/main.js`; `defaults/frame/settings/main.js` (Settings → Machines) |
+| `crates/app/src/view/menu.rs` | `defaults/mods/menu/main.js` |
+| `crates/app/src/view/overlay.rs` | `src/window.rs` `render_overlays` |
+| `crates/app/src/view/palette.rs` | `defaults/frame/palette/main.js` |
+| `crates/app/src/view/peek.rs` | `defaults/mods/peek/main.js`; `src/window.rs` `peek_terminal` |
+| `crates/app/src/view/picker.rs` | `defaults/mods/picker/main.js` |
+| `crates/app/src/view/shell.rs` | `src/window.rs` `HANDLE`; `src/window/pane_drag.rs`; `defaults/mods/tabs/main.js` (through `eli-tabs`) |
+| `crates/app/src/view/sidebar.rs` | `defaults/mods/workspace-chrome/main.js`, `defaults/mods/agents/main.js` (through Eli's `eli-chrome` and `eli-agents` clones) |
+| `crates/app/src/view/tabs.rs` | `defaults/mods/tabs/main.js` (through Eli's `eli-tabs` clone) |
 | `crates/app/src/config/programs.rs` | `src/programs.rs` (the program table and how a terminal's program is resolved) |
 | `crates/app/src/config/theme.rs` | `src/settings.rs` (the theme format and the colors derived from it) |
 | `crates/app/src/keys.rs` | `src/terminal.rs` `map_key` (the shifted-character table and key mapping) |
 | `crates/app/src/view/terminal/scrollbar.rs` | `src/terminal.rs` `scrollbar_thumb` |
 
-Other files cite Herdr app's source (`app:` paths) only for behavior, file formats or constants
-they match so both apps work on one layout, such as `docs/labels.md`'s labels, `settings.json`'s
-key names, the find bar's size or a divider's handle width. They hold no code from it.
+Herdr app's shipped mods and frame (`defaults/mods/`, `defaults/frame/`) are part of Herdr app and
+under its license. Eli's `eli-chrome`, `eli-agents`, `eli-tabs` and `eli-toast` mods are clones of
+the shipped `workspace-chrome`, `agents`, `tabs` and `toast`, and `navigator-status` of
+`workspace-status` (`docs/research/feature-inventory.md`), so code ported from those clones counts
+as ported from Herdr app too, except Eli's own changes in them.
+
+Other files cite Herdr app only for behavior or file formats they match so both apps work on one
+layout, such as `docs/labels.md`'s labels or the find bar's size. They hold no code from it.
 
 Assets, copied as they are:
 
@@ -88,7 +115,7 @@ Ported, and modified for Rust and Rune:
 | `crates/terminal/src/face.rs` | `src/font/face/coretext.zig` `getMetrics` | vt-1.0.2 |
 | `crates/terminal/src/size.rs` | `src/renderer/size.zig`, the padding parts of `src/Surface.zig` | vt-1.0.2 |
 | `crates/terminal/src/links.rs` | `src/config/url.zig` (the URL and path pattern and its test cases) | vt-1.0.2 |
-| `crates/app/src/view/terminal/rows.rs` | `rebuildRow`'s color and run rules | vt-1.0.2 |
+| `crates/app/src/view/terminal/rows.rs` | `src/renderer/generic.zig` `rebuildRow`'s color and run rules | vt-1.0.2 |
 | `crates/app/src/view/terminal/cursor.rs` | `src/font/sprite/draw/special.zig` `cursor_*` | vt-1.0.2 |
 | `crates/app/src/view/terminal/glyph/constraint.rs` | `src/font/Glyph.zig` `RenderOptions.Constraint`, `src/renderer/cell.zig`, `src/font/SharedGrid.zig`, `src/font/nerd_font_attributes.zig` | v1.4.0 |
 | `crates/app/src/view/terminal/glyph/tables.rs` | Generated by `scripts/gen_ghostty_tables.py` from `src/font/nerd_font_tables.zig`, and from Unicode data (see "Unicode") | v1.4.0 |
@@ -115,10 +142,12 @@ and Zig's compiler runtime:
 | --------- | ------------------- | ------- | ----- |
 | Highway 1.2.0 | [google/highway](https://github.com/google/highway/tree/66486a10623fa0d72fe91260f96c892e41aceb06) `66486a10` | Apache-2.0 OR BSD-3-Clause | [highway-Apache-2.0.txt](licenses/highway-Apache-2.0.txt), [highway-BSD-3-Clause.txt](licenses/highway-BSD-3-Clause.txt) |
 | simdutf 9.0.0 | [simdutf/simdutf](https://github.com/simdutf/simdutf/tree/v9.0.0) `v9.0.0` | Apache-2.0 OR MIT | [simdutf-Apache-2.0.txt](licenses/simdutf-Apache-2.0.txt), [simdutf-MIT.txt](licenses/simdutf-MIT.txt) |
+| simdutf's CPU detection (`isadetection.h`, inlined in Ghostty's `pkg/simdutf/vendor/simdutf.h`), adapted from PyTorch's TH `simd.h` | [endorno/pytorch `torch/lib/TH/generic/simd/simd.h`](https://github.com/endorno/pytorch/blob/master/torch/lib/TH/generic/simd/simd.h) | BSD-3-Clause | [simdutf-TH.txt](licenses/simdutf-TH.txt) |
 | translate-c 2.0.0 | [ziglang/translate-c](https://github.com/ziglang/translate-c), Ghostty's [`02ff0c52` archive](https://deps.files.ghostty.org/translate_c-02ff0c523fb92a38939b04d0145c4a9602a74d56.tar.gz) | MIT | [translate-c-MIT.txt](licenses/translate-c-MIT.txt) |
 | uucode 0.2.0 | [jacobsandlund/uucode](https://github.com/jacobsandlund/uucode/tree/1fb73433bba5d93366c57f23ff2e9d7939746500) `1fb73433` | MIT AND Unicode-3.0 | [uucode-LICENSE.md](licenses/uucode-LICENSE.md), [uucode-LICENSE_unicode.txt](licenses/uucode-LICENSE_unicode.txt), [uucode-LICENSE_Bjoern_Hoehrmann.txt](licenses/uucode-LICENSE_Bjoern_Hoehrmann.txt) |
 | Wuffs 0.4.0-alpha.10 | [google/wuffs](https://github.com/google/wuffs), Ghostty's [`7411f488` archive](https://deps.files.ghostty.org/wuffs-7411f488fe2e2c205c3d3b3d28638b7356522930.tar.gz) | Apache-2.0 OR MIT | [wuffs-LICENSE.txt](licenses/wuffs-LICENSE.txt), [wuffs-Apache-2.0.txt](licenses/wuffs-Apache-2.0.txt), [wuffs-MIT.txt](licenses/wuffs-MIT.txt) |
 | Zig compiler runtime (`compiler_rt`) | [ziglang/zig](https://codeberg.org/ziglang/zig), the Zig that built the release (0.17.0 or later, Ghostty's minimum; the text is from [0.17.0](https://codeberg.org/ziglang/zig/src/tag/0.17.0)) | MIT | [Zig-MIT.txt](licenses/Zig-MIT.txt) |
+| musl, in Zig's `compiler_rt` (its math routines, such as `sin` and `exp`, are ported from musl) | Zig 0.17.0's [`lib/libc/musl/COPYRIGHT`](https://codeberg.org/ziglang/zig/src/tag/0.17.0/lib/libc/musl/COPYRIGHT) | MIT | [musl-COPYRIGHT.txt](licenses/musl-COPYRIGHT.txt) |
 
 ## Rune (MIT, dependency)
 
@@ -154,9 +183,10 @@ and Zig's compiler runtime:
   [assets/icons/LICENSE-LobeHub.txt](assets/icons/LICENSE-LobeHub.txt)) and oh-my-pi (MIT,
   [assets/icons/LICENSE-oh-my-pi.txt](assets/icons/LICENSE-oh-my-pi.txt)). Brands are their
   owners' trademarks; these licenses grant no trademark rights.
-- `assets/program-icons/neovim.svg`: the Neovim logo from
-  [devicons/devicon](https://github.com/devicons/devicon/blob/32fe1d3b3f36ad11f90ab94f7db59738139c2bf6/icons/neovim/neovim-original.svg).
-  MIT, [licenses/devicon-MIT.txt](licenses/devicon-MIT.txt).
+- `assets/program-icons/neovim.svg`: the Neovim logo by Jason Long, licensed under
+  [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), taken from
+  [devicons/devicon](https://github.com/devicons/devicon/blob/32fe1d3b3f36ad11f90ab94f7db59738139c2bf6/icons/neovim/neovim-original.svg)
+  (MIT, [licenses/devicon-MIT.txt](licenses/devicon-MIT.txt)).
 
 ## Rust crates
 
@@ -167,7 +197,13 @@ notices.
 
 ## Not third-party
 
-`cfg/mods/...` and `dot/tests/...` are Eli Oshinsky's own Herdr app mods and their checks, in his
-dotfiles. Files that port or follow them (`crates/model/src/filter.rs`, `folders.rs`, `prs.rs`,
-`dead_spaces.rs` and others) are his work, as are `assets/programs/eli.json` and
-`assets/themes/arctic.json`, and fall under the MIT License above.
+`cfg/mods/...` and `dot/tests/...` are Herdr app mods and their checks in Eli Oshinsky's dotfiles.
+The ones he wrote himself, `agent-jump`, `agent-machines`, `space-picker`, `pr-finder`,
+`new-space`, `copy-mode` and `nvim-links`, and his own changes inside the clones (in
+`navigator-status`: pane and Neovim navigation, tab keys, numbered agents, review, the jump list,
+the dead-space sweep, stow preferences; in `eli-tabs`, `eli-agents` and `pr-finder`: tab names
+from Pi), are his work. So are the files that port only them (in `crates/model/src/`:
+`filter.rs`, `folders.rs`, `prs.rs`, `names.rs`, `keys.rs`, `keys.json`, `action.rs`, `review.rs`,
+`dead_spaces.rs`; `crates/copy-mode`; and the views `jump.rs`, `space_picker.rs`, `pr_finder.rs`,
+`new_space.rs`, `copy.rs`), `assets/programs/eli.json` and `assets/themes/arctic.json`. They fall
+under the MIT License above.
