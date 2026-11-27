@@ -257,16 +257,11 @@ impl Model {
     /// Takes a terminal's place labels off and stops keeping it (`app:src/window.rs`
     /// `TerminalChange::Park`).
     fn park(&mut self, address: &str, fx: &mut Effects) {
-        let labels = [
-            (labels::SPACE.to_owned(), String::new()),
-            (labels::TAB.to_owned(), String::new()),
-        ]
-        .into();
         self.call(
             fx,
             Request::Label(TerminalLabel {
                 terminal: address.to_owned(),
-                labels,
+                labels: labels::for_park(),
                 ..Default::default()
             }),
             None,
