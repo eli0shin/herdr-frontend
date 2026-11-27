@@ -1,6 +1,7 @@
 //! `herdr-frontend ls | do | status` end to end: the real binary as the client, a [`Control`]
-//! serving an isolated home, and a model on the model crate's fake core behind it, pumped the
-//! way the window's frame loop will: drain the socket, carry out the effects, send the answers.
+//! serving an isolated home, and a model on the model crate's fake core behind it, pumped as the
+//! window's frame loop does (`State::pump`): drain the socket, carry out the effects, send the
+//! answers. `window_control.rs` runs the same CLI against the whole app.
 
 #[path = "../../model/tests/support/mod.rs"]
 mod support;
@@ -88,9 +89,12 @@ impl Window {
 
     /// One frame: requests in, effects carried out, answers out.
     fn pump(&mut self) {
-        let fx = self
+        let Some(fx) = self
             .control
-            .drain(&mut self.model, self.core.now, &self.facts);
+            .drain(&mut self.model, self.core.now, &self.facts)
+        else {
+            return;
+        };
         for effect in run_effects(&mut self.model, &mut self.core, fx.list) {
             if let Effect::Answer { id, reply } = effect {
                 self.control.answer(id, reply);

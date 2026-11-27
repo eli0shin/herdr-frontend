@@ -22,9 +22,12 @@ use crate::view::terminal::look::color;
 pub const BAR: f32 = 38.0;
 const TAB: f32 = 29.0;
 
+/// The chrome's text size, in points (`status`'s `ui_font_size`).
+pub const UI_POINTS: f32 = 13.0;
+
 /// The chrome's labels.
 fn label() -> TextStyle {
-    TextStyle::new(13.0, 400.0)
+    TextStyle::new(UI_POINTS, 400.0)
 }
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {

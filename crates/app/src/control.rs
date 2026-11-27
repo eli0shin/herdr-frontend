@@ -129,15 +129,22 @@ impl Control {
     /// `status` (`zoom`, `font_size`, `ui_font_size`, …): its keys go in as given, except
     /// `errors`, which go before the model's.
     ///
-    /// Returns the steps' effects for the app to carry out. Answers among them are sent here and
-    /// left out; one that comes in a later step (a `space.new` waiting for its terminal) goes to
-    /// [`Control::answer`].
-    pub fn drain(&mut self, model: &mut Model, now: f64, window: &Map<String, Value>) -> Effects {
+    /// Returns the steps' effects for the app to carry out, or `None` when no request came in
+    /// (so nothing changed). Answers among them are sent here and left out; one that comes in a
+    /// later step (a `space.new` waiting for its terminal) goes to [`Control::answer`].
+    pub fn drain(
+        &mut self,
+        model: &mut Model,
+        now: f64,
+        window: &Map<String, Value>,
+    ) -> Option<Effects> {
         let mut fx = Effects {
             list: Vec::new(),
             handled: true,
         };
+        let mut any = false;
         while let Ok(Request { cmd, reply }) = self.requests.try_recv() {
+            any = true;
             if let Some(name) = cmd.get("do").and_then(Value::as_str) {
                 self.next += 1;
                 let id = CallId(self.next);
@@ -166,7 +173,7 @@ impl Control {
             };
             let _ = reply.send(answer);
         }
-        fx
+        any.then_some(fx)
     }
 
     /// Sends a call's answer ([`Effect::Answer`]) to the connection waiting for it. A connection

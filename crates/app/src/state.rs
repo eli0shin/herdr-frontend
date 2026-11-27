@@ -1,8 +1,9 @@
 //! The app's state, and how core news, layout and input move it (`docs/research/rune.md` §8
 //! "State and event flow").
 //!
-//! Each frame, [`State::pump`] drains the [`Link`] into [`Model::step`] and carries out the
-//! effects (calls and document rounds on the link, focus, saving the view). Then it keeps one
+//! Each frame, [`State::pump`] runs the control socket's requests (`docs/cli.md`) and drains the
+//! [`Link`] into [`Model::step`], and carries out the effects (calls and document rounds on the
+//! link, focus, saving the view, answers to `do`). Then it keeps one
 //! [`Viewer`] per terminal the shown tab draws, and applies the viewer policy of
 //! `herdr-core-protocol.md` §4 ("Recommended viewer policy"):
 //!
@@ -28,8 +29,10 @@ use herdr_proto::Display;
 use herdr_proto::methods::TerminalAttach;
 use model::{Action, Effect, Event, Focus, Input, Model, View};
 use rune::{KeyEvent, Tx};
+use serde_json::{Map, Value, json};
 use terminal::{GridSize, Output, Padding, PaddingBalance, ScreenSize, Size, Terminal, Theme};
 
+use crate::control::{self, Control};
 use crate::home::{Home, VIEW};
 use crate::keys;
 use crate::link::{Link, News, Offline, Out};
@@ -160,6 +163,8 @@ pub struct State {
     /// and fake-core tests, so a frame never races a worker.
     synchronous: bool,
     home: Option<Home>,
+    /// The control socket in the home, served from setup on ([`State::serve`]).
+    control: Option<Control>,
     pub window: Keeper,
     ui: Ui,
     /// When the model asked to be stepped with [`Event::Tick`] ([`Effect::WakeAt`]).
@@ -219,6 +224,7 @@ impl State {
             resized_at: f64::NEG_INFINITY,
             synchronous: false,
             home,
+            control: None,
             window,
             ui: Ui::default(),
             tick_at: None,
@@ -309,11 +315,15 @@ impl State {
                     home.save(VIEW, self.model.saved_view().to_json());
                 }
             }
-            // Toasts, alerts, pickers, copy mode and app commands come with their tickets. The
-            // window doesn't serve the control socket yet (`docs/cli.md` "Status"), so no call
-            // waits for an answer.
-            Effect::Answer { .. }
-            | Effect::Terminal { .. }
+            // A `do` call's answer that came in a later step: `space.new`'s, once its terminal
+            // runs.
+            Effect::Answer { id, reply } => {
+                if let Some(control) = &mut self.control {
+                    control.answer(id, reply);
+                }
+            }
+            // Toasts, alerts, pickers, copy mode and app commands come with their tickets.
+            Effect::Terminal { .. }
             | Effect::App(_)
             | Effect::Toast(_)
             | Effect::Alert(_)
@@ -347,7 +357,8 @@ impl State {
             self.tick_at = None;
             self.step(now, Event::Tick);
         }
-        let mut changed = false;
+        // Before the link, so a fake core answers the calls a `do` made in this same pump.
+        let mut changed = self.drain_control(now);
         // A fake core answers on the next poll, so keep going until it is quiet.
         for _ in 0..64 {
             let mut news = Vec::new();
@@ -364,6 +375,40 @@ impl State {
         changed |= self.fit(now);
         changed |= self.drain_terminals();
         changed
+    }
+
+    /// Runs the requests the control socket took (`ls`, `status`, `do`) through the model, and
+    /// carries out their effects. True when any came in.
+    fn drain_control(&mut self, now: f64) -> bool {
+        let Some(control) = &mut self.control else {
+            return false;
+        };
+        let facts = window_facts(&self.font);
+        let Some(fx) = control.drain(&mut self.model, now, &facts) else {
+            return false;
+        };
+        for effect in fx.list {
+            self.carry_out(effect);
+        }
+        true
+    }
+
+    /// Serves the control socket in the home, if there is one: the CLI's `ls | do | status`
+    /// (`docs/cli.md`). Another window already serving it keeps it; this one goes on without.
+    fn serve(&mut self, waker: rune::Waker) {
+        let Some(home) = &self.home else { return };
+        if self.control.is_some() {
+            return;
+        }
+        match Control::listen(home.dir().join(control::SOCKET), move || waker()) {
+            Ok(control) => self.control = Some(control),
+            Err(e) => eprintln!("herdr-frontend: not serving ls, do and status: {e}"),
+        }
+    }
+
+    /// The control socket's path, while the window serves it.
+    pub fn control_socket(&self) -> Option<&std::path::Path> {
+        self.control.as_ref().map(Control::path)
     }
 
     fn hear(&mut self, now: f64, news: News) {
@@ -749,9 +794,12 @@ impl State {
 
     // ---- Rune hooks -------------------------------------------------------------------------
 
-    /// `AppSpec::setup`: the waker other threads wake the UI with; the link starts here.
+    /// `AppSpec::setup`: the waker other threads wake the UI with; the control socket and the
+    /// link start here. The socket goes first: macOS has no `SOCK_CLOEXEC`, so an `hc` the link
+    /// spawned while the socket was being made would keep it open.
     pub fn setup(s: &mut State, waker: rune::Waker) {
         s.waker = Some(waker.clone());
+        s.serve(waker.clone());
         if !s.started {
             s.link.start(waker);
             s.started = true;
@@ -855,5 +903,16 @@ impl State {
         if let Some(home) = &s.home {
             home.save_now(VIEW, s.model.saved_view().to_json());
         }
+        // The socket goes with the window, even when the process ends before the state drops.
+        s.control = None;
     }
+}
+
+/// What only the window knows for `status`: its zoom and font sizes (`docs/cli.md`).
+fn window_facts(font: &Font) -> Map<String, Value> {
+    let mut facts = Map::new();
+    facts.insert("zoom".into(), json!(1.0));
+    facts.insert("font_size".into(), json!(font.points));
+    facts.insert("ui_font_size".into(), json!(crate::view::shell::UI_POINTS));
+    facts
 }
