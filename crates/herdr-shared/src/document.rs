@@ -265,6 +265,17 @@ impl Node {
         self.extra.get("hidden").and_then(Value::as_bool) == Some(true)
     }
 
+    /// `resizable`, as herdr-app reads it (absent is true): whether a split's dividers drag.
+    pub fn resizable(&self) -> bool {
+        self.extra.get("resizable").and_then(Value::as_bool) != Some(false)
+    }
+
+    /// `movable`, when set: whether the panes below may be dragged to rearrange them. The
+    /// nearest node that sets it decides (see [`Node::movable_at`]).
+    pub fn movable(&self) -> Option<bool> {
+        self.extra.get("movable").and_then(Value::as_bool)
+    }
+
     /// A stack's selected child.
     pub fn active(&self) -> Option<&str> {
         match self.kind {

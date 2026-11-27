@@ -2,16 +2,17 @@
 //! [`Intent`]s; terminals start and end through core calls; everything else is this screen's view.
 //! Actions whose feature isn't built yet return [`Effect::NotYet`].
 
-use herdr_shared::{Axis, Intent, Node, fresh_id_on, machine_of};
+use herdr_proto::methods::MachineExec;
+use herdr_shared::{Axis, Intent, Node, Size, fresh_id_on, machine_of};
 
-use crate::action::{Action, CopyAction, Direction, Popup, PopupAction, Split};
-use crate::effect::{Effect, Effects, Level, Pick, TerminalCommand, Toast};
+use crate::action::{Action, CopyAction, Direction, Edge, Popup, PopupAction, Split};
+use crate::effect::{Effect, Effects, Level, Pick, Request, TerminalCommand, Toast};
 use crate::geometry;
 use crate::mode::{
     self, Confirm, Confirmed, CopyState, JumpPopup, ListPopup, Menu, Mode, PopupState, Prompt,
     Rename, Visual,
 };
-use crate::model::{EDITOR_LABEL, Launch, Model};
+use crate::model::{EDITOR_LABEL, Launch, Model, NAVIGATE_TIMEOUT, Pending};
 use crate::world::SpaceExt;
 
 impl Model {
@@ -138,23 +139,26 @@ impl Model {
                 }
             }
             Action::PaneGo(direction) => self.go(direction),
-            Action::PaneNavigate(direction) => {
-                let neovim = self
-                    .focused_terminal()
-                    .and_then(|a| self.world.terminal(a))
-                    .is_some_and(|t| t.label(EDITOR_LABEL).is_some_and(|v| !v.is_empty()));
-                if neovim {
-                    // Through Neovim's splits first (ticket 022).
-                    fx.push(Effect::NotYet(action));
-                } else {
-                    self.go(direction);
-                }
-            }
+            Action::PaneNavigate(direction) => self.navigate(direction, fx),
             Action::PaneSwap(direction) => self.swap(direction, fx),
+            Action::PaneResize(direction) => self.resize(direction, fx),
             Action::ResizeSplit { sizes } => {
-                if sizes.iter().any(|(id, _)| self.world.node(id).is_some()) {
+                let changes = sizes.iter().any(|(id, size)| {
+                    self.world
+                        .node(id)
+                        .is_some_and(|n| !same_size(n.size(), *size))
+                });
+                if changes {
                     self.edit(Intent::Resize { sizes }, fx);
                 }
+            }
+            Action::DragDivider {
+                container,
+                index,
+                at,
+            } => self.drag_divider(&container, index, at, fx),
+            Action::RearrangePane { pane, target, edge } => {
+                self.rearrange(&pane, &target, edge, fx)
             }
             Action::Terminal(command) => {
                 if let Some(address) = self.focused_terminal().map(str::to_owned) {
@@ -170,12 +174,10 @@ impl Model {
             Action::AgentJumpKey(c) => self.jump_key(c, fx),
             Action::Copy(copy) => self.copy(copy, fx),
             Action::Review
-            | Action::PaneResize(_)
             | Action::Peek(_)
             | Action::FoldSubagents(_)
             | Action::TerminalMenu(_)
-            | Action::OpenLink { .. }
-            | Action::RearrangePane { .. } => fx.push(Effect::NotYet(action)),
+            | Action::OpenLink { .. } => fx.push(Effect::NotYet(action)),
         }
     }
 
@@ -409,10 +411,166 @@ impl Model {
         Some((from, to.to_owned()))
     }
 
-    fn go(&mut self, direction: Direction) {
+    pub(crate) fn go(&mut self, direction: Direction) {
         if let Some((_, to)) = self.neighbor(direction, true) {
             self.view.focus_pane(&self.world, &to);
         }
+    }
+
+    /// Ctrl+H/J/K/L: a terminal whose Neovim labeled it gets the key over Neovim's RPC server,
+    /// on the terminal's machine, so the move goes through Neovim's own splits first; Neovim
+    /// asks for the pane move at its edge ([`crate::model::NAVIGATOR_LABEL`]). Anything else
+    /// moves the pane at once. Never `hc keys`: the core holds an agent's keys until its person
+    /// stops typing (`cfg/mods/navigator-status/navigation.js`).
+    fn navigate(&mut self, direction: Direction, fx: &mut Effects) {
+        let Some(pane) = self.focused_pane() else {
+            return;
+        };
+        let address = self.world.address_of(&pane).map(str::to_owned);
+        let server = address
+            .as_deref()
+            .and_then(|a| self.world.terminal(a))
+            .and_then(|t| t.label(EDITOR_LABEL))
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned);
+        let (Some(address), Some(server)) = (address, server) else {
+            self.go(direction);
+            return;
+        };
+        let key = match direction {
+            Direction::Left => 'h',
+            Direction::Down => 'j',
+            Direction::Up => 'k',
+            Direction::Right => 'l',
+        };
+        let exec = MachineExec {
+            argv: vec![
+                "nvim".into(),
+                "--server".into(),
+                server,
+                "--remote-send".into(),
+                format!("<C-{key}>"),
+            ],
+            on: machine_of(&address).map(str::to_owned),
+            timeout: Some(NAVIGATE_TIMEOUT),
+            ..Default::default()
+        };
+        let tab = self.shown_tab().map(|t| t.id.clone());
+        self.call(
+            fx,
+            Request::Exec(exec),
+            Some(Pending::Navigate {
+                address,
+                pane,
+                tab,
+                direction,
+            }),
+        );
+    }
+
+    /// `alt-shift-h/j/k/l`: the focused pane's nearest divider along `direction`'s axis moves
+    /// [`geometry::RESIZE_STEP`] that way, as dragging it would. Nothing in a zoomed tab, or
+    /// where nothing is split that way (`app:src/window.rs` `resize_pane`).
+    fn resize(&mut self, direction: Direction, fx: &mut Effects) {
+        let Some(tab) = self.shown_tab() else {
+            return;
+        };
+        let Some(pane) = self.view.focused_in(tab) else {
+            return;
+        };
+        if self.view.zoomed_in(tab).is_some() {
+            return;
+        }
+        let Some((container, index)) = geometry::resize_divider(&tab.root, &pane, direction) else {
+            return;
+        };
+        let Some(before) = tab
+            .root
+            .find(&container)
+            .and_then(|c| c.children().iter().filter(|c| !c.hidden()).nth(index))
+            .map(|n| n.id.clone())
+        else {
+            return;
+        };
+        let rects = geometry::nodes(&tab.root, &self.geometry);
+        let Some(rect) = rects.iter().find(|(id, _)| *id == before).map(|(_, r)| *r) else {
+            return;
+        };
+        let step = geometry::RESIZE_STEP * self.geometry.zoom;
+        let at = match direction {
+            Direction::Left => rect.right() - step,
+            Direction::Right => rect.right() + step,
+            Direction::Up => rect.bottom() - step,
+            Direction::Down => rect.bottom() + step,
+        };
+        self.drag_divider(&container, index, at, fx);
+    }
+
+    /// A divider of the shown tab follows the pointer (see [`geometry::drag_sizes`]).
+    fn drag_divider(&mut self, container: &str, index: usize, at: f32, fx: &mut Effects) {
+        let Some(tab) = self.shown_tab() else {
+            return;
+        };
+        if self.view.zoomed_in(tab).is_some() {
+            return;
+        }
+        let Some(sizes) = geometry::drag_sizes(&tab.root, container, index, at, &self.geometry)
+        else {
+            return;
+        };
+        let unchanged = sizes
+            .iter()
+            .all(|(id, size)| same_size(tab.root.find(id).and_then(Node::size), *size));
+        if !unchanged {
+            self.edit(Intent::Resize { sizes }, fx);
+        }
+    }
+
+    /// Whether a pane of the shown tab may be dragged to rearrange it: not in a zoomed or
+    /// one-pane tab, nor under a node that sets `movable: false`.
+    pub fn pane_movable(&self, pane: &str) -> bool {
+        let Some(tab) = self.shown_tab() else {
+            return false;
+        };
+        self.view.zoomed_in(tab).is_none()
+            && tab.root.panes().len() > 1
+            && tab.root.find(pane).is_some_and(Node::is_pane)
+            && tab.root.movable_at(pane)
+    }
+
+    /// A pane's grip dropped on another pane of its tab: the center swaps them, an edge places
+    /// it beside. The moved pane takes focus (`app:src/model.rs` `move_pane`).
+    fn rearrange(&mut self, pane: &str, target: &str, edge: Edge, fx: &mut Effects) {
+        if pane == target || !self.pane_movable(pane) {
+            return;
+        }
+        let Some(tab) = self
+            .shown_tab()
+            .filter(|t| t.root.find(target).is_some_and(Node::is_pane))
+            .map(|t| t.id.clone())
+        else {
+            return;
+        };
+        let machine = machine_of(pane);
+        let Some(doc) = self.world.machine(machine).and_then(|m| m.shown()) else {
+            return;
+        };
+        let intent = match edge.side() {
+            None => Intent::swap_panes(doc, pane, target),
+            Some(side) => Intent::move_pane(doc, pane, target, side, fresh_id_on("s", machine)),
+        };
+        if let Some(intent) = intent
+            && self.edit(intent, fx)
+        {
+            self.view.focus(&tab, pane);
+        }
+    }
+
+    /// The dividers of the shown tab as drawn: none while it is zoomed.
+    pub fn dividers(&self) -> Vec<geometry::Divider> {
+        self.shown_tab()
+            .map(|tab| geometry::dividers(self.view.shown_root(tab), &self.geometry))
+            .unwrap_or_default()
     }
 
     /// Swaps the focused pane with its neighbor; focus stays on the same pane, now moved.
@@ -619,6 +777,11 @@ impl Model {
             motion => fx.push(command(TerminalCommand::CopyMove(motion))),
         }
     }
+}
+
+/// Whether a node's size is already `size` (no size is a weight of 1).
+fn same_size(now: Option<Size>, size: Size) -> bool {
+    now == Some(size) || (now.is_none() && size == Size::Weight(1.0))
 }
 
 /// `by` places from `at` in `order`, wrapping. From outside the order (`at` is `None`), next is

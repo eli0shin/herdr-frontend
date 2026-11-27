@@ -274,6 +274,44 @@ fn collapse(node: &mut Node) {
     }
 }
 
+/// The side of a pane another one is dropped beside (herdr-app's `layout::Edge`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Side {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Side {
+    /// The axis a pane placed on this side shares with its target.
+    pub fn axis(self) -> Axis {
+        match self {
+            Side::Left | Side::Right => Axis::Row,
+            Side::Top | Side::Bottom => Axis::Column,
+        }
+    }
+
+    /// Before the target (left or above).
+    pub fn before(self) -> bool {
+        matches!(self, Side::Left | Side::Top)
+    }
+}
+
+impl Node {
+    /// Whether the panes at `id` may be dragged: the nearest node from `id` up that sets
+    /// `movable` decides, else they may (`app:src/window/pane_drag.rs` `inherited_movable`).
+    pub fn movable_at(&self, id: &str) -> bool {
+        self.path_to(id)
+            .and_then(|path| {
+                path.iter()
+                    .rev()
+                    .find_map(|id| self.find(id).and_then(Node::movable))
+            })
+            .unwrap_or(true)
+    }
+}
+
 /// Where a node sits: its parent's id and its index there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Slot {
@@ -463,6 +501,40 @@ impl Document {
         let tab = space.tabs.remove(from);
         let to = to.min(space.tabs.len());
         space.tabs.insert(to, tab);
+        true
+    }
+
+    /// Moves a pane beside another pane of its tab, on `side`: it leaves its place (its share
+    /// going back as a close's does) and splits the target, sized equally with it
+    /// (`app:src/model.rs` `move_pane`). `container` wraps the target when its parent runs the
+    /// other way. False when either isn't a pane, they're the same, or they're in different tabs.
+    pub fn move_pane(&mut self, pane: &str, target: &str, side: Side, container: String) -> bool {
+        if pane == target {
+            return false;
+        }
+        let Some(tab) = self.tab_of_mut(pane) else {
+            return false;
+        };
+        let is_pane = |root: &Node, id: &str| root.find(id).is_some_and(Node::is_pane);
+        if !is_pane(&tab.root, pane) || !is_pane(&tab.root, target) {
+            return false;
+        }
+        let mut root = tab.root.clone();
+        let Some(mut moved) = root.remove(pane) else {
+            return false;
+        };
+        moved.set_size(None);
+        if !root.split(target, side.axis(), moved, container) {
+            return false;
+        }
+        if side.before() {
+            root.swap(pane, target);
+        }
+        if root == tab.root {
+            // Dropped where it already was.
+            return false;
+        }
+        tab.root = root;
         true
     }
 
@@ -770,6 +842,86 @@ mod tests {
         assert!(d.move_tab("c2", 0));
         let tabs: Vec<_> = d.spaces[0].tabs.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(tabs, ["c2", "c1"]);
+    }
+
+    /// x1 | (x2 / x3)
+    fn three() -> Document {
+        let mut d = doc();
+        d.split("x1", Axis::Row, term("x2"), "unused".into());
+        d.split("x2", Axis::Column, term("x3"), "k1".into());
+        d
+    }
+
+    #[test]
+    fn a_moved_pane_lands_on_each_side_of_its_target_and_keeps_its_terminal() {
+        for side in [Side::Left, Side::Right, Side::Top, Side::Bottom] {
+            let mut d = three();
+            assert!(d.move_pane("x1", "x3", side, "k2".into()), "{side:?}");
+            let root = &d.tab("c1").unwrap().root;
+            assert_eq!(root.panes().len(), 3);
+            for pane in ["x1", "x2", "x3"] {
+                assert_eq!(d.address_of(pane), Some(format!("t-{pane}").as_str()));
+            }
+            let parent = root.parent_of("x1").unwrap();
+            assert_eq!(parent.axis(), Some(side.axis()), "{side:?}");
+            let ids = ids(parent.children());
+            let at = |id| ids.iter().position(|i| *i == id).unwrap();
+            assert_eq!(at("x1") < at("x3"), side.before(), "{side:?}");
+            assert_eq!(at("x1").abs_diff(at("x3")), 1);
+        }
+    }
+
+    #[test]
+    fn a_pane_moved_across_the_axis_splits_equally_not_with_its_old_size() {
+        for old in [Size::Weight(0.5), Size::Px(200.0)] {
+            let mut d = doc();
+            d.split("x1", Axis::Row, term("x2"), "unused".into());
+            let tab = d.tab_mut("c1").unwrap();
+            tab.root.find_mut("x2").unwrap().set_size(Some(old));
+            assert!(d.move_pane("x2", "x1", Side::Bottom, "k".into()));
+            let parent = d.tab("c1").unwrap().root.parent_of("x2").unwrap();
+            assert_eq!(parent.id, "k");
+            assert_eq!(ids(parent.children()), ["x1", "x2"]);
+            assert!(parent.children().iter().all(|c| c.size().is_none()));
+        }
+    }
+
+    #[test]
+    fn bad_moves_leave_the_document_alone() {
+        let mut d = three();
+        d.add_tab("s1", Tab::with_pane("c2", "", term("x9")), None);
+        let before = d.clone();
+        for (pane, target) in [
+            ("x1", "x1"),
+            ("x1", "gone"),
+            ("gone", "x1"),
+            ("x1", "x9"),
+            ("c1", "x1"),
+            ("x1", "k1"),
+        ] {
+            assert!(!d.move_pane(pane, target, Side::Right, "k2".into()));
+            assert_eq!(d, before, "{pane} → {target}");
+        }
+    }
+
+    #[test]
+    fn movable_comes_from_the_nearest_node_that_sets_it() {
+        let mut root = Node::container(
+            "root",
+            Axis::Row,
+            vec![Node::container("inner", Axis::Column, vec![term("p")])],
+        );
+        assert!(root.movable_at("p"));
+        root.extra.insert("movable".into(), json!(false));
+        assert!(!root.movable_at("p"));
+        root.find_mut("inner")
+            .unwrap()
+            .extra
+            .insert("movable".into(), json!(true));
+        assert!(root.movable_at("p"));
+        assert!(root.resizable());
+        root.extra.insert("resizable".into(), json!(false));
+        assert!(!root.resizable());
     }
 
     #[test]

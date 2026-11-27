@@ -35,12 +35,15 @@ pub use action::{
 };
 pub use control::{Call, CallId};
 pub use effect::{Effect, Effects, Focus, Level, Pick, Request, TerminalCommand, Toast, Token};
-pub use geometry::{Geometry, Rect};
+pub use geometry::{Divider, Geometry, Rect};
 pub use keys::{
     Binding, Chord, Context, ELI_KEYS, KEY_FILE, Key, KeyFileError, Keymap, Lookup, Mods, Press,
 };
 pub use mode::{Menu, MenuItem, MenuTarget, Mode, PopupState};
-pub use model::{EDITOR_LABEL, Event, Input, Model, RETRY, REVIEW_LABEL, TerminalUpdate};
+pub use model::{
+    EDITOR_LABEL, Event, Input, Model, NAVIGATE_TIMEOUT, NAVIGATOR_LABEL, RETRY, REVIEW_LABEL,
+    TerminalUpdate,
+};
 pub use names::TabPill;
 pub use view::{JumpList, View};
 pub use world::{Machine, MachineKey, SpaceExt, World, folder_name, tab_name};

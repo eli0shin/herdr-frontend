@@ -724,13 +724,8 @@ fn a_saved_remote_space_gone_by_the_time_its_machine_loads_leaves_the_screen_whe
 fn unbuilt_features_say_not_yet() {
     let mut core = agents();
     let mut m = connected(&mut core);
-    for (keys, action) in [
-        ("cmd-r", Action::Review),
-        ("alt-shift-l", Action::PaneResize(model::Direction::Right)),
-    ] {
-        let fx = press(&mut m, keys, true);
-        assert!(fx.list.contains(&Effect::NotYet(action)), "{keys}");
-    }
+    let fx = press(&mut m, "cmd-r", true);
+    assert!(fx.list.contains(&Effect::NotYet(Action::Review)));
     for action in [
         Action::Peek("a2".into()),
         Action::FoldSubagents("a2".into()),
@@ -738,11 +733,6 @@ fn unbuilt_features_say_not_yet() {
         Action::OpenLink {
             pane: "p1".into(),
             link: "x.rs:3".into(),
-        },
-        Action::RearrangePane {
-            pane: "p1".into(),
-            target: "p2".into(),
-            edge: model::Edge::Center,
         },
     ] {
         let fx = m.step(m.now(), action.clone());

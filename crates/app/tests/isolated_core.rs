@@ -259,3 +259,206 @@ fn a_parser_behind_the_output_holds_the_core_to_the_credit_window() {
     });
     drop(rt);
 }
+
+fn read_doc(conn: &Connection) -> (serde_json::Value, u64) {
+    let read = conn
+        .call(DocGet {
+            name: "herdr-app".into(),
+            ..Default::default()
+        })
+        .wait()
+        .expect("doc.get");
+    (read.value, read.version)
+}
+
+fn write_doc(conn: &Connection, value: serde_json::Value) -> u64 {
+    let (_, version) = read_doc(conn);
+    conn.call(DocSet {
+        name: "herdr-app".into(),
+        value,
+        version,
+        ..Default::default()
+    })
+    .wait()
+    .expect("doc.set")
+    .version
+}
+
+fn press(rt: &mut Runtime<State>, key: Key, mods: Mods) {
+    rt.key(KeyEvent { key, mods });
+    rt.frame(1.0 / 60.0);
+}
+
+/// Splits made here go into the core's `herdr-app` document as Herdr app writes them: the new
+/// pane beside the focused one with half its share, its terminal started labeled for the space
+/// and tab, a split across the axis wrapped in a container of its own; and a keyboard resize
+/// writes the two sizes. The app then draws what it wrote.
+#[test]
+fn a_split_made_here_shows_in_the_document_as_herdr_app_writes_it() {
+    let Some(core) = IsolatedCore::new() else {
+        return;
+    };
+    let conn = Connection::open(&core.transport(), &ConnectOptions::default()).expect("connect");
+    let a = run(&conn, &core, "printf 'first\\n'; exec cat", None);
+    write_doc(
+        &conn,
+        json!({"spaces": [{
+            "id": "sp-1", "name": "isolated", "folder": core.folder().display().to_string(),
+            "tabs": [tab("tb-1", "work", split("tb-1", "row", vec![pane("pn-a", &a)]))],
+        }]}),
+    );
+
+    let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
+    rt.state.connect(Box::new(Live::new(core.transport())));
+    until(&mut rt, "the pane to draw", |rt| {
+        text_of(rt, &a).contains("first")
+    });
+
+    // Cmd+D: split right.
+    let cmd = Mods {
+        cmd: true,
+        ..Default::default()
+    };
+    press(&mut rt, Key::Text("d".into()), cmd);
+    let mut doc = json!(null);
+    until(&mut rt, "the split to reach the document", |_| {
+        doc = read_doc(&conn).0;
+        doc["spaces"][0]["tabs"][0]["root"]["children"]
+            .as_array()
+            .is_some_and(|c| c.len() == 2)
+    });
+    let root = &doc["spaces"][0]["tabs"][0]["root"];
+    assert_eq!(root["id"], "tb-1");
+    assert_eq!(root["type"], "row");
+    let (first, new) = (&root["children"][0], &root["children"][1]);
+    assert_eq!(first["id"], "pn-a");
+    assert_eq!(first["size"], json!({"weight": 0.5}));
+    assert_eq!(new["type"], "block");
+    assert_eq!(new["size"], json!({"weight": 0.5}));
+    let new_pane = new["id"].as_str().expect("an id").to_owned();
+    assert!(new_pane.starts_with('p'), "{new_pane}");
+    let b = new["content"]["terminal"]
+        .as_str()
+        .expect("a terminal block")
+        .to_owned();
+    let r = record(&conn, &b);
+    assert!(r.is_live(), "the new pane's terminal runs");
+    assert_eq!(r.label("herdr.space"), Some("sp-1"));
+    assert_eq!(r.label("herdr.tab"), Some("tb-1"));
+    // The new pane is focused and draws its terminal.
+    assert_eq!(
+        rt.state.model.focused_pane().as_deref(),
+        Some(new_pane.as_str())
+    );
+    until(&mut rt, "the new pane to attach", |rt| {
+        rt.state.viewers.contains_key(&b)
+    });
+
+    // Cmd+Shift+D on it: split down, across the row, so the new pane is wrapped in a column.
+    let cmd_shift = Mods {
+        cmd: true,
+        shift: true,
+        ..Default::default()
+    };
+    press(&mut rt, Key::Text("d".into()), cmd_shift);
+    until(&mut rt, "the second split to reach the document", |_| {
+        doc = read_doc(&conn).0;
+        doc["spaces"][0]["tabs"][0]["root"]["children"][1]["type"] == "column"
+    });
+    let column = &doc["spaces"][0]["tabs"][0]["root"]["children"][1];
+    assert!(column["id"].as_str().is_some_and(|id| id.starts_with('s')));
+    assert_eq!(
+        column["size"],
+        json!({"weight": 0.5}),
+        "it took the slot's size"
+    );
+    let below = &column["children"];
+    // Inside the new column the two share equally: neither has a size of its own.
+    assert_eq!(below[0]["id"], new_pane.as_str());
+    assert_eq!(below[0].get("size"), None);
+    assert_eq!(below[1]["type"], "block");
+    assert_eq!(below[1].get("size"), None);
+
+    // Alt+Shift+H from the bottom pane: the row's divider moves 40 pt left, so pn-a shrinks.
+    let (_, before) = read_doc(&conn);
+    let alt_shift = Mods {
+        alt: true,
+        shift: true,
+        ..Default::default()
+    };
+    press(&mut rt, Key::Text("h".into()), alt_shift);
+    until(&mut rt, "the resize to reach the document", |_| {
+        let (value, version) = read_doc(&conn);
+        doc = value;
+        version > before
+    });
+    let root = &doc["spaces"][0]["tabs"][0]["root"];
+    let weight = |n: &serde_json::Value| n["size"]["weight"].as_f64().expect("a weight");
+    let (wa, wc) = (weight(&root["children"][0]), weight(&root["children"][1]));
+    assert!(wa < 0.5 && wc > 0.5, "{wa} {wc}");
+    assert!((wa + wc - 1.0).abs() < 1e-4);
+    // What the app shows is what it wrote: three panes.
+    assert_eq!(rt.state.shown_panes().len(), 3);
+    drop(rt);
+}
+
+/// Ctrl+L in a terminal whose Neovim label names a server nobody listens on: `nvim
+/// --remote-send` runs on the core and fails, so the label is cleared and the pane moves. Skips
+/// without `nvim` on the core's PATH.
+#[test]
+fn ctrl_l_past_a_dead_neovim_clears_its_label_and_moves_the_pane() {
+    let Some(core) = IsolatedCore::new() else {
+        return;
+    };
+    let conn = Connection::open(&core.transport(), &ConnectOptions::default()).expect("connect");
+    let probe = conn
+        .call(herdr_proto::methods::MachineExec {
+            argv: vec!["nvim".into(), "--version".into()],
+            timeout: Some(10.0),
+            ..Default::default()
+        })
+        .wait();
+    if !probe.is_ok_and(|r| r.code == Some(0)) {
+        eprintln!("skipped: no nvim on the isolated core's PATH");
+        return;
+    }
+    let a = run(&conn, &core, "exec cat", None);
+    let b = run(&conn, &core, "exec cat", None);
+    let dead = core.folder().join("no-such-nvim.sock");
+    conn.call(herdr_proto::methods::TerminalLabel {
+        terminal: a.clone(),
+        labels: [(model::EDITOR_LABEL.to_owned(), dead.display().to_string())].into(),
+        ..Default::default()
+    })
+    .wait()
+    .expect("terminal.label");
+    write_doc(
+        &conn,
+        json!({"spaces": [{
+            "id": "sp-1", "name": "isolated", "folder": core.folder().display().to_string(),
+            "tabs": [tab("tb-1", "work", split("tb-1", "row", vec![pane("pn-a", &a), pane("pn-b", &b)]))],
+        }]}),
+    );
+    let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
+    rt.state.connect(Box::new(Live::new(core.transport())));
+    until(&mut rt, "the label to show", |rt| {
+        rt.state
+            .model
+            .world()
+            .terminal(&a)
+            .is_some_and(|t| t.label(model::EDITOR_LABEL).is_some())
+            && rt.state.model.focused_pane().as_deref() == Some("pn-a")
+    });
+    let ctrl = Mods {
+        ctrl: true,
+        ..Default::default()
+    };
+    press(&mut rt, Key::Text("l".into()), ctrl);
+    until(&mut rt, "the pane to move", |rt| {
+        rt.state.model.focused_pane().as_deref() == Some("pn-b")
+    });
+    until(&mut rt, "the label to be cleared", |_| {
+        record(&conn, &a).label(model::EDITOR_LABEL).is_none()
+    });
+    drop(rt);
+}

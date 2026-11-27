@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use herdr_proto::methods::{DocGetResult, DocSetResult};
+use herdr_proto::methods::{DocGetResult, DocSetResult, ExecResult};
 use herdr_proto::{ErrorKind, RpcError, Status, StatusState, Terminal, TerminalState};
 use herdr_shared::{Document, Round};
 use model::{Chord, Effect, Event, Input, Model, Request, TerminalUpdate};
@@ -22,6 +22,16 @@ pub struct Core {
     pub down: Vec<Option<String>>,
     /// The app clock, in seconds, passed with every step.
     pub now: f64,
+    /// What every `machine.exec` answers.
+    pub exec: Result<ExecResult, RpcError>,
+}
+
+/// A `machine.exec` result that exited with `code`.
+pub fn exited(code: i32) -> Result<ExecResult, RpcError> {
+    Ok(ExecResult {
+        code: Some(code),
+        ..Default::default()
+    })
 }
 
 pub fn error(kind: ErrorKind, message: &str) -> RpcError {
@@ -48,6 +58,7 @@ impl Core {
             next: 100,
             down: Vec::new(),
             now: 0.0,
+            exec: exited(0),
         }
     }
 
@@ -99,6 +110,27 @@ impl Core {
             .collect()
     }
 
+    /// The `machine.exec` calls made, as their argv and machine.
+    pub fn execs(&self) -> Vec<(Vec<String>, Option<String>)> {
+        self.calls
+            .iter()
+            .filter_map(|c| match c {
+                Request::Exec(e) => Some((e.argv.clone(), e.on.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Another client (Neovim, say) sets a terminal's label; the event the core posts.
+    pub fn label_elsewhere(&mut self, address: &str, key: &str, value: &str) -> Event {
+        let t = self.terminals.get_mut(address).expect("a terminal");
+        t.labels.insert(key.into(), value.into());
+        Event::Terminals(TerminalUpdate {
+            terminals: vec![t.clone()],
+            ..Default::default()
+        })
+    }
+
     fn update(t: Terminal) -> Input {
         Event::Terminals(TerminalUpdate {
             terminals: vec![t],
@@ -147,6 +179,7 @@ impl Core {
                 }
                 None => (Err(error(ErrorKind::NotFound, "no such terminal")), None),
             },
+            Request::Exec(_) => unreachable!("answered with Event::Executed"),
             Request::Label(label) => match self.terminals.get_mut(&label.terminal) {
                 Some(t) => {
                     for (k, v) in &label.labels {
@@ -220,6 +253,14 @@ pub fn run_effects(m: &mut Model, core: &mut Core, effects: Vec<Effect>) -> Vec<
                             queue.push_back(Event::DocWritten { machine, result }.into());
                         }
                     }
+                }
+                Effect::Call {
+                    token,
+                    request: request @ Request::Exec(_),
+                } => {
+                    core.calls.push(request);
+                    let result = core.exec.clone();
+                    queue.push_back(Event::Executed { token, result }.into());
                 }
                 Effect::Call { token, request } => {
                     core.calls.push(request.clone());

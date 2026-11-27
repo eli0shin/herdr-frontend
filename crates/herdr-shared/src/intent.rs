@@ -10,7 +10,7 @@
 //! Ids are as the app holds them: qualified for their machine (`devbox/p…`), bare on this one.
 
 use crate::document::{Axis, Content, Document, Node, Size, Space, Tab};
-use crate::tree::Slot;
+use crate::tree::{Side, Slot};
 
 /// One edit to one machine's layout.
 #[derive(Clone, Debug, PartialEq)]
@@ -80,6 +80,17 @@ pub enum Intent {
         target: String,
         from: Slot,
     },
+    /// A pane dragged beside another pane of its tab (see [`Document::move_pane`]). As with
+    /// [`Intent::SwapPanes`], `from` is where it was: once it has moved, a replay does nothing.
+    /// Make it with [`Intent::move_pane`].
+    MovePane {
+        pane: String,
+        target: String,
+        side: Side,
+        /// The container made when the target's parent runs the other way.
+        container: String,
+        from: Slot,
+    },
     /// Split sizes (a divider drag). Nodes that are gone are skipped.
     Resize {
         sizes: Vec<(String, Size)>,
@@ -130,6 +141,24 @@ impl Intent {
         Some(Intent::SwapPanes {
             pane: pane.to_owned(),
             target: target.to_owned(),
+            from: doc.slot_of(pane)?,
+        })
+    }
+
+    /// Moves a pane beside another, as they are placed in `doc` now. `None` when `pane` isn't
+    /// there.
+    pub fn move_pane(
+        doc: &Document,
+        pane: &str,
+        target: &str,
+        side: Side,
+        container: String,
+    ) -> Option<Intent> {
+        Some(Intent::MovePane {
+            pane: pane.to_owned(),
+            target: target.to_owned(),
+            side,
+            container,
             from: doc.slot_of(pane)?,
         })
     }
@@ -223,6 +252,18 @@ impl Document {
             Intent::MoveTab { tab, to } => self.move_tab(tab, *to),
             Intent::SwapPanes { pane, target, from } => {
                 self.slot_of(pane).as_ref() == Some(from) && self.swap_panes(pane, target).is_ok()
+            }
+            Intent::MovePane {
+                pane,
+                target,
+                side,
+                container,
+                from,
+            } => {
+                // A container id already taken is never reused: two nodes would share it.
+                self.slot_of(pane).as_ref() == Some(from)
+                    && !self.has_id(container)
+                    && self.move_pane(pane, target, *side, container.clone())
             }
             Intent::Resize { sizes } => {
                 let mut any = false;
@@ -483,6 +524,26 @@ mod tests {
         assert!(d.apply(&Intent::RemovePane { pane: "x1".into() }));
         assert!(d.apply(&Intent::CloseTab { tab: "c1".into() }));
         assert!(d.spaces.is_empty());
+    }
+
+    #[test]
+    fn a_pane_move_replays_as_a_no_op_once_the_pane_has_moved() {
+        let mut d = doc();
+        d.apply(&split("x1", "x2", "t2"));
+        let move_down = Intent::move_pane(&d, "x2", "x1", Side::Bottom, "k".into()).unwrap();
+        assert!(d.apply(&move_down));
+        let root = &d.tab("c1").unwrap().root;
+        assert_eq!(root.find("k").unwrap().axis(), Some(Axis::Column));
+        let once = d.clone();
+        assert!(!d.apply(&move_down), "a replay doesn't move it again");
+        assert_eq!(d, once);
+        // A container id already in the document is never made twice.
+        let taken = Intent::move_pane(&d, "x2", "x1", Side::Left, "c1".into()).unwrap();
+        assert!(!d.apply(&taken));
+        assert_eq!(
+            Intent::move_pane(&d, "gone", "x1", Side::Left, "k9".into()),
+            None
+        );
     }
 
     #[test]

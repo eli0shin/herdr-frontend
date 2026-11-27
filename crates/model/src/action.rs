@@ -313,6 +313,20 @@ pub enum Edge {
     Bottom,
 }
 
+impl Edge {
+    /// The side a drop places the pane on; `None` for the center, which swaps.
+    pub fn side(self) -> Option<herdr_shared::Side> {
+        use herdr_shared::Side;
+        match self {
+            Edge::Center => None,
+            Edge::Left => Some(Side::Left),
+            Edge::Right => Some(Side::Right),
+            Edge::Top => Some(Side::Top),
+            Edge::Bottom => Some(Side::Bottom),
+        }
+    }
+}
+
 /// One thing a person asked for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -413,6 +427,13 @@ pub enum Action {
     ResizeSplit {
         sizes: Vec<(String, herdr_shared::Size)>,
     },
+    /// A divider drag of the shown tab: the divider after the `index`th shown child of
+    /// `container` follows the pointer to `at`, along the split's axis in the tab area.
+    DragDivider {
+        container: String,
+        index: usize,
+        at: f32,
+    },
 }
 
 /// Eli's `keys.json` names that mean a canonical one here.
@@ -494,7 +515,8 @@ impl Action {
             | Action::TerminalMenu(_)
             | Action::OpenLink { .. }
             | Action::RearrangePane { .. }
-            | Action::ResizeSplit { .. } => return None,
+            | Action::ResizeSplit { .. }
+            | Action::DragDivider { .. } => return None,
         })
     }
 
