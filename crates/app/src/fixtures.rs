@@ -468,3 +468,27 @@ pub fn busy_core() -> crate::link::Fake {
     }
     fake
 }
+
+/// The demo core whose machine answers the new-space picker's lookups: Neovim runs in
+/// `/code/herdr-frontend`, zoxide knows four folders, and the repos config lists two (one
+/// zoxide hasn't seen).
+pub fn folders_core() -> crate::link::Fake {
+    use crate::link::printed;
+    use model::folders::Lookup;
+    let fake = demo_core();
+    {
+        let mut core = fake.core();
+        if let Some(t1) = core.terminals.get_mut("t1") {
+            t1.cwd = "/code/herdr-frontend".into();
+        }
+        core.exec_by.insert(
+            Lookup::Zoxide.argv(),
+            printed("/code/herdr-frontend\n/code/herdr-core\n/code/dotfiles\n/code/repos\n"),
+        );
+        core.exec_by.insert(
+            Lookup::Repos.argv(),
+            printed(r#"{"repos": [{"path": "/code/dotfiles"}, {"path": "/code/ffs-mono-repo"}]}"#),
+        );
+    }
+    fake
+}

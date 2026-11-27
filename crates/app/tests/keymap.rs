@@ -233,11 +233,11 @@ fn unbuilt_actions_show_a_not_yet_toast_that_goes() {
 fn a_popup_the_window_cant_draw_yet_lets_go_of_the_keyboard() {
     let (mut rt, fake) = runtime();
     ch(&mut rt, "⌃", 'g');
-    ch(&mut rt, "", 'f');
+    ch(&mut rt, "", '/');
     assert_eq!(*rt.state.model.mode(), Mode::Normal);
     assert_eq!(
         toast_titles(&rt),
-        ["Not yet: popup.pr-finder isn't built yet"]
+        ["Not yet: popup.agent-machines isn't built yet"]
     );
     frames(&mut rt, 2);
     ch(&mut rt, "", 'a');

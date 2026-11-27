@@ -37,12 +37,24 @@ pub struct FakeCore {
     pub puts: Vec<(String, Vec<Upload>)>,
     /// Documents written (`doc.set` that took).
     pub writes: usize,
-    /// What `machine.exec` answers; `None`: it exits 0 with no output.
+    /// What `machine.exec` answers, but those in `exec_by`; `None`: it exits 0 with no output.
     pub exec: Option<Result<ExecResult, RpcError>>,
+    /// What a `machine.exec` of this argv answers.
+    pub exec_by: BTreeMap<Vec<String>, Result<ExecResult, RpcError>>,
     connected: bool,
     news: VecDeque<News>,
     writers: BTreeMap<String, terminal::Writer>,
     next: u32,
+}
+
+/// A `machine.exec` answer that exited 0 and printed `stdout`.
+pub fn printed(stdout: &str) -> Result<ExecResult, RpcError> {
+    use base64::Engine;
+    Ok(ExecResult {
+        code: Some(0),
+        stdout: base64::engine::general_purpose::STANDARD.encode(stdout),
+        ..Default::default()
+    })
 }
 
 /// A handle on a [`FakeCore`]: the app's link, and the test's view of it.
@@ -190,10 +202,16 @@ impl FakeCore {
     fn answer(&mut self, request: &Request) -> Result<Box<Terminal>, RpcError> {
         match request {
             Request::Run(run) => {
-                self.next += 1;
-                let address = match &run.on {
-                    Some(m) => format!("{m}/t{}", self.next),
-                    None => format!("t{}", self.next),
+                // A fresh address: never one a terminal already has.
+                let address = loop {
+                    self.next += 1;
+                    let address = match &run.on {
+                        Some(m) => format!("{m}/t{}", self.next),
+                        None => format!("t{}", self.next),
+                    };
+                    if !self.terminals.contains_key(&address) {
+                        break address;
+                    }
                 };
                 let t = Terminal {
                     address: address.clone(),
@@ -271,13 +289,18 @@ impl Link for Fake {
     fn call(&mut self, token: Token, request: Request) {
         let mut core = self.core();
         core.calls.push(request.clone());
-        if let Request::Exec(_) = request {
-            let result = core.exec.clone().unwrap_or_else(|| {
-                Ok(ExecResult {
-                    code: Some(0),
-                    ..Default::default()
-                })
-            });
+        if let Request::Exec(exec) = &request {
+            let result = core
+                .exec_by
+                .get(&exec.argv)
+                .or(core.exec.as_ref())
+                .cloned()
+                .unwrap_or_else(|| {
+                    Ok(ExecResult {
+                        code: Some(0),
+                        ..Default::default()
+                    })
+                });
             core.news
                 .push_back(News::Event(Event::Executed { token, result }));
             return;

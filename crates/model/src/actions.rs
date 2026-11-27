@@ -7,6 +7,7 @@ use herdr_shared::{Axis, Intent, Node, Size, fresh_id_on, labels, machine_of};
 
 use crate::action::{Action, CopyAction, Direction, Edge, Popup, PopupAction, Split};
 use crate::effect::{Effect, Effects, Level, Pick, Request, TerminalCommand, Toast};
+use crate::folders::{self, Lookup, NewSpace};
 use crate::geometry;
 use crate::mode::{
     self, Confirm, Confirmed, CopyState, JumpPopup, ListPopup, Menu, Mode, PopupState, Prompt,
@@ -184,7 +185,8 @@ impl Model {
                     self.open_popup(PopupState::Menu(menu));
                 }
             }
-            Action::SpaceNew(machine) => self.new_space(machine, fx),
+            Action::SpaceNew(machine) => self.new_space(machine, None, fx),
+            Action::NewSpaceIn { machine, folder } => self.new_space(machine, folder, fx),
             Action::ShowSpace(id) => {
                 let tab = self
                     .world
@@ -321,15 +323,18 @@ impl Model {
     }
 
     /// `space.new` from the window: a space on `machine` (this computer for `None`), shown at
-    /// once, in the focused terminal's folder when that is on the same machine, else home (on
-    /// another machine, its core's default).
-    fn new_space(&mut self, machine: Option<String>, fx: &mut Effects) {
+    /// once, in `folder`; with none, in the focused terminal's folder when that is on the same
+    /// machine, else home (on another machine, its core's default).
+    fn new_space(&mut self, machine: Option<String>, folder: Option<String>, fx: &mut Effects) {
         let m = machine.as_deref();
-        let folder = self
-            .focused_terminal()
-            .filter(|t| machine_of(t) == m)
-            .and_then(|t| self.world.folder_of(t))
-            .map(str::to_owned)
+        let folder = folder
+            .filter(|f| !f.is_empty())
+            .or_else(|| {
+                self.focused_terminal()
+                    .filter(|t| machine_of(t) == m)
+                    .and_then(|t| self.world.folder_of(t))
+                    .map(str::to_owned)
+            })
             .unwrap_or_else(|| {
                 if m.is_some() {
                     String::new()
@@ -777,9 +782,56 @@ impl Model {
                     .unwrap_or(0);
                 PopupState::List(list)
             }
+            Popup::NewSpace => {
+                self.look_for_folders(fx);
+                PopupState::List(ListPopup::new(popup))
+            }
             _ => PopupState::List(ListPopup::new(popup)),
         };
         self.open_popup(state);
+    }
+
+    /// The new-space picker opens: it offers the focused terminal's folder at once and asks the
+    /// shown space's machine for zoxide's folders, the repos config and (on another machine)
+    /// `$HOME`, each within [`folders::LOOKUP_TIMEOUT`] (`cfg/mods/new-space/main.js` `init`).
+    fn look_for_folders(&mut self, fx: &mut Effects) {
+        self.openings += 1;
+        let opening = self.openings;
+        let machine = self
+            .active_space()
+            .and_then(|s| machine_of(&s.id))
+            .map(str::to_owned);
+        let focused = self
+            .focused_terminal()
+            .and_then(|t| self.world.folder_of(t))
+            .map(str::to_owned);
+        let mut waiting = vec![Lookup::Zoxide, Lookup::Repos];
+        if machine.is_some() {
+            waiting.insert(0, Lookup::Home);
+        }
+        let home = machine.is_none().then(|| self.home.clone());
+        for &lookup in &waiting {
+            let exec = MachineExec {
+                argv: lookup.argv(),
+                on: machine.clone(),
+                timeout: Some(folders::LOOKUP_TIMEOUT),
+                ..Default::default()
+            };
+            self.call(
+                fx,
+                Request::Exec(exec),
+                Some(Pending::Folders { opening, lookup }),
+            );
+        }
+        self.new_space = Some(NewSpace {
+            opening,
+            machine,
+            focused,
+            home,
+            zoxide: None,
+            repos: None,
+            waiting,
+        });
     }
 
     /// A rename prompt for a tab, space or pane, its current name selected (an unnamed pane's is
@@ -832,6 +884,14 @@ impl Model {
                 list.query = query;
                 list.cursor = 0;
             }
+            // Enter while the folders are still coming with nothing matching waits, instead of
+            // falling back to the focused folder the filter left out.
+            (PopupState::List(list), PopupAction::Choose)
+                if list.popup == Popup::NewSpace
+                    && self
+                        .new_space
+                        .as_ref()
+                        .is_some_and(|ns| ns.loading() && ns.rows(&list.query).is_empty()) => {}
             (
                 PopupState::List(list),
                 pick @ (PopupAction::Choose | PopupAction::Toggle | PopupAction::CloseItem),

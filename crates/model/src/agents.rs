@@ -241,6 +241,27 @@ pub struct List {
     pub empty: Option<Empty>,
     /// The space colors to keep, when they differ from what was stored.
     pub space_colors: Option<BTreeMap<String, String>>,
+    /// Every listed agent, workers too, in layout order, as the PR finder shows it.
+    pub cards: Vec<Card>,
+}
+
+/// One listed agent as the PR finder shows it (`cfg/mods/pr-finder/main.js` `rows`, `row`): an
+/// Agents row without its status mark, jump label and time.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Card {
+    pub address: String,
+    /// Its tab's label, as the Agents list names tabs.
+    pub title: String,
+    pub status: Displayed,
+    pub focused: bool,
+    pub space_name: String,
+    /// The space's color as text (`#rrggbb`), when it has one.
+    pub space_color: Option<String>,
+    pub machine: Option<String>,
+    /// How many workers nest under it, for an orchestrator.
+    pub workers: usize,
+    /// Its Pi watch label, when it runs Pi.
+    pub watch: Option<Watch>,
 }
 
 /// An agent's last state change, as `eli-agents` keeps it (`{s, at}`).
@@ -386,6 +407,9 @@ pub struct Watch {
     pub orchestration: Option<String>,
     pub ticket: Option<String>,
     pub prs: Vec<String>,
+    /// Each PR in full (`owner/repo#N`), by place in `prs`; Pi sessions from before `refs` have
+    /// none.
+    pub refs: Vec<Option<String>>,
     pub sha: Option<String>,
     pub paused: bool,
 }
@@ -417,11 +441,18 @@ impl Watch {
                 .collect(),
             _ => Vec::new(),
         };
+        let refs = match obj.get("refs") {
+            Some(Value::Array(list)) => {
+                list.iter().map(|v| v.as_str().map(str::to_owned)).collect()
+            }
+            _ => Vec::new(),
+        };
         Some(Watch {
             role: string("role"),
             orchestration: string("orchestration").filter(|s| !s.is_empty()),
             ticket: string("ticket").filter(|s| !s.is_empty()),
             prs,
+            refs,
             sha: string("sha").filter(|s| !s.is_empty()),
             paused: truthy(obj.get("paused")),
         })
@@ -950,6 +981,21 @@ impl Tracker {
             }
         }
 
+        let cards: Vec<Card> = visible
+            .iter()
+            .map(|a| Card {
+                address: a.address.to_owned(),
+                title: label(a),
+                status: a.status,
+                focused: a.focused,
+                space_name: a.space_name.clone(),
+                space_color: space_color(a.space),
+                machine: machine_of(a.address).map(str::to_owned),
+                workers: workers.get(a.address).map_or(0, Vec::len),
+                watch: watches.get(a.address).cloned(),
+            })
+            .collect();
+
         let sub_row = |t: &Terminal, lines: Vec<Tree>, lead: Option<bool>| -> Row {
             let prog = program(t);
             let name = [t.name.as_deref(), t.template.as_deref()]
@@ -1110,6 +1156,7 @@ impl Tracker {
             wide_labels,
             empty,
             space_colors,
+            cards,
         }
     }
 }

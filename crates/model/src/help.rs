@@ -220,6 +220,11 @@ pub fn title(action: &Action) -> String {
         .into(),
         Action::Park(_) => "Send back to its parent".into(),
         Action::EditFile(_) => "Edit a settings file".into(),
+        Action::NewSpaceIn { machine: None, .. } => "New space in a folder".into(),
+        Action::NewSpaceIn {
+            machine: Some(machine),
+            ..
+        } => format!("New space on {machine} in a folder"),
         Action::SpaceNext => "Next space".into(),
         Action::SpacePrev => "Previous space".into(),
         Action::SpaceSelect(n) => format!("Space {n}"),

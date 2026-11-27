@@ -25,7 +25,7 @@ use crate::view::shell::{BAR, program_icon};
 use herdr_shared::Displayed;
 
 /// The list's live titles: a touch under white (`LIVE_TITLE`).
-const LIVE_TITLE: &str = "#F2F2F2";
+pub(crate) const LIVE_TITLE: &str = "#F2F2F2";
 /// A chip's fill: white at 5%.
 const CHIP: Color = Color {
     r: 1.0,
@@ -39,16 +39,16 @@ pub const SORT_MENU: (f32, f32) = (200.0, 140.0);
 const EDGE: f32 = 6.0;
 
 /// A color at `a` of 255 (the mods' `color + "B3"`).
-fn a(c: Color, a: u8) -> Color {
+pub(crate) fn a(c: Color, a: u8) -> Color {
     c.alpha(f32::from(a) / 255.0)
 }
 
-fn hex(value: &str) -> Color {
+pub(crate) fn hex(value: &str) -> Color {
     Rgba::parse(value).map_or(Color::WHITE, Rgba::color)
 }
 
 /// A status's color: working, blocked, done; anything else is dim.
-fn tone(c: &Chrome, status: Displayed) -> Color {
+pub(crate) fn tone(c: &Chrome, status: Displayed) -> Color {
     match status {
         Displayed::Working => c.working,
         Displayed::Blocked => c.blocked,
@@ -59,7 +59,7 @@ fn tone(c: &Chrome, status: Displayed) -> Color {
 
 /// An element key for an address or id: the `/` of a machine's (which separates key paths) as
 /// `:`.
-fn key(prefix: &str, id: &str) -> String {
+pub(crate) fn key(prefix: &str, id: &str) -> String {
     format!("{prefix}-{}", id.replace('/', ":"))
 }
 
@@ -144,7 +144,7 @@ fn sort_icon(sort: Sort) -> &'static Icon {
 }
 
 /// A one-color glyph, `size` points square, in `color` (`view::icons`).
-fn glyph(glyph: &'static Icon, size: f32, color: Color) -> El {
+pub(crate) fn glyph(glyph: &'static Icon, size: f32, color: Color) -> El {
     icon(glyph, size).color(color)
 }
 
@@ -257,7 +257,7 @@ fn mark(s: &State, status: Option<Displayed>, compact: bool) -> El {
 }
 
 /// An agent's program icon, `size` points, in its color or the foreground.
-fn program_pic(s: &State, address: &str, size: f32, cx: &Cx<State>) -> Option<El> {
+pub(crate) fn program_pic(s: &State, address: &str, size: f32, cx: &Cx<State>) -> Option<El> {
     let record = s.model.world().terminal(address)?;
     let program = s.config.programs.of_terminal(record);
     program_icon(s, &program, size, s.chrome.foreground, cx)
@@ -323,7 +323,7 @@ fn fold_control(s: &State, address: &str, fold: &Fold) -> El {
 }
 
 /// A small filled tag on line 2 (workers, PRs).
-fn chip(key: &str) -> El {
+pub(crate) fn chip(key: &str) -> El {
     row()
         .key(key)
         .h(17.0)

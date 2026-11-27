@@ -949,7 +949,7 @@ impl State {
     /// A list row was picked (`Effect::Pick`): run what it stands for. Enter already closed the
     /// list; Ctrl+D closes it here first.
     fn picked(&mut self, popup: Popup, how: model::Pick, cursor: usize, query: String) {
-        use crate::view::{palette, picker, settings, space_picker};
+        use crate::view::{palette, picker, pr_finder, settings, space_picker};
         let mut list = model::mode::ListPopup::new(popup);
         list.query = query.clone();
         let now = self.now;
@@ -962,6 +962,16 @@ impl State {
             (Popup::SpacePicker, model::Pick::Choose) => {
                 if let Some(row) = space_picker::rows(self, &list).into_iter().nth(cursor) {
                     self.step(now, Action::ShowSpace(row.id));
+                }
+            }
+            (Popup::NewSpace, model::Pick::Choose) => {
+                if let Some(action) = model::popups::new_space_pick(&self.model, &query, cursor) {
+                    self.step(now, action);
+                }
+            }
+            (Popup::PrFinder, model::Pick::Choose) => {
+                if let Some(row) = pr_finder::rows(self, &list).into_iter().nth(cursor) {
+                    self.step(now, Action::FocusAgent(row.card.address));
                 }
             }
             (Popup::Picker, how) => {
@@ -1389,6 +1399,12 @@ impl State {
             let (rows, order) = (self.list.rows_order.clone(), self.list.nav.clone());
             self.step(self.now, Event::AgentOrder { rows, order });
             // Publishing changes nothing the list reads.
+            self.agents_stale = false;
+        }
+        // The PR finder lists from it: its rows are counted again.
+        if changed && self.model.mode().popup().and_then(PopupState::popup) == Some(Popup::PrFinder)
+        {
+            self.relist(false);
             self.agents_stale = false;
         }
         // The times say minutes: build again in 30 s while the sidebar shows them.

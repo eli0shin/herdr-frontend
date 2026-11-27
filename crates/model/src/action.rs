@@ -442,6 +442,13 @@ pub enum Action {
     /// The terminal menu's "Send back to <parent>" (`terminal.park`): the pane goes, the terminal
     /// keeps running under its parent.
     Park(String),
+    /// The new-space folder picker's Enter (`space.new {machine, folder}`): a space on `machine`
+    /// (`None`: this computer) started in `folder`, or with none (nothing matched), where plain
+    /// [`Action::SpaceNew`] starts it.
+    NewSpaceIn {
+        machine: Option<String>,
+        folder: Option<String>,
+    },
     /// The settings dialog: a file of herdr-frontend's home opened in a new tab running
     /// `$EDITOR` (else `nvim`).
     EditFile(String),
@@ -544,6 +551,7 @@ impl Action {
             | Action::RightClicks { .. }
             | Action::Park(_)
             | Action::EditFile(_)
+            | Action::NewSpaceIn { .. }
             | Action::AgentJumpKey(_)
             | Action::ShowTab(_)
             | Action::RenameTabOf(_)

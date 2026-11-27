@@ -764,3 +764,63 @@ fn remote_agents_name_their_machine_and_hide_with_it() {
     assert_eq!(Sort::parse(Some("other")), Sort::Priority);
     assert_eq!(Sort::parse(None), Sort::Priority);
 }
+
+#[test]
+fn the_pr_finder_lists_agents_watching_a_pr_in_the_lists_order() {
+    use model::prs;
+    let mut core = orchestration();
+    let mut m = connected(&mut core);
+    let mut tracker = Tracker::default();
+    drive(&mut m, &mut core, Action::FocusAgent("t5".into()));
+    let list = build(&mut tracker, &m, &Opts::default());
+    let rows = |list: &List, q: &str| -> Vec<String> {
+        prs::rows(list, q)
+            .iter()
+            .map(|r| {
+                let labels: Vec<&str> = r.matched.iter().map(|p| p.label.as_str()).collect();
+                format!("{} {}", r.card.title, labels.join(","))
+            })
+            .collect()
+    };
+    // The orchestrator's row is listed; its folded worker comes after, in layout order. Agents
+    // watching nothing are left out.
+    assert_eq!(rows(&list, ""), ["orchestrate #12", "worker a #12,#13"]);
+    let first = &prs::rows(&list, "")[0];
+    assert_eq!(first.card.workers, 2);
+    assert_eq!(
+        first.card.watch.as_ref().and_then(|w| w.ticket.as_deref()),
+        Some("FCC-9")
+    );
+    assert_eq!(first.card.space_name, "main");
+    assert!(first.card.space_color.is_some());
+    // Without `refs`, `#N` is in the space's repo.
+    assert_eq!(first.matched[0].repo, "main");
+    assert_eq!(rows(&list, "13"), ["worker a #13"]);
+    assert_eq!(rows(&list, "main 12"), ["orchestrate #12", "worker a #12"]);
+    assert!(rows(&list, "nope").is_empty());
+
+    // `refs` name the repo in full: "fmr" finds ffs-mono-repo.
+    let watching = pi(
+        "t5",
+        Idle,
+        json!({"role": "worker", "orchestration": "gone", "prs": ["#2032", "tool#7"],
+               "refs": ["org/ffs-mono-repo#2032", "another/tool#7"]}),
+    );
+    update(&mut m, &mut core, vec![watching]);
+    let list = build(&mut tracker, &m, &Opts::default());
+    assert_eq!(rows(&list, "fmr"), ["stray #2032"]);
+    assert_eq!(rows(&list, "tool#7"), ["stray tool#7"]);
+    assert_eq!(
+        rows(&list, "")[1],
+        "stray #2032,tool#7",
+        "listed in the list's order: t5's row comes right after the orchestrator"
+    );
+
+    // Hidden machines leave the finder as they leave the list.
+    let hidden = Opts {
+        hidden: [String::new()].into(),
+        ..Opts::default()
+    };
+    let list = build(&mut tracker, &m, &hidden);
+    assert!(prs::rows(&list, "").is_empty());
+}

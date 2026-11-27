@@ -8,21 +8,25 @@
 //! | Command palette (`cmd-shift-p`) | [`palette`] | 620 wide, 60 from the top |
 //! | Tab and agent picker (`cmd-p`) | [`picker`] | 640 wide, 40 from the top |
 //! | Space picker (`ctrl-g s`) | [`space_picker`] | 520 wide, 40 from the top |
+//! | New-space folder picker (`cmd-n`) | [`new_space`] | 640 wide, 40 from the top |
+//! | PR finder (`ctrl-g f`) | [`pr_finder`] | 620 wide, 40 from the top |
 //! | Settings (`cmd-,`) | [`settings`] | dialog 520 wide |
 //! | Prompt, confirm | [`dialog`] | dialog 380 wide |
 //! | Menus | [`menu`] | at the pointer |
 //! | Sort menu | [`crate::view::sidebar`] | under the sidebar's sort button |
 //! | Agent-jump bar (`ctrl-;`) | [`jump`] | 360 × 32, 6 from the top (8 window points at least) |
 //!
-//! The new-space folder picker, the PR finder and the machine filter come with their tickets; until then they close at once with a "not yet".
+//! The machine filter comes with its ticket; until then it closes at once with a "not yet".
 
 use model::mode::{ListPopup, PopupState};
 use model::{Mode, Popup};
-use rune::El;
+use rune::{Cx, El};
 
 use crate::State;
 use crate::view::overlay;
-use crate::view::{dialog, help, jump, menu, palette, picker, settings, space_picker};
+use crate::view::{
+    dialog, help, jump, menu, new_space, palette, picker, pr_finder, settings, space_picker,
+};
 
 /// What a list popup lists now: per item whether (and as which row) the cursor can reach it,
 /// where the cursor starts for its query, and how many items show at once.
@@ -50,7 +54,13 @@ impl Listing {
 pub fn drawn(popup: Popup) -> bool {
     matches!(
         popup,
-        Popup::Help | Popup::Palette | Popup::Picker | Popup::SpacePicker | Popup::Settings
+        Popup::Help
+            | Popup::Palette
+            | Popup::Picker
+            | Popup::SpacePicker
+            | Popup::NewSpace
+            | Popup::PrFinder
+            | Popup::Settings
     )
 }
 
@@ -89,6 +99,8 @@ pub fn listing(s: &State, list: &ListPopup) -> Option<Listing> {
             let start = model::popups::space_cursor(&rows, &list.query);
             Listing::flat(rows.len(), start, space_picker::SHOWN)
         }
+        Popup::NewSpace => Listing::flat(new_space::rows(s, list).len(), 0, new_space::SHOWN),
+        Popup::PrFinder => Listing::flat(pr_finder::rows(s, list).len(), 0, pr_finder::SHOWN),
         Popup::Settings => {
             let n = settings::rows(s).len();
             Listing::flat(n, 0, n)
@@ -122,6 +134,8 @@ fn box_key(state: &PopupState) -> &'static str {
             Popup::Palette => "palette",
             Popup::Picker => "picker",
             Popup::SpacePicker => "space-picker",
+            Popup::NewSpace => "new-space",
+            Popup::PrFinder => "pr-finder",
             Popup::Settings => "settings",
             Popup::SortMenu => "sort-menu",
             _ => "popup",
@@ -134,7 +148,7 @@ fn box_key(state: &PopupState) -> &'static str {
 }
 
 /// The open popup in its frame, when the window draws it.
-pub fn view(s: &State) -> Option<El> {
+pub fn view(s: &State, cx: &Cx<State>) -> Option<El> {
     let Mode::Popup(state) = s.model.mode() else {
         return None;
     };
@@ -155,6 +169,8 @@ pub fn view(s: &State) -> Option<El> {
             Popup::Palette => (palette::PLACE, palette::view(s, list)),
             Popup::Picker => (picker::PLACE, picker::view(s, list)),
             Popup::SpacePicker => (space_picker::PLACE, space_picker::view(s, list)),
+            Popup::NewSpace => (new_space::PLACE, new_space::view(s, list)),
+            Popup::PrFinder => (pr_finder::PLACE, pr_finder::view(s, list, cx)),
             Popup::Settings => (settings::PLACE, settings::view(s, list)),
             _ => return None,
         },

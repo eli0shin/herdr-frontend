@@ -1,18 +1,19 @@
 # Popups: the palette, the pickers, dialogs and menus
 
-The popups of `research/feature-inventory.md` §3 and §10, as herdr-frontend draws them. They share
-one frame and one list, so the popups later tickets add (the new-space folder picker, the PR
-finder, the machine filter) are a row builder and a body, not a new overlay.
+The popups of `research/feature-inventory.md` §3, §10, §11 and §12, as herdr-frontend draws them.
+They share one frame and one list, so the popups later tickets add (the machine filter) are a row
+builder and a body, not a new overlay.
 
 ## How a popup works
 
 - **The model holds the keyboard** while one is open (`model::Mode::Popup`, `docs/keys.md`
   "Modes"). Its states: `List` (a query, a cursor, a row count), `Prompt`, `Confirm` and `Menu`
   (items that carry the actions they run). The keys each one reads are `model::mode::popup_key`.
-- **Rows are pure model code** (`crates/model/src/popups.rs`): what each popup lists, where its
-  cursor starts, and what picking a row runs (`PickerRow::action`, `PaletteRow::action`,
-  `MenuItem::actions`). The window passes only what it alone knows: the programs' names from
-  `programs.json`, for the picker.
+- **Rows are pure model code** (`crates/model/src/popups.rs`, `folders.rs`, `prs.rs`): what each
+  popup lists, where its cursor starts, and what picking a row runs (`PickerRow::action`,
+  `PaletteRow::action`, `MenuItem::actions`, `new_space_pick`). The window passes only what it
+  alone knows: the programs' names from `programs.json`, for the picker, and the Agents list it
+  builds (`model::agents::List`), for the PR finder.
 - **The window draws** (`crates/app/src/view/popup.rs`). After every step (a key, core news, a
   control call) and before a click picks a row, it counts an open list's rows again and tells
   the model (`Event::PopupRows`), so a tab or space made or closed elsewhere is reachable at once
@@ -22,6 +23,21 @@ finder, the machine filter) are a row builder and a body, not a new overlay.
   other effects, so a pick that opens a prompt keeps the prompt's focus.
 - **Every `Prompt`, `Confirm` and `Menu` draws the same way**, whichever feature opened it. A
   feature that needs a menu builds `model::Menu` items and opens it; it draws no overlay.
+
+## Where the folders and PRs come from
+
+- **Folders.** When the new-space picker opens, the model asks the shown space's machine
+  (`machine.exec`, `on` it when it's another machine, 5 s each) for `zoxide query -l`, the repos
+  config (`sh -c 'cat "${XDG_CONFIG_HOME:-$HOME/.config}/repos/config.json"'`) and, on another
+  machine, `sh -c 'printf %s "$HOME"'` for `~`. A lookup that fails or exits non-zero counts as
+  empty. Nothing is walked, so the focused folder shows at once and the rest when they answer.
+  The commands run in herdr-core's environment on that machine, as Ctrl+H/J/K/L's `nvim` does;
+  Herdr app runs local ones in its own process with the person's login environment.
+- **PRs.** From each Pi's `dotfiles.pi_pr_watch` label (trusted only while the terminal runs Pi):
+  its `prs` (display names like `#1901` or `tool#7`) and `refs` (`owner/repo#N`). A Pi from
+  before `refs` names its own repo's PRs `#N` only, so the space name's repo stands in. A
+  `merge of #N` sha watch counts as that PR when nothing else is watched. No `gh` call is made:
+  the mod reads labels only.
 
 ## The frame and the list
 
@@ -64,6 +80,18 @@ Herdr app's picker filters by substring and its palette by its own fuzzy score; 
 uses Eli's matching for both. The space picker also matches a space's git branch in Herdr app;
 herdr-frontend reads no branches yet.
 
+The new-space picker and the PR finder keep their mods' own matching:
+
+- **Folders** (`crates/model/src/folders.rs`, a port of `cfg/mods/new-space/folders.js`): every
+  term must match the folder as shown (`~` for home), its letters in order. A term in the last
+  segment beats one elsewhere, a segment start beats mid-word, shorter names win, ties keep the
+  gathered order. A typed `/…`, `~` or `~/…` path is offered first, tagged "path".
+- **PRs** (`crates/model/src/prs.rs`, a port of `cfg/mods/pr-finder/match.js`): terms split on
+  whitespace and `#`, and every term must match one PR. A number matches the PR's number (exact,
+  then a prefix, then inside it); a word matches the repo (its name exact, then its start, then
+  anywhere in `owner/repo`, then its letters in order: "fmr" finds ffs-mono-repo). Rows rank by
+  their best PR and keep the PRs that matched; ties keep the Agents list's order.
+
 ## The popups
 
 | Popup | Keys | Size | Rows | Enter |
@@ -71,6 +99,8 @@ herdr-frontend reads no branches yet.
 | Command palette | `cmd-shift-p` | 620 wide, 60 from the top, ≤ 0.85 | Empty: up to 5 recent commands, then every group (Tab, Pane, Space, Layout, Terminal, Agent, Window, App), each with its first key. Typed: matches, best first, recent first among equals, each with its group. 10 show; ↑/↓ stop at the ends; Page Up/Down move 10. | Runs it (`Action::FromPalette`), remembered among the recent commands in the saved view. A command that needs a name asks in the prompt. |
 | Tab and agent picker | `cmd-p` | 640 wide, 40 from the top, ≤ 0.8 | Spaces with an agent first (one that needs you first), each under its avatar (first emoji or letter, in the space's color, as the sidebar keeps it) and its tabs: status glyph, name (semibold when shown), "needs you" / "finished", the agents' programs and "+N" sub-agents. Then "earlier: N quiet spaces ▾", then "new tab", "new space" and "new space on <machine>" per connected machine. 10 show. | Shows the tab; makes a tab or space. "earlier" unfolds and stays open. Ctrl+D closes the selected tab. |
 | Space picker | `ctrl-g s` | 520 wide, 40 from the top, ≤ 0.6 | Number (1-9), status glyph, name (semibold when shown), machine when remote, "N tabs". Opens on the shown space, and goes back to it when the field empties. 12 show, with "↑ N more" / "↓ N more". | Shows the space, on its first terminal tab when its selected tab is an agent's or the review's. |
+| New space in a folder | `cmd-n`, `ctrl-g ctrl-s` | 640 wide, 40 from the top, ≤ 0.6; "New space" or "New space on <machine>" | The focused terminal's folder ("here"), then `zoxide query -l` in frecency order, then the `repos` config's paths zoxide hasn't seen ("repo"). Each row: the folder's name (semibold), its parent (dim, `~` for home) and its tag. 12 show, with "↓ N more"; "Loading folders…" until the lookups answer. | Makes a space there and shows it (`space.new {machine, folder}`). With nothing matching, where plain `space.new` starts; while loading with nothing matching, Enter waits. |
+| PR finder | `ctrl-g f` | 620 wide, 40 from the top, ≤ 0.6; "Find a PR" | Agents watching a PR, in the Agents list's order, minus hidden machines. Each reads like an Agents row without status, jump label or time: icon, title, the space in its color, the ticket and "N workers" for an orchestrator, up to 3 matched PR chips and "+N", the machine; a live agent keeps its status edge. 9 show, with "↓ N more". Empty: "No agent is watching a PR" / "No agent watches a PR like that". | Focuses that agent (a click too). |
 | Prompt | `f2`, `ctrl-g r`, `shift-f2`, the terminal menu's Rename | 380 wide dialog | "Rename tab" / "Rename space" / "Rename pane", a "Name" field holding the name, selected, and a hint ("empty: its number" / "empty: named after its folder" / "empty: unnamed"), Cancel and Save. A second rename closes it. | Saves the trimmed name; empty goes back to the automatic one (a pane: no name). |
 | Confirm | `ctrl-g x`, closing a space's last tab | 380 wide dialog | "Close space?", "<name> — N tabs, M terminals", Cancel and Confirm. | Closes the space and ends its terminals. |
 | Tab menu | right-click a tab | 200 wide menu | Rename, New tab, Close, each with its icon and key. | Runs the item. |
@@ -109,11 +139,18 @@ the name only in the rename prompt, as its starting value.
 ## Scenes
 
 `just snap <scene>`: `shell-palette`, `shell-palette-typed`, `shell-picker`,
-`shell-picker-earlier`, `shell-space-picker`, `shell-space-picker-typed`, `shell-prompt`,
+`shell-picker-earlier`, `shell-space-picker`, `shell-space-picker-typed`, `shell-new-space`,
+`shell-new-space-typed`, `shell-pr-finder`, `shell-pr-finder-typed`, `shell-prompt`,
 `shell-confirm`, `shell-tab-menu`, `shell-terminal-menu`, `shell-settings`, `shell-keys-help`.
 The picker scenes run on `fixtures::busy_core`: agents in other spaces, one that needs you, a
-working one with a sub-agent, and a quiet space.
+working one with a sub-agent, and a quiet space. The new-space scenes run on
+`fixtures::folders_core`, whose machine answers the folder lookups; the PR finder's on
+`fixtures::agents_core`, where a Pi orchestrator and its worker watch PRs.
 
 ![the picker](images/shell-picker.png)
 
 ![the terminal menu](images/shell-terminal-menu.png)
+
+![the new-space folder picker](images/shell-new-space.png)
+
+![the PR finder](images/shell-pr-finder.png)

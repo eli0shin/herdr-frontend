@@ -11,6 +11,7 @@ use herdr_shared::{Displayed, Space, Tab, labels, machine_of};
 
 use crate::action::{Action, AppCommand, Direction, Popup, Split, TerminalAction};
 use crate::filter;
+use crate::folders::Folder;
 use crate::mode::{Menu, MenuIcon, MenuItem, MenuTarget};
 use crate::model::Model;
 use crate::world::tab_name;
@@ -114,6 +115,26 @@ pub fn terminal_tab(m: &Model, space: &Space) -> Option<String> {
         .iter()
         .find(|t| !m.is_hidden_tab(t))
         .map(|t| t.id.clone())
+}
+
+// ---- The new-space folder picker (`cmd-n`, `cfg/mods/new-space`) -------------------------------
+
+/// The folder picker's rows for `query` ([`crate::folders::NewSpace::rows`]): a typed path first,
+/// then the folders it matches, best first.
+pub fn new_space_rows(m: &Model, query: &str) -> Vec<Folder> {
+    m.folder_picker()
+        .map(|ns| ns.rows(query))
+        .unwrap_or_default()
+}
+
+/// What Enter on row `cursor` runs: a space on the picker's machine in that folder; with no such
+/// row (nothing matched), where plain `space.new` would start it (`new-space/main.js` `go`).
+pub fn new_space_pick(m: &Model, query: &str, cursor: usize) -> Option<Action> {
+    let ns = m.folder_picker()?;
+    Some(Action::NewSpaceIn {
+        machine: ns.machine.clone(),
+        folder: ns.rows(query).into_iter().nth(cursor).map(|f| f.path),
+    })
 }
 
 // ---- The tab and agent picker (`cmd-p`, the shipped `picker`) ---------------------------------

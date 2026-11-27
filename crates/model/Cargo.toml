@@ -11,3 +11,7 @@ herdr-proto = { path = "../herdr-proto" }
 herdr-shared = { path = "../herdr-shared" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+
+[dev-dependencies]
+# Test cores answer `machine.exec` with base64 output, as the core does.
+base64 = "0.22.1"

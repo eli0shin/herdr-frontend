@@ -3,7 +3,7 @@
 //! where the keyboard goes, and what picking runs on the fake core.
 
 use herdr_frontend::config::settings::Settings;
-use herdr_frontend::fixtures::busy_core;
+use herdr_frontend::fixtures::{agents_core, busy_core, folders_core};
 use herdr_frontend::link::Fake;
 use herdr_frontend::{SIZE, State, app};
 use model::mode::{ListPopup, PopupState};
@@ -11,7 +11,10 @@ use model::{Mode, Popup, Request};
 use rune::{ElementInfo, Env, Key, KeyEvent, Mods, Runtime};
 
 fn runtime() -> (Runtime<State>, Fake) {
-    let fake = busy_core();
+    runtime_on(busy_core())
+}
+
+fn runtime_on(fake: Fake) -> (Runtime<State>, Fake) {
     let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
     rt.state.with_settings(Settings::fixture());
     rt.state.connect(Box::new(fake.clone()));
@@ -509,4 +512,144 @@ fn the_terminal_menus_rename_asks_for_the_panes_name() {
     let doc = herdr_shared::Document::from_value(doc).unwrap();
     let pane = doc.tab_of("pn-1").unwrap().root.find("pn-1").unwrap();
     assert_eq!(pane.title(), Some("server"));
+}
+
+#[test]
+fn the_folder_picker_lists_where_you_are_then_zoxide_then_repos_and_makes_the_space() {
+    let (mut rt, fake) = runtime_on(folders_core());
+    ch(&mut rt, "⌘", 'n');
+    frames(&mut rt, 2);
+    assert_eq!(list(&rt).popup, Popup::NewSpace);
+    let picker = element(&rt, "new-space").expect("the folder picker");
+    assert_eq!(picker.rect[2], 640.0);
+    assert_eq!(picker.rect[1], 40.0, "40 from the top");
+    assert_eq!(focused(&rt).as_deref(), Some("popup-filter"));
+    assert_eq!(text_of(&rt, "new-space-title"), "New space");
+    assert!(
+        element(&rt, "folders-loading").is_none(),
+        "the lookups answered"
+    );
+    let names: Vec<String> = (0..5)
+        .map(|i| text_of(&rt, &format!("folder-name-{i}")))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "herdr-frontend",
+            "herdr-core",
+            "dotfiles",
+            "repos",
+            "ffs-mono-repo"
+        ]
+    );
+    assert!(element(&rt, "folder-name-5").is_none(), "each folder once");
+    assert_eq!(text_of(&rt, "folder-parent-0"), "/code");
+    assert_eq!(text_of(&rt, "folder-tag-0"), "here");
+    assert!(
+        element(&rt, "folder-tag-1").is_none(),
+        "zoxide's have no tag"
+    );
+    assert_eq!(text_of(&rt, "folder-tag-4"), "repo");
+    assert_eq!(list(&rt).rows, 5);
+
+    type_text(&mut rt, "fmr");
+    assert_eq!(list(&rt).rows, 1);
+    assert_eq!(text_of(&rt, "folder-name-0"), "ffs-mono-repo");
+    press(&mut rt, "", Key::Enter);
+    rt.state.settle();
+    frames(&mut rt, 2);
+    assert_eq!(*rt.state.model.mode(), Mode::Normal);
+    let run = runs(&fake).pop().expect("a terminal for the new space");
+    assert_eq!(run.cwd.as_deref(), Some("/code/ffs-mono-repo"));
+    let shown = rt.state.model.active_space().expect("the new space shows");
+    assert_eq!(shown.folder, "/code/ffs-mono-repo");
+}
+
+#[test]
+fn a_typed_path_leads_and_nothing_matching_says_where_enter_goes() {
+    let (mut rt, fake) = runtime_on(folders_core());
+    ch(&mut rt, "⌃", 'g');
+    ch(&mut rt, "⌃", 's');
+    frames(&mut rt, 2);
+    assert_eq!(list(&rt).popup, Popup::NewSpace);
+    type_text(&mut rt, "/code/new/");
+    assert_eq!(text_of(&rt, "folder-name-0"), "new");
+    assert_eq!(text_of(&rt, "folder-tag-0"), "path");
+    press(&mut rt, "", Key::Escape);
+    assert_eq!(*rt.state.model.mode(), Mode::Normal);
+
+    ch(&mut rt, "⌘", 'n');
+    frames(&mut rt, 2);
+    type_text(&mut rt, "qqqq");
+    assert!(element(&rt, "folders-empty").is_some());
+    assert_eq!(
+        text_of(&rt, "folders-empty"),
+        "No folder matches; Enter starts where you are"
+    );
+    let before = runs(&fake).len();
+    press(&mut rt, "", Key::Enter);
+    rt.state.settle();
+    let run = runs(&fake).pop().unwrap();
+    assert_eq!(runs(&fake).len(), before + 1);
+    assert_eq!(
+        run.cwd.as_deref(),
+        Some("/code/herdr-frontend"),
+        "plain space.new: the focused terminal's folder"
+    );
+}
+
+#[test]
+fn the_pr_finder_lists_agents_watching_prs_filters_and_focuses_one() {
+    let (mut rt, _) = runtime_on(agents_core());
+    ch(&mut rt, "⌃", 'g');
+    ch(&mut rt, "", 'f');
+    frames(&mut rt, 2);
+    assert_eq!(list(&rt).popup, Popup::PrFinder);
+    let finder = element(&rt, "pr-finder").expect("the PR finder");
+    assert_eq!(finder.rect[2], 620.0);
+    assert_eq!(focused(&rt).as_deref(), Some("popup-filter"));
+    assert_eq!(text_of(&rt, "pr-finder-title"), "Find a PR");
+    // The orchestrator (#21) and its working worker (#22, #23); the done worker watches none.
+    assert_eq!(list(&rt).rows, 2);
+    assert!(element(&rt, "pf-t12").is_some());
+    assert!(element(&rt, "pf-t13").is_some());
+    assert!(element(&rt, "pf-t14").is_none());
+
+    type_text(&mut rt, "23");
+    assert_eq!(list(&rt).rows, 1);
+    assert!(element(&rt, "pf-t12").is_none());
+    press(&mut rt, "", Key::Enter);
+    rt.state.settle();
+    frames(&mut rt, 2);
+    assert_eq!(*rt.state.model.mode(), Mode::Normal);
+    assert_eq!(rt.state.model.focused_terminal(), Some("t13"));
+
+    // A click on a row focuses its agent too.
+    ch(&mut rt, "⌃", 'g');
+    ch(&mut rt, "", 'f');
+    frames(&mut rt, 2);
+    // The rows slide to their places (they are keyed by agent); click once they're there.
+    frames(&mut rt, 30);
+    click(&mut rt, "pf-t12");
+    rt.state.settle();
+    assert_eq!(*rt.state.model.mode(), Mode::Normal);
+    assert_eq!(rt.state.model.focused_terminal(), Some("t12"));
+
+    ch(&mut rt, "⌃", 'g');
+    ch(&mut rt, "", 'f');
+    frames(&mut rt, 2);
+    type_text(&mut rt, "999");
+    assert_eq!(text_of(&rt, "pr-empty"), "No agent watches a PR like that");
+}
+
+#[test]
+fn the_pr_finder_says_when_no_agent_watches_a_pr() {
+    let (mut rt, _) = runtime();
+    ch(&mut rt, "⌃", 'g');
+    ch(&mut rt, "", 'f');
+    frames(&mut rt, 2);
+    assert_eq!(list(&rt).popup, Popup::PrFinder);
+    assert_eq!(text_of(&rt, "pr-empty"), "No agent is watching a PR");
+    press(&mut rt, "", Key::Escape);
+    assert_eq!(*rt.state.model.mode(), Mode::Normal);
 }

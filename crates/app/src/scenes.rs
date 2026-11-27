@@ -41,6 +41,10 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-picker-earlier", shell_picker_earlier),
     ("shell-space-picker", shell_space_picker),
     ("shell-space-picker-typed", shell_space_picker_typed),
+    ("shell-new-space", shell_new_space),
+    ("shell-new-space-typed", shell_new_space_typed),
+    ("shell-pr-finder", shell_pr_finder),
+    ("shell-pr-finder-typed", shell_pr_finder_typed),
     ("shell-prompt", shell_prompt),
     ("shell-confirm", shell_confirm),
     ("shell-tab-menu", shell_tab_menu),
@@ -265,6 +269,35 @@ fn shell_space_picker_typed(s: &mut State) {
     busy(s);
     s.step(0.0, model::Action::Open(model::Popup::SpacePicker));
     type_in(s, "re");
+}
+
+/// The new-space folder picker on the demo core: where you are, then zoxide's folders, then
+/// the repos config's.
+fn shell_new_space(s: &mut State) {
+    s.connect(Box::new(fixtures::folders_core()));
+    s.settle();
+    s.step(0.0, model::Action::Open(model::Popup::NewSpace));
+    s.settle();
+}
+
+/// The folder picker with a path typed: it leads, tagged "path".
+fn shell_new_space_typed(s: &mut State) {
+    shell_new_space(s);
+    type_in(s, "/code/new");
+}
+
+/// The PR finder on the agents core: the orchestrator and its working worker watch PRs.
+fn shell_pr_finder(s: &mut State) {
+    s.connect(Box::new(fixtures::agents_core()));
+    s.settle();
+    s.step(0.0, model::Action::Open(model::Popup::PrFinder));
+    s.settle();
+}
+
+/// The PR finder with "22" typed: only the worker watching #22.
+fn shell_pr_finder_typed(s: &mut State) {
+    shell_pr_finder(s);
+    type_in(s, "22");
 }
 
 /// Renaming the `work` tab: its name in the field, selected.
