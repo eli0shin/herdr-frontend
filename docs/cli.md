@@ -95,8 +95,9 @@ herdr-app's shape (herdr-app `src/window.rs` `world`):
 - Spaces come in herdr-frontend's order: this machine's, then each other machine's by name.
   Another machine's ids carry its prefix (`devbox/sp9`, `devbox/t2`), as in herdr-app, and
   `machine` names it (`null` here).
-- `name` is what the window shows. An unnamed space is called after its first terminal's folder,
-  and an unnamed tab by its number.
+- `name` is what the window shows. An unnamed space is called after its first terminal's git
+  checkout (a worktree's own folder), else that terminal's folder, and an unnamed tab by its
+  number.
 - `active`: the shown space, and each space's selected tab. `settled`: the tab is put away.
 - `status` is the displayed agent status (`idle`, `working`, `done`, `blocked`), `null` for a
   terminal that isn't an agent. `app` is the program its status names. `name` is the core's

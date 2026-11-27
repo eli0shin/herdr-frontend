@@ -72,13 +72,21 @@ letters; shorter fields win; ties keep the list's order.
 
 | Popup | Name | Other fields |
 | --- | --- | --- |
-| Space picker | the space's name | its folder (`~` for home), its machine |
+| Space picker | the space's name | its branch, its folder (`~` for home), its machine |
 | Picker | the tab's name | its space's name, its agents' programs |
 | Palette | the command's title | its group, command name and keywords |
 
 Herdr app's picker filters by substring and its palette by its own fuzzy score; herdr-frontend
-uses Eli's matching for both. The space picker also matches a space's git branch in Herdr app;
-herdr-frontend reads no branches yet.
+uses Eli's matching for both.
+
+A space's branch is the one its selected tab's focused terminal is on. Each live terminal's folder
+is looked up with `git -C <folder> rev-parse --show-toplevel --abbrev-ref HEAD` through
+`machine.exec` on the terminal's machine, once per machine and folder (the home folder on this
+computer is never a checkout). The top it gives names an unnamed space (a worktree's own folder),
+and stands until git answers for a folder the terminal moved to. A folder is looked up again only
+when the answer could have changed, as Herdr app does: the terminal moved, a program in front of
+its shell or an agent's working turn ended (a checkout, a commit), or, in a repo while the window
+is in front, a minute went by (`crates/model/src/checkouts.rs`).
 
 The new-space picker and the PR finder keep their mods' own matching:
 

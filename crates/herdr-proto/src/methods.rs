@@ -600,17 +600,27 @@ pub struct ExecResult {
 impl ExecResult {
     /// What it wrote to stdout, as text (invalid UTF-8 replaced); empty when it isn't base64.
     pub fn stdout_text(&self) -> String {
-        use base64::Engine;
-        base64::engine::general_purpose::STANDARD
-            .decode(self.stdout.as_bytes())
-            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-            .unwrap_or_default()
+        text(&self.stdout)
+    }
+
+    /// What it wrote to stderr, as [`ExecResult::stdout_text`] reads stdout.
+    pub fn stderr_text(&self) -> String {
+        text(&self.stderr)
     }
 
     /// It ran to the end and exited 0.
     pub fn succeeded(&self) -> bool {
         self.code == Some(0) && !self.timed_out
     }
+}
+
+/// Base64 output as text (invalid UTF-8 replaced); empty when it isn't base64.
+fn text(encoded: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(encoded.as_bytes())
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .unwrap_or_default()
 }
 
 // Files.
@@ -783,6 +793,7 @@ mod tests {
         let r: ExecResult =
             serde_json::from_value(json!({"code": 0, "stdout": "L2EKL2IK"})).unwrap();
         assert_eq!(r.stdout_text(), "/a\n/b\n");
+        assert_eq!(r.stderr_text(), "");
         assert!(r.succeeded());
         let bad = ExecResult {
             stdout: "not base64!".into(),

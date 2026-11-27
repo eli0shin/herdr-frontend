@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, VecDeque};
 use herdr_proto::methods::{DocGetResult, DocSetResult, ExecResult, ReadResult};
 use herdr_proto::{ErrorKind, RpcError, Status, StatusState, Terminal, TerminalState};
 use herdr_shared::{Document, Round};
-use model::{Chord, Effect, Event, Input, Model, Request, TerminalUpdate};
+use model::{Chord, Effect, Event, Input, Model, Request, TerminalUpdate, Token};
 use serde_json::{Value, json};
 
 pub const HOME: &str = "/home/me";
@@ -30,6 +30,14 @@ pub struct Core {
     pub exec_held: bool,
     /// What `terminal.read` answers for each terminal.
     pub screens: BTreeMap<String, String>,
+    /// Git checkouts on each machine, as (machine, top, branch): a folder at or under `top` is
+    /// in it. Checkout lookups (`git -C <folder> rev-parse …`) are answered from these, as git
+    /// would, and kept out of `calls`.
+    pub repos: Vec<(Option<String>, String, Option<String>)>,
+    /// The checkout lookups asked, as their folder and machine.
+    pub git: Vec<(String, Option<String>)>,
+    /// Checkout lookups left unanswered, as their token, folder and machine.
+    pub git_held: Option<Vec<(Token, String, Option<String>)>>,
 }
 
 /// A `machine.exec` result that exited 0 and printed `stdout`.
@@ -78,7 +86,35 @@ impl Core {
             exec_by: BTreeMap::new(),
             exec_held: false,
             screens: BTreeMap::new(),
+            repos: Vec::new(),
+            git: Vec::new(),
+            git_held: None,
         }
+    }
+
+    /// What git answers about `cwd` on `machine`: its checkout's top and branch, else "not a git
+    /// repository".
+    pub fn git_answer(&self, cwd: &str, machine: Option<&str>) -> Result<ExecResult, RpcError> {
+        use base64::Engine;
+        let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+        let found = self.repos.iter().find(|(m, top, _)| {
+            m.as_deref() == machine
+                && (cwd == top || cwd.starts_with(&format!("{}/", top.trim_end_matches('/'))))
+        });
+        Ok(match found {
+            Some((_, top, branch)) => ExecResult {
+                code: Some(0),
+                stdout: b64(&format!("{top}\n{}\n", branch.as_deref().unwrap_or("HEAD"))),
+                ..Default::default()
+            },
+            None => ExecResult {
+                code: Some(128),
+                stderr: b64(
+                    "fatal: not a git repository (or any of the parent directories): .git\n",
+                ),
+                ..Default::default()
+            },
+        })
     }
 
     pub fn doc(&self, machine: Option<&str>) -> Document {
@@ -242,6 +278,21 @@ impl Core {
     }
 }
 
+/// The folder a checkout lookup asks about (`git -C <folder> rev-parse --show-toplevel …`).
+fn checkout_lookup(argv: &[String]) -> Option<String> {
+    match argv {
+        [git, c, cwd, rev_parse, top, ..]
+            if git == "git"
+                && c == "-C"
+                && rev_parse == "rev-parse"
+                && top == "--show-toplevel" =>
+        {
+            Some(cwd.clone())
+        }
+        _ => None,
+    }
+}
+
 /// Steps `input`, then answers every round and call it asks for until none is left. Returns
 /// every other effect, in order.
 pub fn drive(m: &mut Model, core: &mut Core, input: impl Into<Input>) -> Vec<Effect> {
@@ -302,10 +353,21 @@ pub fn run_effects(m: &mut Model, core: &mut Core, effects: Vec<Effect>) -> Vec<
                     token,
                     request: request @ Request::Exec(_),
                 } => {
-                    let argv = match &request {
-                        Request::Exec(e) => e.argv.clone(),
+                    let (argv, on) = match &request {
+                        Request::Exec(e) => (e.argv.clone(), e.on.clone()),
                         _ => unreachable!(),
                     };
+                    if let Some(cwd) = checkout_lookup(&argv) {
+                        core.git.push((cwd.clone(), on.clone()));
+                        match &mut core.git_held {
+                            Some(held) => held.push((token, cwd, on)),
+                            None => {
+                                let result = core.git_answer(&cwd, on.as_deref());
+                                queue.push_back(Event::Executed { token, result }.into());
+                            }
+                        }
+                        continue;
+                    }
                     core.calls.push(request);
                     if core.exec_held {
                         continue;

@@ -60,9 +60,18 @@ pub fn glyph(status: Option<Displayed>) -> &'static str {
     }
 }
 
-/// The spaces matching `query`, best first (`rankSpaces`): the name counts above the folder
-/// (`~` for home) and machine. A space's branch also counts in Herdr app; herdr-frontend reads
-/// no git branches yet, so it isn't matched.
+/// The branch of the terminal a space shows first: its selected tab's focused pane's
+/// ([`crate::checkouts`]; `app:src/window.rs` `publish`).
+pub fn space_branch(m: &Model, space: &Space) -> Option<String> {
+    let world = m.world();
+    let tab = m.view().selected_tab(world, space)?;
+    let pane = m.view().focused_in(tab)?;
+    let address = world.address_of(&pane)?;
+    world.checkout(address)?.branch.clone()
+}
+
+/// The spaces matching `query`, best first (`rankSpaces`): the name counts above the branch of
+/// the terminal it shows first, its folder (`~` for home) and its machine.
 pub fn space_rows(m: &Model, query: &str) -> Vec<SpaceRow> {
     let shown = m.active_space().map(|s| s.id.clone());
     let all: Vec<SpaceRow> = m
@@ -79,14 +88,20 @@ pub fn space_rows(m: &Model, query: &str) -> Vec<SpaceRow> {
             shown: shown.as_deref() == Some(space.id.as_str()),
         })
         .collect();
-    let folders: Vec<String> = m
+    let fields: Vec<(Option<String>, String)> = m
         .world()
         .spaces()
-        .map(|s| filter::display_path(&s.folder, m.home()))
+        .map(|s| {
+            (
+                space_branch(m, s),
+                filter::display_path(&s.folder, m.home()),
+            )
+        })
         .collect();
     let order = filter::rank(query, &(0..all.len()).collect::<Vec<_>>(), |&i| {
         let row = &all[i];
-        let others = [Some(folders[i].clone()), row.machine.clone()];
+        let (branch, folder) = &fields[i];
+        let others = [branch.clone(), Some(folder.clone()), row.machine.clone()];
         (row.name.clone(), others.into_iter().flatten().collect())
     });
     order.into_iter().map(|i| all[i].clone()).collect()

@@ -14,6 +14,8 @@
 //! - [`mode`]: who has the keyboard: normal, a prefix sequence, a popup, copy mode.
 //! - [`popups`]: what the pickers, the palette and the menus list, and what picking runs.
 //! - [`folders`]: the new-space picker's folders and their ranking.
+//! - [`checkouts`]: the git checkout and branch of each terminal's folder, for space names and
+//!   the space picker.
 //! - [`prs`]: the PR finder's rows: which agents watch which PRs.
 //! - [`machines`]: the machine filter's rows, each machine's line and what it needs, adding one.
 //! - [`filter`]: Eli's filter matching, which the other typed filters use.
@@ -30,6 +32,7 @@
 pub mod action;
 mod actions;
 pub mod agents;
+pub mod checkouts;
 pub mod control;
 pub mod effect;
 pub mod filter;
@@ -53,6 +56,7 @@ pub mod world;
 pub use action::{
     Action, AppCommand, CopyAction, Direction, Edge, Popup, PopupAction, Split, TerminalAction,
 };
+pub use checkouts::{Checkout, Front};
 pub use control::{Call, CallId};
 pub use copy_mode;
 pub use effect::{Effect, Effects, Focus, Level, Pick, Request, TerminalCommand, Toast, Token};

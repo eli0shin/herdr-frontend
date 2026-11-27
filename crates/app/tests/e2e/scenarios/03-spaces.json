@@ -1,7 +1,7 @@
 {
   "title": "Spaces",
   "inventory": "§3",
-  "notes": "Selecting by number, the Ctrl+G S space picker, renaming and closing.",
+  "notes": "Selecting by number, the Ctrl+G S space picker, an unnamed space named after its git checkout and found by its branch, renaming and closing.",
   "steps": [
     {"name": "select space 2", "do": "space.select", "args": {"index": 2}},
     {"name": "ctrl-3 selects space 3", "keys": "ctrl-3", "herdr-app": {"do": "space.select", "args": {"index": 3}}},
@@ -13,6 +13,20 @@
       "herdr-app": {"skip": "typing goes to herdr-frontend only"}
     },
     {"name": "close the picker", "keys": "escape", "herdr-app": {"do": "overlay.close"}},
+    {
+      "name": "api's shell goes into a checkout's subfolder",
+      "note": "api is unnamed: it keeps its checkout's name (api), not the subfolder's (app).",
+      "send": {"terminal": "{{t:a1}}", "text": "git init -q && git -c user.name=e2e -c user.email=e2e@example.invalid commit -q --allow-empty -m e2e && git checkout -q -b e2e-branch && mkdir -p crates/app && cd crates/app && pwd"},
+      "wait": 1.5
+    },
+    {"name": "show api", "note": "Its shell printed the subfolder it is in.", "do": "space.select", "args": {"index": 2}},
+    {"name": "space picker after the move", "keys": "ctrl-g s", "herdr-app": {"do": "mod.open", "args": {"name": "space-picker"}}},
+    {
+      "name": "the picker matches api's branch",
+      "type": "e2e-br",
+      "herdr-app": {"skip": "typing goes to herdr-frontend only"}
+    },
+    {"name": "close the picker again", "keys": "escape", "herdr-app": {"do": "overlay.close"}},
     {"name": "rename a space", "do": "space.rename", "args": {"id": "{{sp:api}}", "name": "api server"}},
     {
       "name": "ask before closing a space",

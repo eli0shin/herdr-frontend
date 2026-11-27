@@ -47,7 +47,7 @@ Every item passes, differs on purpose, or was fixed here, except four gaps filed
 tickets (043 is done since):
 
 - **040** dead-space sweep (§3, and its toast in §8);
-- **041** space names and branches from git checkouts (§3, and the space picker's branch matching);
+- **041** space names and branches from git checkouts (§3, and the space picker's branch matching), since built;
 - **042** kitty graphics (§17);
 - **043** the peek's find bar, terminal menu and Cmd-hover address underline (§15, §10): done.
 
@@ -101,8 +101,8 @@ cursor under popups (§1), `cmd-shift-l` (§1), the picker's spinner and the key
 | Item | Verdict | Evidence |
 | --- | --- | --- |
 | Space model: one machine each, order, rename to "" goes back, last tab closes the space | Pass | `model/control.rs::renames_write_trimmed_names_and_empty_goes_back_to_automatic`; `model/layout.rs::closing_a_spaces_last_tab_asks_and_confirming_closes_the_space`, `::remote_spaces_qualify_ids_and_launch_on_their_machine` |
-| An unnamed space is called after its first terminal's repo | Follow-up (041) | herdr-frontend uses the folder's basename; Herdr app uses the folder's git checkout top. So a shell in `repo/crates/app` reads "app" here and "repo" there. Needs git lookups over `machine.exec`, the same as the picker's branch matching below |
-| Space picker (`ctrl-g s`) | Pass | `app/popups.rs::the_space_picker_ranks_and_goes_to_a_terminal_tab`; `model/popups.rs::the_space_picker_numbers_spaces_and_ranks_names_above_folders`, `::going_to_a_space_shows_a_terminal_tab_when_its_selected_one_is_an_agents`; [`03-spaces--04-space-picker`](images/parity/03-spaces--04-space-picker.jpg). Matching a space's git branch is part of 041 |
+| An unnamed space is called after its first terminal's repo | Pass (041) | Its first terminal's git checkout top, looked up over `machine.exec` on its machine (`docs/popups.md`): `model/checkouts.rs::unnamed_spaces_are_called_after_their_first_terminals_checkout` and the rest of that file, `app/popups.rs::an_unnamed_space_shows_its_checkout_and_the_space_picker_finds_its_branch`; e2e `03-spaces` (a shell in `api/crates/app` reads "api" in both apps) |
+| Space picker (`ctrl-g s`) | Pass | `app/popups.rs::the_space_picker_ranks_and_goes_to_a_terminal_tab`; `model/popups.rs::the_space_picker_numbers_spaces_and_ranks_names_above_folders`, `::going_to_a_space_shows_a_terminal_tab_when_its_selected_one_is_an_agents`; [`03-spaces--04-space-picker`](images/parity/03-spaces--04-space-picker.jpg). A space's git branch matches too (041): `model/checkouts.rs::the_space_picker_matches_the_branch_of_the_terminal_a_space_shows_first`, e2e `03-spaces` |
 | Select by number `ctrl-1…9` | Pass | `model/layout.rs::spaces_step_and_select_by_number_in_order`; [`03-spaces--02-ctrl-3-selects-space-3`](images/parity/03-spaces--02-ctrl-3-selects-space-3.jpg) |
 | Next/previous space | Pass | same test; [`03-spaces--03-next-space`](images/parity/03-spaces--03-next-space.jpg) |
 | Rename space `shift-f2` | Pass | `model/layout.rs::renaming_a_space_writes_its_name_and_empty_goes_back_to_automatic` |
@@ -319,7 +319,7 @@ copy of each rule, and its default key file is Eli's.
 | `herdr-app-agent-watch.mjs` | `model/agents.rs::pi_workers_nest_under_their_orchestrator_while_it_or_a_worker_is_focused`, `src/agents.rs::pi_watch_labels_are_trusted_only_on_pi` |
 | `herdr-app-agent-colors.mjs` | `src/agents.rs` space-color tests |
 | `herdr-app-agent-machines.mjs` | `app/machines.rs::the_machine_filter_lists_machines_and_space_hides_one_in_the_shared_state`, `::a_hidden_machine_known_only_from_the_list_stays_until_shown`; `app/attention.rs::notes_about_agents_on_hidden_machines_close_at_once` |
-| `herdr-app-space-picker.mjs` | `src/filter.rs` (a port of `match.js`), `model/popups.rs::going_to_a_space_shows_a_terminal_tab_when_its_selected_one_is_an_agents`; branch matching waits on 041 |
+| `herdr-app-space-picker.mjs` | `src/filter.rs` (a port of `match.js`), `model/popups.rs::going_to_a_space_shows_a_terminal_tab_when_its_selected_one_is_an_agents`; branch matching: `model/checkouts.rs::the_space_picker_matches_the_branch_of_the_terminal_a_space_shows_first` |
 | `herdr-app-pr-finder.mjs` | `src/prs.rs` (a port, test for test) |
 | `herdr-app-new-space.mjs` | `src/folders.rs` (a port, test for test) |
 | `herdr-app-copy-mode.mjs` | `copy-mode/tests/motions.rs`, `app/copy_mode.rs`; herdr-frontend's copy mode is a superset of the mod's state machine |

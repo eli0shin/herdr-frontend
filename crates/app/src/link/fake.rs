@@ -43,6 +43,12 @@ pub struct FakeCore {
     pub exec: Option<Result<ExecResult, RpcError>>,
     /// What a `machine.exec` of this argv answers.
     pub exec_by: BTreeMap<Vec<String>, Result<ExecResult, RpcError>>,
+    /// Git checkouts, as (machine, top, branch): a folder at or under `top` is in one. Checkout
+    /// lookups (`git -C <folder> rev-parse …`) are answered from these, as git would, and kept
+    /// out of `calls`.
+    pub repos: Vec<(Option<String>, String, Option<String>)>,
+    /// The checkout lookups asked, as their folder and machine.
+    pub git: Vec<(String, Option<String>)>,
     /// The machines `machine.list` has, posted on every connection and after each change.
     pub machines: Vec<MachineView>,
     /// Every [`Link::machine`] call, in order.
@@ -63,6 +69,48 @@ pub fn printed(stdout: &str) -> Result<ExecResult, RpcError> {
         stdout: base64::engine::general_purpose::STANDARD.encode(stdout),
         ..Default::default()
     })
+}
+
+/// The folder a checkout lookup asks about (`git -C <folder> rev-parse --show-toplevel …`).
+fn checkout_lookup(argv: &[String]) -> Option<&str> {
+    match argv {
+        [git, c, cwd, rev_parse, top, ..]
+            if git == "git"
+                && c == "-C"
+                && rev_parse == "rev-parse"
+                && top == "--show-toplevel" =>
+        {
+            Some(cwd)
+        }
+        _ => None,
+    }
+}
+
+impl FakeCore {
+    /// What git answers about `cwd` on `machine`: its checkout's top and branch, else "not a git
+    /// repository".
+    fn git_answer(&self, cwd: &str, machine: Option<&str>) -> Result<ExecResult, RpcError> {
+        use base64::Engine;
+        let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+        let found = self.repos.iter().find(|(m, top, _)| {
+            m.as_deref() == machine
+                && (cwd == top || cwd.starts_with(&format!("{}/", top.trim_end_matches('/'))))
+        });
+        Ok(match found {
+            Some((_, top, branch)) => ExecResult {
+                code: Some(0),
+                stdout: b64(&format!("{top}\n{}\n", branch.as_deref().unwrap_or("HEAD"))),
+                ..Default::default()
+            },
+            None => ExecResult {
+                code: Some(128),
+                stderr: b64(
+                    "fatal: not a git repository (or any of the parent directories): .git\n",
+                ),
+                ..Default::default()
+            },
+        })
+    }
 }
 
 /// A handle on a [`FakeCore`]: the app's link, and the test's view of it.
@@ -369,6 +417,15 @@ impl Link for Fake {
 
     fn call(&mut self, token: Token, request: Request) {
         let mut core = self.core();
+        if let Request::Exec(exec) = &request
+            && let Some(cwd) = checkout_lookup(&exec.argv)
+        {
+            core.git.push((cwd.to_owned(), exec.on.clone()));
+            let result = core.git_answer(cwd, exec.on.as_deref());
+            core.news
+                .push_back(News::Event(Event::Executed { token, result }));
+            return;
+        }
         core.calls.push(request.clone());
         if let Request::Exec(exec) = &request {
             let result = core
