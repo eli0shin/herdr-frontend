@@ -95,11 +95,12 @@ It takes the release's `tag` and runs:
 
 - from `version.yml`'s `artifacts` job, right after a release is created. A release created with
   `GITHUB_TOKEN` starts no `release` or tag `push` workflow, so this call is the only trigger.
-  `version.yml` passes the signing secrets through (a called workflow gets none unless passed);
+  `version.yml` passes the signing secrets by name (a called workflow gets none unless passed);
 - by hand, for a release that needs its artifacts again (after setting the secrets, say):
-  Actions > release artifacts > Run workflow with the tag, or
-  `gh workflow run release-artifacts.yml -f tag=v<version>`. Uploads replace the release's
-  existing files.
+  Actions > release artifacts > Run workflow from `main` with the tag, or
+  `gh workflow run release-artifacts.yml -f tag=v<version>` (which runs from `main`, the default
+  branch). Uploads replace the release's existing files. A run from any other branch fails at the
+  `macos` job, which the signing environment only lets `main` start.
 
 Its `check` job, on Linux, checks that the release exists and that the tag's `package.json`,
 `Cargo.toml` and `Cargo.lock` carry the tag's version. Its `macos` job then runs
@@ -173,8 +174,8 @@ files only the tests use, and fails if a linked file is missing.
 ### Signing
 
 `scripts/release-macos` follows eli0shin/macparakeet's release (`publish_signed_artifact.sh` and
-`sign_notarize.sh`) and its secret names. These are repository secrets (Settings > Secrets and
-variables > Actions):
+`sign_notarize.sh`) and its secret names. As there, they're secrets of a GitHub environment,
+`signed-release` (Settings > Environments), not repository secrets:
 
 | Secret | What |
 | --- | --- |
@@ -184,6 +185,15 @@ variables > Actions):
 | `APPLE_TEAM_ID` | The 10-character team ID |
 | `NOTARY_APPLE_ID` | The Apple ID notarytool signs in with |
 | `NOTARY_APP_SPECIFIC_PASSWORD` | An app-specific password for that Apple ID |
+
+The environment's deployment branch policy allows only `main`, and the `macos` job names the
+environment (`environment: signed-release`), so only a run on `main` gets the secrets: the run
+`version.yml` starts after a push to `main`, or a manual run from `main`. A workflow on any other
+branch, such as one a worker pushes, can't read them, and a run of `release-artifacts.yml` from
+another branch fails before the job starts. Repository secrets, by contrast, reach a workflow on
+any branch of the repository. A called workflow only gets the secrets its caller passes by name,
+so `version.yml` still passes all six; GitHub gives the job that names the environment the
+environment's values, which take precedence over same-named repository secrets.
 
 - **All six set:** the .p12 is imported into a temporary keychain with a random password, which
   joins the keychain search list until the script exits, then is deleted (and the search list put
@@ -212,7 +222,8 @@ through Metal and CoreText.
 
 ### Setting the secrets
 
-`scripts/bootstrap-release-secrets` sets all six on eli0shin/herdr-frontend with `gh secret set`:
+`scripts/bootstrap-release-secrets` sets all six in eli0shin/herdr-frontend's `signed-release`
+environment:
 
 ```sh
 scripts/bootstrap-release-secrets              # export the identity from your login keychain
@@ -232,10 +243,16 @@ Developer ID Application certificate, and asks for:
 - **App-specific password**: account.apple.com (formerly appleid.apple.com) > Sign-In and Security >
   App-Specific Passwords. Revoking it there cuts off the release job.
 
-It shows what it's about to set and asks before setting anything. Everything stays in memory: it
-writes no file, and the values reach `gh` on stdin, never on a command line. It's safe to run again
-(a renewed certificate, a new app-specific password): it sets all six again. It doesn't check the
-Apple ID and password itself; the next release run does that first, in its first minute.
+It shows what it's about to set and asks before setting anything. Then it creates or updates the
+environment so only `main` can deploy to it: custom branch policies on
+(`gh api --method PUT repos/<repo>/environments/signed-release`), a `main` branch policy added if
+missing, and any other policy removed. Only then does it set the six with
+`gh secret set --env signed-release`. If same-named repository secrets exist, it lists the
+`gh secret delete` commands to remove them, since those would still reach any branch.
+Everything stays in memory: it writes no file, and the values reach `gh` on stdin, never on a
+command line. It's safe to run again (a renewed certificate, a new app-specific password): it puts
+the branch policy back to `main` only and sets all six again. It doesn't check the Apple ID and
+password itself; the next release run does that first, in its first minute.
 
 ### Checking it without the secrets
 
@@ -255,7 +272,8 @@ notarization and stapling, and `spctl`'s verdict.
 
 1. Run `scripts/bootstrap-release-secrets` once and pick the Developer ID Application identity
    macparakeet signs with; it's in your login keychain. Make an app-specific password for
-   herdr-frontend when it asks.
+   herdr-frontend when it asks. It creates the `signed-release` environment (main only) and puts
+   the secrets there.
 2. Merge the version PR. The release's artifacts job builds, notarizes and uploads the .dmg; its
    summary says whether it was notarized. A release made before the secrets were set can be
    redone with `gh workflow run release-artifacts.yml -f tag=v<version>`.

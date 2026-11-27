@@ -68,7 +68,9 @@ jobs:
     uses: ./.github/workflows/release-artifacts.yml
     with:
       tag: ${{ needs.version.outputs.tag }}
-    # Signing and notarization (docs/release.md "Signing"); without them the build is signed ad hoc.
+    # Signing and notarization (docs/release.md "Signing"). They're secrets of the signed-release
+    # environment, which the called workflow's macos job names and so receives; a called workflow
+    # still only gets the secrets its caller passes by name. Without them the build is signed ad hoc.
     secrets:
       DEVELOPMENT_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPMENT_ID_CERTIFICATE_BASE64 }}
       DEVELOPMENT_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPMENT_ID_CERTIFICATE_PASSWORD }}

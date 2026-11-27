@@ -11,6 +11,8 @@ on:
         description: The release's tag, such as v0.1.0.
         required: true
         type: string
+    # They live in the signed-release environment, which only main can deploy to; the macos job
+    # names it, so it gets the environment's values. The caller still passes each one by name.
     # Without them the build is signed ad hoc and the release notes say it isn't notarized.
     secrets:
       DEVELOPMENT_ID_CERTIFICATE_BASE64:
@@ -58,6 +60,9 @@ jobs:
   macos:
     needs: check
     runs-on: macos-26
+    # The signing secrets are this environment's. Its deployment branch policy allows only main,
+    # so a run from any other branch fails here instead of reaching them (docs/release.md "Signing").
+    environment: signed-release
     timeout-minutes: 120
     permissions:
       contents: write # uploading to the release and editing its notes
