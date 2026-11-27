@@ -26,6 +26,8 @@ Scope rules are in `AGENTS.md`.
 - **Features are Rust**, configured by files in herdr-frontend's home: `keys.json` (`docs/keys.md`),
   `settings`, and the theme. Eli's Herdr mods are specs, not code to port. There is no mod
   runtime.
+- **A herdr-core client, not a Herdr app integration.** Only herdr-core state is shared. Nothing
+  reads, writes, imports or syncs Herdr app's files; app preferences live in herdr-frontend's home.
 - **No OS notifications and no sounds.** Attention shows up in-app only.
 - **No collapsible sidebar sections.** Eli collapses them by accident; sub-agent folding stays.
 - **Window like Eli's Ghostty** (`window-decoration = false`): borderless, square corners, no

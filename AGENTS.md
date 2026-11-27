@@ -11,6 +11,11 @@ core: never break the shared layout documents, labels, or terminal state that He
 - Features are built in Rust, configured by files (keys, theme, settings). No JS mod runtime.
 - Parity target is Eli's own setup (`docs/research/feature-inventory.md`): his eli layout, arctic
   theme and Operator Mono font. Shipped-but-unused Herdr features are out of scope.
+- herdr-frontend is a client of herdr-core, not of Herdr app. Shared state is exactly what lives in
+  herdr-core (terminals, agents, labels, the per-machine layout document). Never read, write,
+  import from or sync with Herdr app's files (`~/.config/herdr-app`, its `shared.json`, its fonts,
+  its sockets). Everything else lives in herdr-frontend's own home. (The e2e harness may run Herdr
+  app with an isolated copy of a config, for side-by-side screenshots only.)
 - No native OS notifications and no sounds, ever. Attention shows in the app only (sidebar,
   markers, in-app toasts).
 - When you need "the latest" version of anything, look it up live without putting a version or
