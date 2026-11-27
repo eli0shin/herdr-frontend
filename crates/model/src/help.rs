@@ -91,6 +91,17 @@ pub fn filtered<'a>(rows: &'a [HelpRow], query: &str) -> Vec<&'a HelpRow> {
     rows.iter().filter(|r| r.matches(query)).collect()
 }
 
+/// The key a context menu shows beside an item that runs `action`: its first sequence in `global`
+/// (`cfg/mods/menu/main.js` `shortcut`). Herdr app lists a section's keys sorted, as the key file
+/// reads them, so `ctrl-g r` comes before `f2`.
+pub fn hint(keymap: &Keymap, action: &Action) -> Option<String> {
+    keymap
+        .bindings()
+        .iter()
+        .find(|b| b.context == Context::Global && b.action.as_ref() == Some(action))
+        .map(|b| sequence(&b.keys))
+}
+
 /// A sequence in Eli's syntax: `ctrl-g s`.
 pub fn sequence(keys: &[Chord]) -> String {
     keys.iter()
@@ -186,7 +197,8 @@ pub fn title(action: &Action) -> String {
         .into(),
         Action::CopyMode => "Copy mode".into(),
         Action::Review => "Review view / back".into(),
-        Action::TabNew => "New tab".into(),
+        Action::TabNew | Action::NewTabIn(_) => "New tab".into(),
+        Action::TabMenu(_) => "Tab menu".into(),
         Action::TabClose => "Close tab".into(),
         Action::TabNext => "Next tab / next agent on an agent's tab".into(),
         Action::TabPrev => "Previous tab / previous agent".into(),
@@ -246,6 +258,15 @@ mod tests {
         rows.iter()
             .find(|r| r.name == name && r.section == section)
             .unwrap_or_else(|| panic!("no row {name} {section:?}"))
+    }
+
+    #[test]
+    fn menu_hints_are_the_first_global_key() {
+        let keys = Keymap::eli();
+        assert_eq!(hint(&keys, &Action::TabRename).as_deref(), Some("ctrl-g r"));
+        assert_eq!(hint(&keys, &Action::TabNew).as_deref(), Some("cmd-t"));
+        assert_eq!(hint(&keys, &Action::TabClose).as_deref(), Some("cmd-w"));
+        assert_eq!(hint(&keys, &Action::RenameTabOf("tb1".into())), None);
     }
 
     #[test]
