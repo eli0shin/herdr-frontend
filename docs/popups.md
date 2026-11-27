@@ -32,7 +32,10 @@ finder, the machine filter) are a row builder and a body, not a new overlay.
 | Popup (pickers, palette) | centered across, `offset` from the top, at most a share of the window tall | nothing |
 | Menu | at the last right-click, kept inside the window | nothing |
 
-A press outside closes it (a right-click too); a press inside stays inside. The keyboard goes to
+A press outside closes it (a right-click too); a press inside stays inside. A right-click on a
+tab pill opens the tab menu (`Menu::tab`); one on a pane opens the terminal menu, unless its
+terminal takes right-clicks (`herdr.right-click=program`, Shift+right-click still opens it).
+Either opens where the right-click was. The keyboard goes to
 the popup's text field (`popup-filter`), or to the box itself when it has none (confirm, menus,
 settings). The field is one `TextEdit` in the state: a list's filter, or the prompt's name.
 
@@ -89,9 +92,6 @@ shown space when it is this computer's, else the first of this computer's spaces
 
 - The terminal menu's "Rename" says "not yet": pane names need a field in the shared layout
   document that herdr-shared doesn't model yet.
-- Right-clicks open the menus once the tab strip (ticket 021) and terminal mouse input (ticket
-  015) send `Action::TabMenu` and `Action::TerminalMenu`; the window already records where each
-  right-click was, so a menu opens there.
 - The picker's working spinner is a static ◐ glyph, as the space picker draws it.
 - The picker's space colors are assigned in space order, the way Herdr app picks a new space's
   color. Herdr app stores them in shared `space.colors`; the sidebar (ticket 023) will read the
