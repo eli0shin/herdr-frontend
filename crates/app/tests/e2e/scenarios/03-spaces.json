@@ -1,7 +1,7 @@
 {
   "title": "Spaces",
   "inventory": "§3",
-  "notes": "Selecting by number, the Ctrl+G S space picker, an unnamed space named after its git checkout and found by its branch, renaming and closing.",
+  "notes": "Selecting by number, the Ctrl+G S space picker, an unnamed space named after its git checkout and found by its branch, renaming and closing, and closing a space whose folder was deleted.",
   "steps": [
     {"name": "select space 2", "do": "space.select", "args": {"index": 2}},
     {"name": "ctrl-3 selects space 3", "keys": "ctrl-3", "herdr-app": {"do": "space.select", "args": {"index": 3}}},
@@ -35,6 +35,18 @@
       "herdr-app": {"skip": "space.close from a script fails instead of asking"}
     },
     {"name": "cancel", "keys": "escape", "herdr-app": {"skip": "no dialog open"}},
-    {"name": "close a space", "do": "space.close", "args": {"id": "{{sp:notes}}", "confirmed": true}}
+    {"name": "close a space", "do": "space.close", "args": {"id": "{{sp:notes}}", "confirmed": true}},
+    {
+      "name": "a worker's space",
+      "note": "An idle agent labeled for a space nobody knows becomes a space of its own, in the folder it runs in.",
+      "adopt": {"name": "stale", "space": "stale-space", "tab": "stale-tab", "status": "state=idle:app=pi"},
+      "wait": 1.0
+    },
+    {
+      "name": "its folder is deleted",
+      "note": "A shell elsewhere removes the folder, as gh pr merge --delete-branch would. Sweeps run every 30 s and a space must be found dead on two in a row, so stale-space closes 30 to 60 s after the folder goes, with the toast \"Closed space stale-space\" (gone again by the capture). An idle agent doesn't keep it.",
+      "send": {"terminal": "{{t:w1}}", "text": "rm -rf {{folder:stale-space}}"},
+      "wait": 75
+    }
   ]
 }

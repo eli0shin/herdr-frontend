@@ -16,6 +16,7 @@
 //! - [`folders`]: the new-space picker's folders and their ranking.
 //! - [`checkouts`]: the git checkout and branch of each terminal's folder, for space names and
 //!   the space picker.
+//! - [`dead_spaces`]: closing spaces whose folder was deleted.
 //! - [`prs`]: the PR finder's rows: which agents watch which PRs.
 //! - [`machines`]: the machine filter's rows, each machine's line and what it needs, adding one.
 //! - [`filter`]: Eli's filter matching, which the other typed filters use.
@@ -34,6 +35,7 @@ mod actions;
 pub mod agents;
 pub mod checkouts;
 pub mod control;
+pub mod dead_spaces;
 pub mod effect;
 pub mod filter;
 pub mod folders;

@@ -250,13 +250,14 @@ link_handlers: [nvim-links]    toast: eli-toast    preview: layouts/eli.svg
 - [ ] **[Eli] Close spaces whose folder was deleted** (`cfg/mods/navigator-status/dead-spaces.js`).
   - Why: `gh pr merge --delete-branch`, `git worktree remove` and `rm -rf` remove a worktree
     without telling Herdr.
-  - Every 30s, a space qualifies when it is local, not shown, every live terminal is a plain
-    shell (no agent, status report or foreground program), and its folder (home if none) and
-    every terminal's live cwd are gone.
+  - Every 30s, a space qualifies when it is local, not shown, has live terminals (by their
+    `herdr.space` label), none of them reports a working agent, and its folder (home if none)
+    and every live terminal's cwd are gone. Idle, done, blocked and unreported agents and
+    foreground programs such as Neovim don't keep it (closing it ends them).
   - It must qualify on two consecutive sweeps with the same folders, so it closes 30–60s after
     the folder goes, with an info toast "Closed space <name>". A failed check closes nothing.
-    Depends on `exec` (`sh -c 'test -d'`), terminals' `foreground.cwd`, `program.shell` and the
-    `herdr.space` label.
+    Depends on `exec` (`sh -c 'test -d'`), terminals' `foreground.cwd`, their status and the
+    `herdr.space` label. herdr-frontend: `docs/dead-spaces.md`.
 - [ ] **[External] `repos` integration.** `repos` creates spaces with `space.new {focus:false}`,
   selects and closes them, and matches spaces by the folder they were made in
   (`~/code/repos/src/workspace-manager/herdr-app-adapter.ts`). Plain `space.new` takes the

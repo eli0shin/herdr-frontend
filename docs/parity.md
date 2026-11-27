@@ -44,10 +44,10 @@ Differences that come from the harness, not from either app:
 ## Summary
 
 Every item passes, differs on purpose, or was fixed here, except four gaps filed as their own
-tickets (043 is done since):
+tickets, of which 040, 041 and 043 are done:
 
-- **040** dead-space sweep (§3, and its toast in §8);
-- **041** space names and branches from git checkouts (§3, and the space picker's branch matching), since built;
+- **040** dead-space sweep (§3, and its toast in §8): done (`docs/dead-spaces.md`);
+- **041** space names and branches from git checkouts (§3, and the space picker's branch matching): done;
 - **042** kitty graphics (§17);
 - **043** the peek's find bar, terminal menu and Cmd-hover address underline (§15, §10): done.
 
@@ -108,7 +108,7 @@ cursor under popups (§1), `cmd-shift-l` (§1), the picker's spinner and the key
 | Rename space `shift-f2` | Pass | `model/layout.rs::renaming_a_space_writes_its_name_and_empty_goes_back_to_automatic` |
 | Close space `ctrl-g x` asks first | Pass | `app/popups.rs::closing_a_space_asks_and_cancel_or_confirm_answers`; [`03-spaces--08-ask-before-closing-a-space`](images/parity/03-spaces--08-ask-before-closing-a-space.jpg) |
 | Space colors | Pass | `src/agents.rs` color tests; `model/agents.rs` rows; the picker's avatars ([`10-pickers--01-tab-picker`](images/parity/10-pickers--01-tab-picker.jpg)) |
-| Close spaces whose folder was deleted | Follow-up (040) | Not built. Nothing sweeps spaces whose folder is gone |
+| Close spaces whose folder was deleted | Pass | Built in 040 (`docs/dead-spaces.md`), with the mod's current rule: only a working agent keeps a space. `model/dead_spaces.rs` ports the mod's check case by case; the e2e scenario `03-spaces` deletes an adopted worker's folder and both apps close its space |
 | `repos` integration | Pass | `model/control.rs::a_new_space_without_focus_waits_behind_the_shown_one_and_answers_its_ids`; `ls` reports each space's folder |
 
 ## §4 Tabs
@@ -192,7 +192,7 @@ cursor under popups (§1), `cmd-shift-l` (§1), the picker's spinner and the key
 | Other toasts: Neovim navigation failed, copy mode without a terminal, terminal failed to start | Fixed | "Terminal failed to start" was missing: a terminal this window started that exits non-zero within 2 s now says so with its last lines (`model/layout.rs::a_terminal_started_here_that_fails_at_once_says_so_with_its_last_lines`, `src/closed.rs::a_quick_failing_exit_is_a_launch_failure`). The others: `model/layout.rs::nvim_that_cant_run_says_so_and_nothing_moves`, `model/modes.rs::copy_mode_needs_a_focused_terminal_and_ends_when_focus_leaves_it` |
 | What "Terminal failed to start" says | Intentional | "Exit code 127 · <its last lines>" on one line. Herdr app puts the lines below "Exit code 127", and `eli-toast` shows a body's first line only, so Eli's card reads just "Exit code 127". The program's own last words are what says why it failed |
 | Other toasts: edits moved to `<name>-edited`, layout needs missing mods, core update failed, `set-shared` misuse | Intentional | herdr-frontend has no layout or mod files, doesn't update herdr-core, and serves no `set-shared` |
-| Other toasts: dead space closed | Follow-up (040) | comes with the dead-space sweep (§3) |
+| Other toasts: dead space closed | Pass | "Closed space <name>", "Its folder no longer exists: <folder>": `model/dead_spaces.rs::a_space_whose_folder_was_deleted_closes_on_the_second_sweep` |
 
 ## §9 Machines
 
@@ -325,7 +325,7 @@ copy of each rule, and its default key file is Eli's.
 | `herdr-app-copy-mode.mjs` | `copy-mode/tests/motions.rs`, `app/copy_mode.rs`; herdr-frontend's copy mode is a superset of the mod's state machine |
 | `herdr-app-nvim-links.mjs` | `src/links.rs`, `model/links.rs` |
 | `herdr-app-review-view.mjs` | `model/peek.rs::cmd_r_*`, `::without_one_cmd_r_starts_a_labelled_review_tab_in_the_shown_space` |
-| `herdr-app-dead-spaces.mjs` | Follow-up 040 (§3) |
+| `herdr-app-dead-spaces.mjs` | `model/dead_spaces.rs` (a port, case for case) |
 | `hc-pi-resume.sh` | herdr-core and fish, not herdr-frontend (§18) |
 | `herdr-font-preparation.py`, `herdr-app-font.swift` | Not ported: the prepared fonts are Herdr app's workaround. `terminal/tests/golden.rs::operator_mono_book`, `::operator_mono_styles_have_the_regular_cell` check the installed faces |
 
