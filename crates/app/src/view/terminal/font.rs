@@ -260,6 +260,11 @@ impl Face {
         &self.regular
     }
 
+    /// The regular face's index in its file, which is a collection when it holds several.
+    pub fn index(&self) -> u32 {
+        self.index
+    }
+
     /// The face's size in device pixels (Ghostty's `points × dpi / 72`).
     pub fn pixels(&self) -> f64 {
         f64::from(DesiredSize::new(self.points, self.scale).pixels())
