@@ -15,8 +15,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # GitHub's macOS runners cost money, so CI runs on a free Linux runner. `just ci`
-  # (scripts/local-ci) runs the same steps on a Mac, where the macOS-only code and tests run too.
+  # Standard GitHub-hosted runners, macOS included, are free on this public repository; PR CI stays
+  # on Linux by choice, and the release build (release-artifacts.yml) is the only macOS job.
+  # `just ci` (scripts/local-ci) runs the same steps on a Mac, where the macOS-only code and tests
+  # run too.
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 60

@@ -60,13 +60,23 @@ jobs:
         if: steps.changesets.outputs.published == 'true'
         run: echo "tag=v$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
 
-  # The hook for a release's build and upload (ticket 045). A release created with GITHUB_TOKEN
-  # starts no `release` workflow, so the run that created it calls the artifacts workflow itself.
+  # The release's macOS build and upload. A release created with GITHUB_TOKEN starts no `release`
+  # workflow, so the run that created it calls the artifacts workflow itself.
   artifacts:
     needs: version
     if: needs.version.outputs.published == 'true'
     uses: ./.github/workflows/release-artifacts.yml
     with:
       tag: ${{ needs.version.outputs.tag }}
+    # Signing and notarization (docs/release.md "Signing"). They're secrets of the signed-release
+    # environment, which the called workflow's macos job names and so receives; a called workflow
+    # still only gets the secrets its caller passes by name. Without them the build is signed ad hoc.
+    secrets:
+      DEVELOPMENT_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPMENT_ID_CERTIFICATE_BASE64 }}
+      DEVELOPMENT_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPMENT_ID_CERTIFICATE_PASSWORD }}
+      DEVELOPER_ID_APPLICATION_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION_IDENTITY }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+      NOTARY_APP_SPECIFIC_PASSWORD: ${{ secrets.NOTARY_APP_SPECIFIC_PASSWORD }}
     permissions:
-      contents: read # uploading to the release needs contents: write here and in the workflow
+      contents: write # uploading to the release and editing its notes

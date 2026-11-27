@@ -1,21 +1,64 @@
 #!/usr/bin/env bash
-# Builds target/release/herdr-frontend.app: the release binary, the icon and an Info.plist, signed
-# ad hoc. `scripts/install-macos` installs it. Prints the bundle's path.
+# Builds herdr-frontend.app: the release binary, the icon, an Info.plist, LICENSE and
+# THIRD-PARTY-NOTICES.md with the license files it links to, signed ad hoc. Prints the bundle's
+# path. `scripts/install-macos` installs it; `scripts/release-macos` signs and packages it.
+#
+#   scripts/bundle-macos               this Mac's architecture: target/release/herdr-frontend.app
+#   scripts/bundle-macos --universal   Apple silicon and Intel in one binary:
+#                                      target/universal-apple-darwin/release/herdr-frontend.app
 set -euo pipefail
 
 [[ $(uname -s) == Darwin ]] || { echo 'bundle-macos needs macOS.' >&2; exit 1; }
 cd "$(dirname "$0")/.."
 
-cargo build --release --locked -p herdr-frontend --bin herdr-frontend >&2
+universal=0
+case "${1:-}" in
+    '') ;;
+    --universal) universal=1 ;;
+    *) echo "usage: scripts/bundle-macos [--universal]" >&2; exit 2 ;;
+esac
+
+if ((universal)); then
+    # Each architecture on its own, then one binary from both. libghostty-vt's xcframework slice is
+    # already universal; ghostty-vt-sys thins it to each target.
+    targets=(aarch64-apple-darwin x86_64-apple-darwin)
+    out=target/universal-apple-darwin/release
+    rustup target add "${targets[@]}" >&2
+    for target in "${targets[@]}"; do
+        cargo build --release --locked --target "$target" -p herdr-frontend --bin herdr-frontend >&2
+    done
+    mkdir -p "$out"
+    lipo -create -output "$out/herdr-frontend" \
+        "target/${targets[0]}/release/herdr-frontend" "target/${targets[1]}/release/herdr-frontend"
+    for arch in arm64 x86_64; do lipo "$out/herdr-frontend" -verify_arch "$arch"; done
+else
+    out=target/release
+    cargo build --release --locked -p herdr-frontend --bin herdr-frontend >&2
+fi
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 [[ -n $version ]] || { echo 'bundle-macos: no version in Cargo.toml' >&2; exit 1; }
 
-app=target/release/herdr-frontend.app
+app=$out/herdr-frontend.app
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp target/release/herdr-frontend "$app/Contents/MacOS/herdr-frontend"
+cp "$out/herdr-frontend" "$app/Contents/MacOS/herdr-frontend"
 cp assets/icon/herdr-frontend.icns "$app/Contents/Resources/herdr-frontend.icns"
+
+# The licenses ship with the app: LICENSE, THIRD-PARTY-NOTICES.md, and every local file the notices
+# link to, at the same relative paths, so the notices' links resolve inside Resources too.
+cp LICENSE THIRD-PARTY-NOTICES.md "$app/Contents/Resources/"
+while IFS= read -r link; do
+    case $link in
+        # Not shipped: web links, and the licenses of files only the tests use.
+        http://* | https://* | mailto:* | '#'* | crates/*/tests/*) continue ;;
+    esac
+    link=${link%%#*}
+    link=${link%/}
+    [[ -e $link ]] || { echo "bundle-macos: THIRD-PARTY-NOTICES.md links to $link, which is missing" >&2; exit 1; }
+    mkdir -p "$app/Contents/Resources/$(dirname "$link")"
+    cp -R "$link" "$app/Contents/Resources/$(dirname "$link")/"
+done < <(grep -oE '\]\([^)]+\)' THIRD-PARTY-NOTICES.md | sed -E 's/^\]\((.*)\)$/\1/' | sort -u)
 
 # Its own identifier and name, so it sits beside Herdr.app (dev.herdr.app) and never replaces it.
 # No usage descriptions: terminal programs run under herdr-core, not this process.

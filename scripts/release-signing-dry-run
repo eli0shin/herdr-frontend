@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Runs scripts/release-macos's Developer ID path without a Developer ID: a throwaway self-signed
+# "Developer ID Application" certificate, passed in through the same six secrets the release job
+# gets, imported into release-macos's temporary keychain and used to sign the app (hardened
+# runtime, secure timestamp) and the .dmg. Notarization is skipped (RELEASE_SKIP_NOTARIZE=1): the
+# notary service only takes a real Developer ID. Then checks the signatures it made.
+# Writes to <out-dir> (default target/dist-dry-run); the certificate never leaves a temp folder.
+set -euo pipefail
+
+[[ $(uname -s) == Darwin ]] || { echo 'release-signing-dry-run needs macOS.' >&2; exit 1; }
+cd "$(dirname "$0")/.."
+out=${1:-target/dist-dry-run}
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/herdr-frontend-dry-run.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+
+team=DRYRUN0000
+identity="Developer ID Application: herdr-frontend dry run ($team)"
+password=$(/usr/bin/openssl rand -base64 24)
+
+# macOS's own LibreSSL: its .p12 uses the algorithms `security import` reads.
+cat >"$tmp/cert.cnf" <<CNF
+[req]
+distinguished_name = dn
+prompt = no
+x509_extensions = ext
+[dn]
+CN = $identity
+OU = $team
+[ext]
+basicConstraints = critical, CA:false
+keyUsage = critical, digitalSignature
+extendedKeyUsage = critical, codeSigning
+CNF
+/usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 1 -config "$tmp/cert.cnf" \
+    -keyout "$tmp/key.pem" -out "$tmp/cert.pem" 2>/dev/null
+/usr/bin/openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
+    -passout "pass:$password" -out "$tmp/cert.p12"
+
+paths=$(
+    DEVELOPMENT_ID_CERTIFICATE_BASE64=$(base64 <"$tmp/cert.p12") \
+    DEVELOPMENT_ID_CERTIFICATE_PASSWORD=$password \
+    DEVELOPER_ID_APPLICATION_IDENTITY=$identity \
+    APPLE_TEAM_ID=$team \
+    NOTARY_APPLE_ID=dry-run@example.invalid \
+    NOTARY_APP_SPECIFIC_PASSWORD=dry-run \
+    RELEASE_SKIP_NOTARIZE=1 \
+    scripts/release-macos "$out"
+)
+dmg=$(sed -n 1p <<<"$paths")
+sha256=$(sed -n 2p <<<"$paths")
+
+# The .dmg's signature, and the app's inside it, are the self-signed identity's, with a secure
+# timestamp, and the app's has the hardened runtime.
+mount=$tmp/mount
+mkdir -p "$mount"
+hdiutil attach "$dmg" -readonly -nobrowse -noautoopen -mountpoint "$mount" >/dev/null
+trap 'hdiutil detach "$mount" -quiet || true; rm -rf "$tmp"' EXIT
+for code in "$dmg" "$mount/herdr-frontend.app"; do
+    details=$(codesign -d --verbose=4 "$code" 2>&1)
+    grep -Fxq "Authority=$identity" <<<"$details" || { echo "dry run: $code is not signed by the dry-run identity" >&2; exit 1; }
+    grep -q '^Timestamp=' <<<"$details" || { echo "dry run: $code has no secure timestamp" >&2; exit 1; }
+done
+grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]*\(.*runtime' <<<"$details" || { echo 'dry run: the app has no hardened runtime' >&2; exit 1; }
+(cd "$(dirname "$sha256")" && shasum -a 256 -c "$(basename "$sha256")")
+
+echo "release-signing-dry-run: PASS $dmg"

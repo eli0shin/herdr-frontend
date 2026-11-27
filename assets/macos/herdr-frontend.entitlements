@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  herdr-frontend.app's entitlements under the hardened runtime (scripts/release-macos). It needs
+  none: no JIT or unsigned executable memory, no DYLD variables, no plug-ins or other teams'
+  libraries, no camera, microphone, location or Apple Events. Metal, CoreText and AppKit work under
+  the hardened runtime as they are, and the processes it starts (hc, open, link openers) aren't
+  limited by it. Terminal programs run under herdr-core, not this process, so nothing they do needs
+  an entitlement here. Add one only with the reason beside it (docs/release.md "Signing").
+-->
+<plist version="1.0">
+<dict/>
+</plist>

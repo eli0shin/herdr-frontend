@@ -1,8 +1,9 @@
 name: release artifacts
 
-# Builds and uploads a GitHub Release's artifacts. version.yml calls it right after changesets
-# tags a release; run it by hand (Actions > release artifacts > Run workflow) to redo a release's.
-# For now it checks the release and the tag's version; ticket 045 adds the macOS build and upload.
+# Builds a GitHub Release's macOS download and uploads it to the release: herdr-frontend.app for
+# Apple silicon and Intel in a .dmg, signed with the Developer ID, notarized and stapled, with a
+# SHA-256 file (docs/release.md "Artifacts"). version.yml calls it right after changesets tags a
+# release; run it by hand (Actions > release artifacts > Run workflow) to redo a release's.
 on:
   workflow_call:
     inputs:
@@ -10,6 +11,22 @@ on:
         description: The release's tag, such as v0.1.0.
         required: true
         type: string
+    # They live in the signed-release environment, which only main can deploy to; the macos job
+    # names it, so it gets the environment's values. The caller still passes each one by name.
+    # Without them the build is signed ad hoc and the release notes say it isn't notarized.
+    secrets:
+      DEVELOPMENT_ID_CERTIFICATE_BASE64:
+        required: false
+      DEVELOPMENT_ID_CERTIFICATE_PASSWORD:
+        required: false
+      DEVELOPER_ID_APPLICATION_IDENTITY:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+      NOTARY_APPLE_ID:
+        required: false
+      NOTARY_APP_SPECIFIC_PASSWORD:
+        required: false
   workflow_dispatch:
     inputs:
       tag:
@@ -21,7 +38,7 @@ permissions:
   contents: read
 
 jobs:
-  artifacts:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -37,4 +54,97 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,url --jq '"\(.tagName) \(.url)"'
           test "v$(jq -r .version package.json)" = "$TAG"
           scripts/sync-version --check
-          echo "Release $TAG checked. Nothing is built or uploaded yet (ticket 045)." >> "$GITHUB_STEP_SUMMARY"
+
+  # The one macOS job, and it runs only for a release: standard runners are free for this public
+  # repository, but everything that can run on Linux does (docs/release.md "Where it builds").
+  macos:
+    needs: check
+    runs-on: macos-26
+    # The signing secrets are this environment's. Its deployment branch policy allows only main,
+    # so a run from any other branch fails here instead of reaching them (docs/release.md "Signing").
+    environment: signed-release
+    timeout-minutes: 120
+    permissions:
+      contents: write # uploading to the release and editing its notes
+    concurrency:
+      group: release-artifacts-${{ inputs.tag }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - name: toolchain
+        # The channel rust-toolchain.toml pins, with both macOS targets for the universal binary.
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          rustup show
+      - name: build, sign, notarize
+        id: package
+        # The same script `just package` runs. With the six secrets it signs with the Developer ID
+        # and notarizes; with none it signs ad hoc; with some it fails.
+        env:
+          DEVELOPMENT_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPMENT_ID_CERTIFICATE_BASE64 }}
+          DEVELOPMENT_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPMENT_ID_CERTIFICATE_PASSWORD }}
+          DEVELOPER_ID_APPLICATION_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_APP_SPECIFIC_PASSWORD: ${{ secrets.NOTARY_APP_SPECIFIC_PASSWORD }}
+        run: scripts/release-macos target/dist
+      - name: upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          DMG: ${{ steps.package.outputs.dmg }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+        run: gh release upload "$TAG" "$DMG" "$SHA256" --clobber --repo "$GITHUB_REPOSITORY"
+      - name: release notes and summary
+        # The release notes get an install section, replaced on each run, that says whether the
+        # download is notarized. The job summary says the same.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          DMG: ${{ steps.package.outputs.dmg }}
+          SIGNING: ${{ steps.package.outputs.signing }}
+        run: |
+          set -euo pipefail
+          dmg=$(basename "$DMG")
+          start='<!-- release-artifacts: install -->'
+          end='<!-- /release-artifacts: install -->'
+          case $SIGNING in
+            notarized)
+              status='Signed with a Developer ID and notarized by Apple.'
+              ;;
+            ad-hoc)
+              status="**Not notarized.** The release job had no signing secrets, so this build is signed ad hoc, not with a Developer ID, and macOS blocks it the first time it opens: open it once, then allow it under System Settings > Privacy & Security > Open Anyway, or run \`xattr -dr com.apple.quarantine /Applications/herdr-frontend.app\`."
+              echo "::warning title=Not notarized::$dmg is signed ad hoc and not notarized: the signing secrets are missing (scripts/bootstrap-release-secrets sets them)."
+              ;;
+            *)
+              echo "unexpected signing: $SIGNING" >&2
+              exit 1
+              ;;
+          esac
+          section=$(cat <<EOF
+          $start
+          ### Install
+
+          Download \`$dmg\` (Apple silicon and Intel; its SHA-256 is in \`$dmg.sha256\`), open it and drag herdr-frontend into Applications. For the \`herdr-frontend\` command:
+
+          \`\`\`sh
+          ln -sfn /Applications/herdr-frontend.app/Contents/MacOS/herdr-frontend ~/.local/bin/herdr-frontend
+          \`\`\`
+
+          $status
+          $end
+          EOF
+          )
+          body=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+          body=$(awk -v start="$start" -v end="$end" '$0 == start { skip = 1 } !skip { print } $0 == end { skip = 0 }' <<<"$body")
+          printf '%s\n\n%s\n' "$body" "$section" | gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file -
+          {
+            echo "## $TAG: $dmg"
+            echo
+            echo "$status"
+            echo
+            echo "Uploaded \`$dmg\` and \`$dmg.sha256\` to $(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url)."
+          } >> "$GITHUB_STEP_SUMMARY"
