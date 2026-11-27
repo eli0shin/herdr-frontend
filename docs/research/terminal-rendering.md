@@ -198,7 +198,10 @@ The build is the one `ghostty:PACKAGING-LIBGHOSTTY.md` "Building libghostty-vt" 
 with a new, empty `ZIG_GLOBAL_CACHE_DIR`, which that document requires for Zig 0.17. It takes
 about 2 minutes on an M-series Mac. The static `libghostty-vt.a` leaves only libc symbols
 undefined, so it links like the macOS slice. Its installed headers are identical to the
-xcframework's, so the committed bindings serve both.
+xcframework's, so the committed bindings serve both. bindgen generates the same file on both
+platforms except for `GHOSTTY_ENUM_MAX_VALUE`, defined as `INT_MAX`. glibc spells that as the
+compiler's `__INT_MAX__`, which bindgen can't evaluate, so the bindgen tool leaves the constant
+out everywhere (nothing uses it).
 
 > **Later, out of current scope: Windows, and git checkouts.**
 > - a git checkout needs `-Demit-lib-vt`, because without a `LIB_VERSION` file `zig build`

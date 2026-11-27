@@ -41,7 +41,8 @@ fn main() -> ExitCode {
 }
 
 /// The allowlists and options herdr-app uses (`terminal-rendering.md` §1), with layout tests kept
-/// so a mismatched struct fails to compile.
+/// so a mismatched struct fails to compile, and one constant dropped so macOS and Linux generate
+/// the same file.
 fn generate() -> String {
     let include = Path::new(INCLUDE_DIR);
     let mut builder = bindgen::Builder::default()
@@ -62,6 +63,10 @@ fn generate() -> String {
         .allowlist_function("ghostty_.*")
         .allowlist_type("Ghostty.*")
         .allowlist_var("GHOSTTY_.*")
+        // `#define GHOSTTY_ENUM_MAX_VALUE INT_MAX`: glibc's `INT_MAX` is the compiler's
+        // `__INT_MAX__`, which bindgen can't evaluate, so only macOS would get the constant.
+        // Nothing uses it; each enum keeps its own `*_MAX_VALUE` variant.
+        .blocklist_item("GHOSTTY_ENUM_MAX_VALUE")
         .prepend_enum_name(false)
         .derive_default(true)
         .generate()
