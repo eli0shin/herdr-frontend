@@ -40,7 +40,10 @@ may tile the Herdr app window, so its screenshots can be a different size from h
   `hc server stop` and removes the scratch folder.
 - **Its own homes only.** herdr-frontend gets `HERDR_FRONTEND_HOME=<scratch>/frontend`. Herdr app
   gets `HERDR_APP_HOME=<scratch>/herdr-app`, a copy of Eli's config without his running
-  window's socket, `view.json`, `window.json` and `seen.json`. The source config is only read.
+  window's socket, `view.json`, `window.json` and `seen.json`, and without what his use left
+  behind: the mods' stores (`data/`) and `shared.json`, which starts as his tracked
+  `shared.defaults.json` (as a fresh `dot stow` leaves it). So neither app starts with his hidden
+  machines, his agents' times or his recent commands. The source config is only read.
 - **Not Eli's core.** Once an app opens, the harness waits until it lists exactly the seeded spaces. An app that lists any
   other space is not on the isolated core: the harness kills it at once and fails the scenario.
 - **Not Eli's Herdr app.** The harness talks only to its own copy, through `herdr-app ls | do | status | shot` with

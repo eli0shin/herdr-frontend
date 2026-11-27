@@ -6,7 +6,7 @@ mod support;
 use herdr_proto::{CloseReason, ErrorKind, Reason, StatusState};
 use herdr_shared::{Axis, Kind, Layout, Node};
 use model::mode::{Confirmed, PopupState, Rename};
-use model::{Action, Effect, Event, Focus, Geometry, Mode, PopupAction, Rect, Split};
+use model::{Action, Effect, Event, Focus, Geometry, Level, Mode, PopupAction, Rect, Split, Toast};
 use serde_json::json;
 use support::*;
 
@@ -1167,6 +1167,62 @@ fn a_pane_whose_stream_ends_goes() {
         },
     );
     assert_eq!(core.doc(None).tab("tb1").unwrap().root.panes().len(), 1);
+}
+
+#[test]
+fn a_terminal_started_here_that_fails_at_once_says_so_with_its_last_lines() {
+    let mut core = three_tabs();
+    let mut m = connected(&mut core);
+    // The program exits: the core's record says so, and its stream closes.
+    let ended = |core: &mut Core, address: &str, code, finished_ms| {
+        if let Some(t) = core.terminals.get_mut(address) {
+            t.state = herdr_proto::TerminalState::Finished;
+            t.reason = Some(Reason::Exited);
+        }
+        Event::StreamClosed {
+            address: address.into(),
+            reason: CloseReason {
+                reason: Some(Reason::Exited),
+                exit_code: Some(code),
+                finished_ms: Some(finished_ms),
+                ..Default::default()
+            },
+        }
+    };
+    let toasts = |fx: &[Effect]| -> Vec<Toast> {
+        fx.iter()
+            .filter_map(|e| match e {
+                Effect::Toast(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    drive(&mut m, &mut core, Action::TabNew);
+    core.screens
+        .insert("t101".into(), "\nfish: Unknown command: nope\n\n".into());
+    let closed = ended(&mut core, "t101", 127, 800);
+    let fx = drive(&mut m, &mut core, closed);
+    let shown = toasts(&fx);
+    assert_eq!(shown.len(), 1, "{fx:?}");
+    assert_eq!(shown[0].title, "Terminal failed to start");
+    assert_eq!(shown[0].level, Level::Error);
+    assert_eq!(
+        shown[0].body,
+        "Exit code 127 \u{b7} fish: Unknown command: nope"
+    );
+    assert_eq!(tab_ids(&core.doc(None), "sp1").len(), 3, "its tab goes");
+
+    // A program that ran a while, exited 0, or wasn't started here closes quietly.
+    for (code, finished) in [(1, 2_500), (0, 100)] {
+        drive(&mut m, &mut core, Action::TabNew);
+        let address = m.focused_terminal().unwrap().to_owned();
+        let closed = ended(&mut core, &address, code, finished);
+        let fx = drive(&mut m, &mut core, closed);
+        assert!(toasts(&fx).is_empty(), "{code} after {finished} ms: {fx:?}");
+    }
+    let closed = ended(&mut core, "t2", 1, 100);
+    let fx = drive(&mut m, &mut core, closed);
+    assert!(toasts(&fx).is_empty(), "another client's terminal");
 }
 
 #[test]

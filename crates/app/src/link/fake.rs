@@ -5,7 +5,7 @@ use std::cell::{RefCell, RefMut};
 use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 
-use herdr_proto::methods::{DocGetResult, DocSetResult, ExecResult, TerminalAttach};
+use herdr_proto::methods::{DocGetResult, DocSetResult, ExecResult, ReadResult, TerminalAttach};
 use herdr_proto::types::{Machine, MachineState, MachineView};
 use herdr_proto::{ErrorKind, Reason, RpcError, StreamCaps, Terminal, TerminalState};
 use herdr_shared::Round;
@@ -334,6 +334,7 @@ impl FakeCore {
                 Ok(Box::new(t))
             }
             Request::Exec(_) => unreachable!("answered with Event::Executed"),
+            Request::Read(_) => unreachable!("answered with Event::Read"),
             Request::Label(label) => {
                 let t = self
                     .terminals
@@ -383,6 +384,20 @@ impl Link for Fake {
                 });
             core.news
                 .push_back(News::Event(Event::Executed { token, result }));
+            return;
+        }
+        if let Request::Read(read) = &request {
+            // What the terminal drew, as text.
+            let result = match core.screens.get(&read.terminal) {
+                Some(bytes) => Ok(ReadResult {
+                    text: String::from_utf8_lossy(bytes).into_owned(),
+                    complete: true,
+                    ..Default::default()
+                }),
+                None => Err(not_found()),
+            };
+            core.news
+                .push_back(News::Event(Event::Read { token, result }));
             return;
         }
         let result = core.answer(&request);

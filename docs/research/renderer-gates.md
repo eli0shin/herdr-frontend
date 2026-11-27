@@ -64,7 +64,8 @@ The renderer lives in `crates/app/src/view/terminal/`:
 - `glyph/`: the glyph atlas for wide, fallback, emoji and icon cells (ticket 018; see
   [Fidelity](#fidelity)).
 - `cursor.rs`: block, bar, underline and hollow block in Ghostty's geometry
-  (`sprite/draw/special.zig`), as an overlay. An unfocused pane shows a hollow block. A cursor on
+  (`sprite/draw/special.zig`), as an overlay. An unfocused pane shows a hollow block, and so does
+  the focused one while a popup or the peek has the keyboard, as in Herdr app. A cursor on
   a wide character covers both cells. The glyph under a block cursor is drawn again in the
   cursor-text color (the terminal's background by default). The grid's accessibility caret
   follows the cursor.

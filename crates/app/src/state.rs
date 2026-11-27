@@ -1262,6 +1262,15 @@ impl State {
         }
     }
 
+    /// A toast's Copy button: its command goes to the clipboard and the toast stays.
+    pub fn copy_from_toast(&mut self, id: u64, tx: &mut Tx) {
+        if let Some(text) = self.toasts.copied(id) {
+            self.ui.copy = Some(text);
+            self.redraw = true;
+            self.apply_ui(tx);
+        }
+    }
+
     /// An agent's alert: its toast, unless the person is looking at it.
     fn alert(&mut self, raise: &herdr_shared::Raise) {
         let programs = &self.config.programs;
@@ -1343,7 +1352,8 @@ impl State {
     }
 
     /// An app command: the window's own are Rune's, the sidebar and the zoom are this state's,
-    /// the escape hatch resets the key file; the rest aren't built yet.
+    /// the escape hatch resets the key file, and switching layouts stays on `eli`; hiding is
+    /// the macOS menu's.
     fn app_command(&mut self, command: AppCommand) {
         match command {
             AppCommand::Quit | AppCommand::CloseWindow | AppCommand::Maximize => {
@@ -1374,9 +1384,9 @@ impl State {
             AppCommand::ZoomOut => self.zoom_by(-1),
             AppCommand::ZoomReset => self.zoom_by(0),
             // macOS's menu hides the app on ⌘H and ⌥⌘H before the window sees them.
-            AppCommand::Hide | AppCommand::HideOthers | AppCommand::LayoutSwitch => {
-                self.not_yet(&Action::App(command))
-            }
+            AppCommand::Hide | AppCommand::HideOthers => self.not_yet(&Action::App(command)),
+            // `eli` is the only layout, so the next one is `eli` again (as `do layout.switch`).
+            AppCommand::LayoutSwitch => {}
         }
     }
 
@@ -1951,8 +1961,13 @@ impl State {
             let active = self.window_active;
             let viewer = self.viewers.get_mut(&address).expect("made above");
             let key = pane_key(&pane);
-            // Behind the peek, the focused pane doesn't show focus.
-            let has_focus = active && peeked.is_none() && focused.as_deref() == Some(pane.as_str());
+            // Behind the peek, or while a popup or copy mode holds the keyboard, the focused pane
+            // doesn't show focus: its cursor goes hollow, as Herdr app's does under an overlay
+            // (copy mode draws its own cursor solid).
+            let has_focus = active
+                && peeked.is_none()
+                && !self.model.mode().holds_keyboard()
+                && focused.as_deref() == Some(pane.as_str());
             if viewer.key != key || viewer.focused != has_focus {
                 viewer.key = key;
                 viewer.focused = has_focus;

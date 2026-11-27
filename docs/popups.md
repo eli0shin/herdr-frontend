@@ -97,7 +97,7 @@ The new-space picker and the PR finder keep their mods' own matching:
 | Popup | Keys | Size | Rows | Enter |
 | --- | --- | --- | --- | --- |
 | Command palette | `cmd-shift-p` | 620 wide, 60 from the top, ≤ 0.85 | Empty: up to 5 recent commands, then every group (Tab, Pane, Space, Layout, Terminal, Agent, Window, App), each with its first key. Typed: matches, best first, recent first among equals, each with its group. 10 show; ↑/↓ stop at the ends; Page Up/Down move 10. | Runs it (`Action::FromPalette`), remembered among the recent commands in the saved view. A command that needs a name asks in the prompt. |
-| Tab and agent picker | `cmd-p` | 640 wide, 40 from the top, ≤ 0.8 | Spaces with an agent first (one that needs you first), each under its avatar (first emoji or letter, in the space's color, as the sidebar keeps it) and its tabs: status glyph, name (semibold when shown), "needs you" / "finished", the agents' programs and "+N" sub-agents. Then "earlier: N quiet spaces ▾", then "new tab", "new space" and "new space on <machine>" per connected machine. 10 show. | Shows the tab; makes a tab or space. "earlier" unfolds and stays open. Ctrl+D closes the selected tab. |
+| Tab and agent picker | `cmd-p` | 640 wide, 40 from the top, ≤ 0.8 | Spaces with an agent first (one that needs you first), each under its avatar (first emoji or letter, in the space's color, as the sidebar keeps it) and its tabs: status glyph (a spinner while working), name (semibold when shown), "needs you" / "finished", the agents' programs and "+N" sub-agents. Then "earlier: N quiet spaces ▾", then "new tab", "new space" and "new space on <machine>" per connected machine. 10 show. | Shows the tab; makes a tab or space. "earlier" unfolds and stays open. Ctrl+D closes the selected tab. |
 | Space picker | `ctrl-g s` | 520 wide, 40 from the top, ≤ 0.6 | Number (1-9), status glyph, name (semibold when shown), machine when remote, "N tabs". Opens on the shown space, and goes back to it when the field empties. 12 show, with "↑ N more" / "↓ N more". | Shows the space, on its first terminal tab when its selected tab is an agent's or the review's. |
 | New space in a folder | `cmd-n`, `ctrl-g ctrl-s` | 640 wide, 40 from the top, ≤ 0.6; "New space" or "New space on <machine>" | The focused terminal's folder ("here"), then `zoxide query -l` in frecency order, then the `repos` config's paths zoxide hasn't seen ("repo"). Each row: the folder's name (semibold), its parent (dim, `~` for home) and its tag. 12 show, with "↓ N more"; "Loading folders…" until the lookups answer. | Makes a space there and shows it (`space.new {machine, folder}`). With nothing matching, where plain `space.new` starts; while loading with nothing matching, Enter waits. |
 | PR finder | `ctrl-g f` | 620 wide, 40 from the top, ≤ 0.6; "Find a PR" | Agents watching a PR, in the Agents list's order, minus hidden machines. Each reads like an Agents row without status, jump label or time: icon, title, the space in its color, the ticket and "N workers" for an orchestrator, up to 3 matched PR chips and "+N", the machine; a live agent keeps its status edge. 9 show, with "↓ N more". Empty: "No agent is watching a PR" / "No agent watches a PR like that". | Focuses that agent (a click too). |
@@ -135,10 +135,6 @@ moves with its pane on swaps and drags. Herdr app shows pane names in its stock 
 and gives them to mods (`panes()[].name`, `agents()[].pane_name`). Eli's layout has no pane
 headers, and none of his mods read pane names (`feature-inventory.md` §5), so herdr-frontend shows
 the name only in the rename prompt, as its starting value.
-
-## Not yet
-
-- The picker's working spinner is a static ◐ glyph, as the space picker draws it.
 
 ## Scenes
 

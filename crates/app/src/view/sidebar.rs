@@ -21,7 +21,7 @@ use crate::config::theme::{Chrome, Rgba};
 use crate::view::icons::{
     CHECK, CHEVRON_DOWN, CHEVRON_RIGHT, CLOCK, GIT_PULL_REQUEST, LAYERS, MONITOR, SPINNER,
 };
-use crate::view::shell::{BAR, program_icon};
+use crate::view::shell::{BAR, icon_in};
 use herdr_shared::Displayed;
 
 /// The list's live titles: a touch under white (`LIVE_TITLE`).
@@ -256,11 +256,12 @@ fn mark(s: &State, status: Option<Displayed>, compact: bool) -> El {
     }
 }
 
-/// An agent's program icon, `size` points, in its color or the foreground.
+/// An agent's program icon, `size` points: a one-color glyph in the foreground (eli-agents'
+/// `icon(p, size, t.foreground)`; only the tab bar uses the program's color).
 pub(crate) fn program_pic(s: &State, address: &str, size: f32, cx: &Cx<State>) -> Option<El> {
     let record = s.model.world().terminal(address)?;
     let program = s.config.programs.of_terminal(record);
-    program_icon(s, &program, size, s.chrome.foreground, cx)
+    icon_in(s, &program, size, s.chrome.foreground, cx)
 }
 
 /// A worker's tree line: an elbow to its first line, going on for all but the last.

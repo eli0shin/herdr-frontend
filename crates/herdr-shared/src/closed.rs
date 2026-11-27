@@ -91,6 +91,41 @@ impl Births {
     }
 }
 
+/// A program this screen started that ended within this long of starting, with a failing exit
+/// code, failed to start (`app:src/window.rs` `launch_failure`).
+pub const LAUNCH_FAILURE: Duration = Duration::from_secs(2);
+
+/// The exit code of a terminal that failed to start: it exited on its own with a non-zero code
+/// no later than [`LAUNCH_FAILURE`] after it started (`elapsed`). `None` for anything else, or
+/// when how long it ran isn't known.
+pub fn launch_failure(reason: &CloseReason, elapsed: Option<Duration>) -> Option<i32> {
+    let code = reason.exit_code.filter(|c| *c != 0)?;
+    let quick = elapsed? <= LAUNCH_FAILURE;
+    (reason.reason == Some(Reason::Exited) && quick).then_some(code)
+}
+
+/// How long a program ran, from the core's times: its record's `created_ms` to its end's
+/// `finished_ms`.
+pub fn ran_for(reason: &CloseReason, created_ms: Option<u64>) -> Option<Duration> {
+    let ms = reason.finished_ms?.checked_sub(created_ms?)?;
+    Some(Duration::from_millis(ms))
+}
+
+/// What the "Terminal failed to start" notice says: the exit code, then the last five lines the
+/// program wrote that aren't blank, on one line.
+pub fn launch_failure_body(code: i32, output: &str) -> String {
+    let lines: Vec<&str> = output
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    let tail = &lines[lines.len().saturating_sub(5)..];
+    std::iter::once(format!("Exit code {code}"))
+        .chain(tail.iter().map(|l| (*l).to_owned()))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 /// Cores before 0.1.13 don't end `die_with_parent` children, so closing walks them itself.
 pub fn legacy_child_lifetime(version: Option<Version>) -> bool {
     version.is_some_and(|v| v < CHILD_LIFETIME_CORE)
@@ -249,6 +284,48 @@ mod tests {
         b.born("t3", t0);
         assert!(!b.just_born("t3", t0 + BIRTH_MEMORY));
         assert!(!b.take("t3"), "forgotten after 30 s");
+    }
+
+    #[test]
+    fn a_quick_failing_exit_is_a_launch_failure() {
+        let ended = |reason, code, finished| CloseReason {
+            reason: Some(reason),
+            exit_code: code,
+            finished_ms: finished,
+            ..Default::default()
+        };
+        let ms = |ms| Some(Duration::from_millis(ms));
+        let quick = ended(Reason::Exited, Some(127), Some(1_500));
+        assert_eq!(ran_for(&quick, Some(1_000)), ms(500));
+        assert_eq!(launch_failure(&quick, ran_for(&quick, Some(0))), Some(127));
+        let at_two = ended(Reason::Exited, Some(1), Some(2_000));
+        assert_eq!(
+            launch_failure(&at_two, ms(2_000)),
+            Some(1),
+            "2 s still counts"
+        );
+        let late = ended(Reason::Exited, Some(1), Some(2_001));
+        assert_eq!(launch_failure(&late, ms(2_001)), None);
+        let ok = ended(Reason::Exited, Some(0), Some(100));
+        assert_eq!(launch_failure(&ok, ms(100)), None, "a zero exit");
+        let killed = ended(Reason::Killed, Some(1), Some(100));
+        assert_eq!(launch_failure(&killed, ms(100)), None);
+        assert_eq!(
+            launch_failure(&quick, None),
+            None,
+            "how long it ran isn't known"
+        );
+        assert_eq!(ran_for(&quick, None), None);
+        assert_eq!(
+            launch_failure_body(127, "\nzsh: no such file\n\n  \n"),
+            "Exit code 127 · zsh: no such file"
+        );
+        assert_eq!(launch_failure_body(1, ""), "Exit code 1");
+        let many = (1..=8).map(|i| format!("line {i}\n")).collect::<String>();
+        assert_eq!(
+            launch_failure_body(2, &many),
+            "Exit code 2 · line 4 · line 5 · line 6 · line 7 · line 8"
+        );
     }
 
     #[test]

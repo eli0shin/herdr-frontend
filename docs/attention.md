@@ -61,8 +61,22 @@ agent (`Model::alert_toast`):
 - A toast whose click goes to a terminal on a machine in `dotfiles.agents.hidden-machines` closes
   at once (`eli-toast/filter.js`), so an agent the Agents list hides stays out of view.
 
+## Other toasts
+
+- **Terminal failed to start** (error): a terminal this window started exited on its own with a
+  non-zero code within 2 s of starting (`app:src/window.rs` `launch_failure`). The body is "Exit
+  code N" and the last five lines it wrote that aren't blank (`terminal.read`), joined with " · "
+  on one line, where Herdr app breaks lines. Its tab or pane goes, as any ended program's does.
+- **Couldn't start a terminal**: `terminal.run` itself failed.
+- **<machine> needs a login: run** (error): a new space, tab or split on a machine that needs a
+  login failed (Herdr app's failed New space toast). As `eli-toast` draws it, the body is
+  `hc machine login <machine>` with a Copy button beside it; Copy puts the command on the
+  clipboard, reads "Copied" and leaves the card up.
+- **Pane navigation failed**: Ctrl+H/J/K/L couldn't run `nvim` (`docs/keys.md`).
+- **Layout unavailable** / **Layout changed elsewhere**: an edit a machine's layout refused, or
+  edits another screen's write dropped.
+- **Not yet**: a command whose feature isn't built.
+
 ## Not here yet
 
 - No toast sets its own timeout; Herdr app's 12 s notes have no counterpart here.
-- The "needs a login" card with its Copy button comes with the machines ticket, which is the one
-  that reports machine states.

@@ -227,6 +227,9 @@ fn unbuilt_actions_show_a_not_yet_toast_that_goes() {
     }
     assert!(rt.state.toasts.shown.is_empty());
     assert!(element(&rt, "toasts").is_none());
+    // `eli` is the only layout: switching to the next one stays on it, without a toast.
+    ch(&mut rt, "⌘⇧", 'l');
+    assert!(rt.state.toasts.shown.is_empty());
 }
 
 #[test]

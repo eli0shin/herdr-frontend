@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use herdr_proto::methods::{DocGetResult, DocSetResult, ExecResult};
+use herdr_proto::methods::{DocGetResult, DocSetResult, ExecResult, ReadResult};
 use herdr_proto::{ErrorKind, RpcError, Status, StatusState, Terminal, TerminalState};
 use herdr_shared::{Document, Round};
 use model::{Chord, Effect, Event, Input, Model, Request, TerminalUpdate};
@@ -28,6 +28,8 @@ pub struct Core {
     pub exec_by: BTreeMap<Vec<String>, Result<ExecResult, RpcError>>,
     /// `machine.exec` calls left unanswered (the answers are held back).
     pub exec_held: bool,
+    /// What `terminal.read` answers for each terminal.
+    pub screens: BTreeMap<String, String>,
 }
 
 /// A `machine.exec` result that exited 0 and printed `stdout`.
@@ -75,6 +77,7 @@ impl Core {
             exec: exited(0),
             exec_by: BTreeMap::new(),
             exec_held: false,
+            screens: BTreeMap::new(),
         }
     }
 
@@ -211,6 +214,7 @@ impl Core {
                 None => (Err(error(ErrorKind::NotFound, "no such terminal")), None),
             },
             Request::Exec(_) => unreachable!("answered with Event::Executed"),
+            Request::Read(_) => unreachable!("answered with Event::Read"),
             Request::Label(label) => match self.terminals.get_mut(&label.terminal) {
                 Some(t) => {
                     for (k, v) in &label.labels {
@@ -312,6 +316,21 @@ pub fn run_effects(m: &mut Model, core: &mut Core, effects: Vec<Effect>) -> Vec<
                         .cloned()
                         .unwrap_or_else(|| core.exec.clone());
                     queue.push_back(Event::Executed { token, result }.into());
+                }
+                Effect::Call {
+                    token,
+                    request: Request::Read(read),
+                } => {
+                    let result = match core.screens.get(&read.terminal) {
+                        Some(text) => Ok(ReadResult {
+                            text: text.clone(),
+                            complete: true,
+                            ..Default::default()
+                        }),
+                        None => Err(error(ErrorKind::NotFound, "no such terminal")),
+                    };
+                    core.calls.push(Request::Read(read));
+                    queue.push_back(Event::Read { token, result }.into());
                 }
                 Effect::Call { token, request } => {
                     core.calls.push(request.clone());
