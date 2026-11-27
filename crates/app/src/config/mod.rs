@@ -72,13 +72,16 @@ impl Sources {
     }
 
     /// What the watcher compares: every file a load reads (or would read, were it there), with
-    /// its modification time and length.
-    fn stamp(&self, settings: &Settings) -> Vec<(PathBuf, Option<(SystemTime, u64)>)> {
+    /// its modification time and length. Every theme file counts, so the stamp doesn't depend on
+    /// which theme the settings name. Take it before a load: a file written during the load then
+    /// differs from it, and is loaded next time.
+    pub fn stamp(&self) -> Stamp {
         let mut paths = Vec::new();
         if let Some(home) = &self.home {
             paths.push(home.join(SETTINGS));
             paths.push(home.join(PROGRAMS));
-            paths.push(home.join(THEMES).join(format!("{}.json", settings.theme)));
+            paths.push(home.join(THEMES));
+            paths.extend(listing(&home.join(THEMES)));
             for dir in ICON_DIRS {
                 paths.extend(listing(&home.join(dir)));
             }
@@ -97,6 +100,9 @@ impl Sources {
             .collect()
     }
 }
+
+/// [`Sources::stamp`]: each watched path with its modification time and length.
+pub type Stamp = Vec<(PathBuf, Option<(SystemTime, u64)>)>;
 
 /// Herdr app's home, as herdr-app finds it (`app:src/mods.rs` `app_dir`).
 pub fn herdr_app_home() -> PathBuf {
@@ -289,27 +295,29 @@ pub struct Watcher {
 }
 
 impl Watcher {
-    /// Watches `sources`, starting from what `current` was loaded from. `wake` wakes the UI
-    /// thread when a new [`Config`] is ready.
-    pub fn start(sources: Sources, current: &Config, wake: impl Fn() + Send + 'static) -> Watcher {
+    /// Watches `sources` from `seen`, the stamp taken just before `settings` were loaded, so a
+    /// file written since is loaded on the first look. `wake` wakes the UI thread when a new
+    /// [`Config`] is ready.
+    pub fn start(
+        sources: Sources,
+        seen: Stamp,
+        settings: Settings,
+        wake: impl Fn() + Send + 'static,
+    ) -> Watcher {
         let (tx, configs) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = stop.clone();
-        let mut settings = current.settings.clone();
-        let mut seen = sources.stamp(&settings);
+        let mut seen = seen;
+        let mut settings = settings;
         std::thread::Builder::new()
             .name("herdr-frontend-config".into())
             .spawn(move || {
                 while !stopping.load(Ordering::Relaxed) {
                     std::thread::sleep(WATCH_EVERY);
-                    let now = sources.stamp(&settings);
-                    if now == seen {
+                    let Some(config) = look(&sources, &mut seen, &mut settings, Config::load)
+                    else {
                         continue;
-                    }
-                    let config = Config::load(&sources, Some(&settings));
-                    settings = config.settings.clone();
-                    // The theme file it names may be another one now.
-                    seen = sources.stamp(&settings);
+                    };
                     if tx.send(config).is_err() {
                         break;
                     }
@@ -324,6 +332,24 @@ impl Watcher {
     pub fn latest(&self) -> Option<Config> {
         self.configs.try_iter().last()
     }
+}
+
+/// One look at the files: when they changed since `seen`, loads them with `load`. `seen`
+/// becomes the stamp taken before the load, so whatever is written during it differs from it.
+fn look(
+    sources: &Sources,
+    seen: &mut Stamp,
+    settings: &mut Settings,
+    load: impl FnOnce(&Sources, Option<&Settings>) -> Config,
+) -> Option<Config> {
+    let now = sources.stamp();
+    if now == *seen {
+        return None;
+    }
+    *seen = now;
+    let config = load(sources, Some(settings));
+    *settings = config.settings.clone();
+    Some(config)
 }
 
 impl Drop for Watcher {
@@ -460,11 +486,44 @@ mod tests {
     }
 
     #[test]
+    fn a_file_written_during_a_load_is_loaded_next_time() {
+        let home = scratch("midload");
+        let sources = sources(&home);
+        let mut seen = sources.stamp();
+        let mut settings = Settings::default();
+        // `dot stow`: settings.json names a theme, and the theme file lands while that load runs.
+        std::fs::write(home.join(SETTINGS), r#"{"theme": "mine"}"#).unwrap();
+        let first = look(&sources, &mut seen, &mut settings, |sources, previous| {
+            let config = Config::load(sources, previous);
+            std::fs::create_dir_all(home.join(THEMES)).unwrap();
+            std::fs::write(
+                home.join(THEMES).join("mine.json"),
+                theme::ARCTIC_JSON.replace("#1e1e1e", "#101010"),
+            )
+            .unwrap();
+            config
+        })
+        .expect("settings.json changed");
+        assert_eq!(
+            first.theme.name,
+            theme::ARCTIC,
+            "the theme wasn't there yet"
+        );
+        let next = look(&sources, &mut seen, &mut settings, Config::load)
+            .expect("the theme file was written after the stamp");
+        assert_eq!(next.theme.name, "mine");
+        assert_eq!(next.theme.get("canvas").unwrap().hex(), "#101010");
+        assert!(look(&sources, &mut seen, &mut settings, Config::load).is_none());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn the_watcher_loads_a_changed_file() {
         let home = scratch("watch");
         let sources = sources(&home);
+        let seen = sources.stamp();
         let first = Config::load(&sources, None);
-        let watcher = Watcher::start(sources, &first, || {});
+        let watcher = Watcher::start(sources, seen, first.settings, || {});
         std::fs::write(home.join(SETTINGS), r#"{"zoom": 1.5}"#).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         let config = loop {

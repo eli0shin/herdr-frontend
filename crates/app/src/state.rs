@@ -38,7 +38,7 @@ use terminal::{GridSize, Output, Padding, PaddingBalance, ScreenSize, Size, Term
 
 use crate::config::settings::{self, Settings, UI_FONT_SIZE};
 use crate::config::theme::Chrome;
-use crate::config::{Config, SETTINGS, Sources, Watcher as ConfigWatcher};
+use crate::config::{Config, SETTINGS, Sources, Stamp, Watcher as ConfigWatcher};
 use crate::control::{self, Control};
 use crate::home::{Home, VIEW};
 use crate::keyfile::{self, Loaded, Watcher};
@@ -168,6 +168,8 @@ pub struct State {
     pub config: Config,
     sources: Sources,
     watcher: Option<ConfigWatcher>,
+    /// The files as they were just before the first load, for the watcher to start from.
+    stamp: Option<Stamp>,
     /// `settings.json` texts the zoom keys wrote, oldest first, until the watcher reads the
     /// newest back: one it reads before that is stale and is skipped.
     own_writes: Vec<String>,
@@ -260,6 +262,8 @@ impl State {
             Some(home) => Sources::new(Some(home.dir().to_owned())),
             None => Sources::none(),
         };
+        // Stamped before the load, so the watcher loads what changes during it.
+        let stamp = home.as_ref().map(|_| sources.stamp());
         let config = match &home {
             Some(_) => Config::load(&sources, None),
             None => Config::default(),
@@ -280,6 +284,7 @@ impl State {
             config: Config::default(),
             sources,
             watcher: None,
+            stamp,
             own_writes: Vec::new(),
             images: None,
             icons: RefCell::new(BTreeMap::new()),
@@ -1219,9 +1224,11 @@ impl State {
         s.images = Some(ImageCache::new(waker.clone()));
         if s.sources.home.is_some() && s.watcher.is_none() {
             let wake = waker.clone();
+            let seen = s.stamp.take().unwrap_or_else(|| s.sources.stamp());
             s.watcher = Some(ConfigWatcher::start(
                 s.sources.clone(),
-                &s.config,
+                seen,
+                s.config.settings.clone(),
                 move || wake(),
             ));
         }

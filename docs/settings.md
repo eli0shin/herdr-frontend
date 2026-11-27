@@ -21,6 +21,10 @@ the cell and tells the core (FACTS, then RESIZE for the pane in use); a new them
 panels and every terminal on screen; a new zoom lays the window out again. A file that can't be
 read keeps what the window had and says why in `herdr-frontend status`'s `errors`.
 
+Each look is compared with the files as they were just before the last load (at start, just
+before the first one), so a file written while a load runs is loaded on the next look: `dot stow`
+writing `settings.json` and then the theme it names.
+
 This is herdr-frontend's answer to "dotfiles-managed preferences while running": `dot stow` (or
 anyone) can write or link `settings.json`, and the running window follows. Herdr app needed
 `navigator-status.set-shared` sent to the running app instead.
