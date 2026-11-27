@@ -106,8 +106,8 @@ Its `check` job, on Linux, checks that the release exists and that the tag's `pa
 `scripts/release-macos` on a `macos-26` runner (Apple silicon), uploads the two files with
 `gh release upload --clobber`, and writes an **Install** section into the release notes, between
 `<!-- release-artifacts: install -->` markers that each run replaces. The section says whether the
-download is notarized, and the job summary says the same. Both jobs need `contents: write` for the
-upload, which `version.yml` grants the `artifacts` job.
+download is notarized, and the job summary says the same. The `macos` job needs `contents: write`
+for the upload and the notes edit, which `version.yml` grants the `artifacts` job.
 
 ### Where it builds
 

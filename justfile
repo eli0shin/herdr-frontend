@@ -41,7 +41,7 @@ e2e *args:
 ghostty-diff *screens:
     scripts/ghostty-diff {{screens}}
 
-# Build target/release/herdr-frontend.app: the release build, icon and Info.plist, signed ad hoc.
+# Build target/release/herdr-frontend.app: the release build, icon, Info.plist and license files, signed ad hoc.
 bundle:
     scripts/bundle-macos
 
