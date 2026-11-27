@@ -96,6 +96,13 @@ impl Fake {
         }
     }
 
+    /// A terminal changes (its status, labels, title): the core posts the new record.
+    pub fn update(&self, t: Terminal) {
+        let mut core = self.core();
+        core.terminals.insert(t.address.clone(), t.clone());
+        core.changed(t);
+    }
+
     /// Another viewer resized a terminal: the core says so with a `size` event.
     pub fn resize_elsewhere(&self, address: &str, cols: u16, rows: u16) {
         self.core().set_size(address, cols, rows);

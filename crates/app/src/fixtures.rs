@@ -236,3 +236,124 @@ pub fn tab_strip_core() -> crate::link::Fake {
     }
     fake
 }
+
+/// An agent: a terminal whose program `app` reports `state` (OSC 7501), titled `title`.
+pub fn agent(
+    address: &str,
+    app: &str,
+    state: herdr_proto::StatusState,
+    title: &str,
+) -> herdr_proto::Terminal {
+    herdr_proto::Terminal {
+        title: title.into(),
+        status: Some(herdr_proto::Status {
+            state,
+            app: app.into(),
+            ..Default::default()
+        }),
+        ..terminal(address, COLS, ROWS)
+    }
+}
+
+/// A Pi session with Eli's PR-watch label (`dotfiles.pi_pr_watch`).
+pub fn pi(
+    address: &str,
+    state: herdr_proto::StatusState,
+    title: &str,
+    watch: serde_json::Value,
+) -> herdr_proto::Terminal {
+    let mut t = agent(address, "pi", state, title);
+    t.labels
+        .insert(model::agents::WATCH_LABEL.into(), watch.to_string());
+    t
+}
+
+/// The agents core the sidebar scenes and tests run on: the demo core's `work` tab, then agents
+/// in three spaces.
+///
+/// - `herdr-frontend`: Claude working on the sidebar (`t10`) with two sub-agents (`t20`
+///   exploring, `t21` idle under it with `t22`), and Codex needing you (`t11`, tab "review").
+/// - `dotfiles`: a Pi orchestrator (`t12`, ticket HF-23, watching #21) and its two workers,
+///   `t13` working (#22, #23) and `t14` done.
+/// - `notes`: a pinned Claude, idle (`t15`).
+pub fn agents_core() -> crate::link::Fake {
+    use herdr_proto::StatusState::*;
+    let one = |tab_id: &str, name: &str, pane_id: &str, address: &str| {
+        tab(
+            tab_id,
+            name,
+            split(tab_id, "row", vec![pane(pane_id, address)]),
+        )
+    };
+    let work = tab(
+        "tb-work",
+        "work",
+        split("tb-work", "row", vec![pane("pn-1", "t1")]),
+    );
+    let doc = serde_json::json!({"spaces": [
+        {"id": "sp-1", "name": "herdr-frontend", "folder": "/tmp", "tabs": [
+            work,
+            one("tb-a1", "", "pn-10", "t10"),
+            one("tb-a2", "review", "pn-11", "t11"),
+        ]},
+        {"id": "sp-2", "name": "dotfiles", "folder": "/tmp", "tabs": [
+            one("tb-o", "orchestrate", "pn-12", "t12"),
+            one("tb-w1", "", "pn-13", "t13"),
+            one("tb-w2", "fonts", "pn-14", "t14"),
+        ]},
+        {"id": "sp-3", "name": "notes", "folder": "/tmp", "tabs": [
+            one("tb-n", "", "pn-15", "t15"),
+        ]},
+    ]});
+    let sub = |address: &str, parent: &str, name: &str, state, created| herdr_proto::Terminal {
+        parent: Some(parent.into()),
+        name: Some(name.into()),
+        created_ms: created,
+        ..agent(address, "claude", state, "")
+    };
+    let mut done = pi(
+        "t14",
+        Idle,
+        "π - font weights - dotfiles",
+        serde_json::json!({"role": "worker", "orchestration": "o1"}),
+    );
+    // Finished, and no client has looked since: done.
+    done.turn = 2;
+    done.labels.insert("herdr.seen".into(), "1".into());
+    let mut pinned = agent("t15", "claude", Idle, "✳ Meeting notes");
+    pinned.labels.insert("herdr.pinned".into(), "1".into());
+    let terminals = vec![
+        herdr_proto::Terminal {
+            argv: vec!["nvim".into()],
+            ..terminal("t1", COLS, ROWS)
+        },
+        agent("t10", "claude", Working, "✳ Port the agents sidebar"),
+        agent("t11", "codex", Blocked, "codex"),
+        pi(
+            "t12",
+            Idle,
+            "π - orchestrate - dotfiles",
+            serde_json::json!({"role": "orchestrator", "orchestration": "o1", "ticket": "HF-23", "prs": ["#21"]}),
+        ),
+        pi(
+            "t13",
+            Working,
+            "π - sidebar rows - dotfiles",
+            serde_json::json!({"role": "worker", "orchestration": "o1", "prs": ["#22", "#23"]}),
+        ),
+        done,
+        pinned,
+        sub("t20", "t10", "explore", Working, 1),
+        sub("t21", "t10", "tests", Idle, 2),
+        sub("t22", "t21", "fixtures", Blocked, 3),
+    ];
+    let fake = crate::link::Fake::new(doc, terminals);
+    {
+        let mut core = fake.core();
+        core.screens.insert("t1".into(), NVIM_SPLITS.bytes.to_vec());
+        for t in ["t10", "t11", "t12", "t13", "t14", "t15"] {
+            core.screens.insert(t.into(), b"$ ".to_vec());
+        }
+    }
+    fake
+}

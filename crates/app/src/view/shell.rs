@@ -2,7 +2,8 @@
 //!
 //! ```text
 //! root row
-//! ├─ sidebar   366 pt: its 38 pt top row drags the window ("Agents"), the list below (later)
+//! ├─ sidebar   366 pt by default (200 to 600): its 38 pt top row drags the window, the Agents
+//! │            list below (`view::sidebar`)
 //! └─ work column
 //!    ├─ tabs   38 pt: drags the window; the shown space's tab pills ([`super::tabs`])
 //!    └─ main   the shown tab's panes, bare, with a 1 pt gap that shows the border color;
@@ -59,35 +60,12 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .w_full()
         .h_full()
         .fill(c.canvas)
-        .children(s.sidebar.map(|w| sidebar(s, w)))
-        .child(work)
-}
-
-fn sidebar(s: &State, width: f32) -> El {
-    let c = &s.chrome;
-    col()
-        .key("sidebar")
-        .w(width)
-        .h_full()
-        .fill(c.chrome)
-        .child(
-            row()
-                .key("brand")
-                .w_full()
-                .h(BAR)
-                .pt(6.0)
-                .pb(3.0)
-                .pl(14.0)
-                .items_center()
-                .window_drag()
-                .child(
-                    text("Agents")
-                        .key("brand-title")
-                        .font(label(s))
-                        .color(c.muted),
-                ),
+        .children(
+            s.sidebar
+                .shown()
+                .map(|w| crate::view::sidebar::view(s, w, cx)),
         )
-        .child(col().key("agents").w_full().grow(1.0))
+        .child(work)
 }
 
 /// A program's icon at `size` points: a one-color glyph in the program's color (else `ink`), or
