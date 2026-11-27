@@ -110,7 +110,13 @@ decorations, sprite boxes and cursor shapes.
    so it reports text, box lines, other sprites, pinned cells and backgrounds apart. For text it
    also measures where each cell's ink sits. `--region NAME=COL,ROW,COLS,ROWS` reports a block of
    cells on its own; `ghostty-diff` names the checklist's split, float, statusline and cmdline
-   that way.
+   that way, and each style's lines on the `styles` screen.
+
+The `styles` screen (ticket 039) is the exception to the 14 pt JetBrains Mono: `ghostty-capture
+--config fixtures/styles.ghostty` adds Eli's font lines (`font-family = Operator Mono`,
+`font-style = Book`, `font-style-bold = Bold`, `font-style-italic = Book Italic`,
+`font-style-bold-italic = Bold Italic`, `font-size = 18.7`), and ours draws with
+`fixtures/styles.json`, the same settings in herdr-frontend's keys (`HERDR_FRONTEND_SETTINGS`).
 
 `scripts/ghostty-diff --reuse` keeps the last Ghostty captures and only draws and compares ours
 again, so a renderer fix can be checked without opening Ghostty.
@@ -125,8 +131,8 @@ Limits:
   Ghostty creates no window while the screen is locked, or when it's started in the background
   (`open -g`); `ghostty-capture` then fails with "no window for Ghostty".
 - It shows a Ghostty window for about three seconds per screen. It types and clicks nothing.
-- It's macOS at 2x only, with JetBrains Mono at 14 pt. Eli's Operator Mono Book Herdr isn't
-  installed system-wide, so Ghostty can't load it with a clean config.
+- It's macOS at 2x only, with JetBrains Mono at 14 pt but for `styles`, which needs Operator
+  Mono installed (`~/Library/Fonts`), as Eli has it.
 - Converting the capture from Display P3 back to sRGB can move a color by a level. Neovim's
   statusline grey `#4f5258` (79, 82, 88) comes back as (80, 82, 87), so 77% of the statusline's
   pixels "differ", nearly all by a level.
@@ -282,7 +288,8 @@ nothing it draws is affected. Three later features are:
 - **Glyphs that overflow their row** are clipped. That affects tall accents and descenders in
   fonts whose glyphs reach outside the line, which `Metrics.zig:249-256` allows for. Pinned cells
   aren't clipped. For JetBrains Mono at 14 pt it doesn't show: no text pixel on the four screens
-  is off by more than 64, and the ink weight matches. Operator Mono isn't measured.
+  is off by more than 64, and the ink weight matches. For Operator Mono at 18.7 pt, 0.01% of the
+  text pixels are ([Terminal font styles](#terminal-font-styles)).
 
 **Passes for the MVP.** Below-text images are the one known case that needs the two-grid
 arrangement. That's a contained change inside the pane view, not a reason to leave grid.
@@ -444,6 +451,26 @@ measured it in Ghostty at 177 × 51, the regions as `ghostty-diff` names them:
 Every item passes: no pixel of an item is off by more than 16, other than text's 0.1 px offset
 (gate 1). The text on this screen measures as on the others: ink 0.095 px left of Ghostty's,
 level, the same weight.
+
+### Terminal font styles
+
+Ticket 039 draws each terminal style with its own installed face, found as Ghostty finds it
+(`docs/settings.md` "Fonts"). `scripts/ghostty-diff styles` measured it on 2026-11-26 against
+Ghostty.app 1.4.0: four lines each of regular, bold, italic and bold italic in Operator Mono Book
+at 18.7 pt (a 21 × 45 px cell), at a 144 × 42 grid. Both apps draw the same four faces
+(OperatorMono-Book, -Bold, -BookItalic and -BoldItalic), and each style compares alike:
+
+| region | cells | identical | pixels differing | > 16 | > 64 | mean abs diff (0-255) |
+| --- | --- | --- | --- | --- | --- | --- |
+| regular | 208 | 60 | 8.23% | 4.65% | 0.00% | 1.77 |
+| bold | 208 | 59 | 7.93% | 4.50% | 0.00% | 1.73 |
+| italic | 208 | 51 | 9.34% | 5.01% | 0.01% | 1.91 |
+| bold italic | 208 | 47 | 8.90% | 4.85% | 0.01% | 1.84 |
+
+Over all 806 text cells, our ink sits 0.210 px left of Ghostty's (the predicted 0.215 px of
+centering, see the follow-ups) and level with it (+0.004 px), with the same ink weight (ratio
+0.999). A wrong face, or a synthesized bold or italic, would show as a different weight and a
+far larger difference in its style's row.
 
 ## Font smoothing
 

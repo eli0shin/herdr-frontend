@@ -38,20 +38,8 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-/// Points Herdr app's home at a folder that isn't there, once, before any test reads it: the
-/// real one's fonts stay out, so the isolated home is the only font folder.
-fn no_herdr_app() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        let none = std::env::temp_dir().join("herdr-frontend-look-no-herdr-app");
-        // SAFETY: set once, before any thread of this test binary reads it.
-        unsafe { std::env::set_var("HERDR_APP_HOME", none) };
-    });
-}
-
 /// The app on the demo core with its home at `home`, as `live` makes it but on a fake core.
 fn runtime_at(home: &Path) -> Runtime<State> {
-    no_herdr_app();
     let home = Home::at(home);
     let mut rt = app()
         .init(move || State::new(Box::new(Offline), Some(home), Keeper::default()))
@@ -115,18 +103,38 @@ fn with_no_settings_file_the_window_is_elis_arctic_at_zoom_1_1() {
     assert_eq!(colors.background, terminal::Rgb::new(0x1e, 0x1e, 0x1e));
     assert_eq!(colors.foreground, terminal::Rgb::new(0xd4, 0xd4, 0xd4));
 
-    // Operator Mono isn't in this home: JetBrains Mono at 17 pt, and status says why.
+    // Operator Mono at 17 pt where it's installed; JetBrains Mono, with status saying why, where
+    // it isn't.
     assert_eq!(rt.state.font.points, 17.0);
-    assert_eq!(rt.state.font.family(), "JetBrains Mono");
     let status = rt.state.window_status();
     assert_eq!(status["zoom"], 1.1);
     assert_eq!(status["font_size"], 17.0);
     assert_eq!(status["ui_font_size"], 13.0);
-    assert!(
-        status["errors"][0]
-            .as_str()
-            .unwrap()
-            .starts_with("font \"Operator Mono Book Herdr\" isn't in")
+    match &rt.state.config.font {
+        Some(family) => {
+            assert_eq!(rt.state.font.family(), family.private);
+            assert_eq!(status["errors"], serde_json::json!([]));
+        }
+        None => {
+            assert_eq!(rt.state.font.family(), "JetBrains Mono");
+            assert_eq!(
+                status["errors"][0],
+                "font \"Operator Mono\" isn't installed; terminals use JetBrains Mono"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn a_font_that_isnt_installed_falls_back_to_jetbrains_mono_and_says_so() {
+    let home = scratch("missing-font");
+    std::fs::write(home.join("settings.json"), r#"{"font": "No Such Mono"}"#).unwrap();
+    let rt = runtime_at(&home);
+    assert_eq!(rt.state.font.family(), "JetBrains Mono");
+    assert_eq!(
+        rt.state.window_status()["errors"][0],
+        "font \"No Such Mono\" isn't installed; terminals use JetBrains Mono"
     );
     let _ = std::fs::remove_dir_all(&home);
 }

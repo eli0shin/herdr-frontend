@@ -8,8 +8,8 @@
 //! - `window.json`: where the window was ([`crate::window::Placement`]).
 //! - `shared.json` and `agents.json`: the app-local shared state and the Agents list's times
 //!   ([`crate::shared`], `docs/sidebar.md`), from the defaults on the first run.
-//! - `settings.json`, `themes/`, `programs.json`, `icons/`, `program-icons/` and `fonts/`: the
-//!   look and preferences ([`crate::config`], `docs/settings.md`). Only the zoom keys write here,
+//! - `settings.json`, `themes/`, `programs.json`, `icons/` and `program-icons/`: the look and
+//!   preferences ([`crate::config`], `docs/settings.md`). Only the zoom keys write here,
 //!   and only `settings.json`'s `zoom`.
 //!
 //! Files are written whole to a temporary name and renamed into place, so a crash never leaves

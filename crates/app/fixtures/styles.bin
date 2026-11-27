@@ -1,0 +1,24 @@
+[H[2JRegular, bold, italic and bold italic, each its own face:
+
+regular      [mThe quick brown fox jumps over the lazy dog.[0m
+regular      [mSPHINX OF BLACK QUARTZ, JUDGE MY VOW 0123456789[0m
+regular      [m~!@#$%^&*()_+-={}[]|\:;"'<>,.?/ fi fl ffi[0m
+regular      [mfn main() { let x = a->b; if x != y && z <= 2 {} }[0m
+
+bold         [1mThe quick brown fox jumps over the lazy dog.[0m
+bold         [1mSPHINX OF BLACK QUARTZ, JUDGE MY VOW 0123456789[0m
+bold         [1m~!@#$%^&*()_+-={}[]|\:;"'<>,.?/ fi fl ffi[0m
+bold         [1mfn main() { let x = a->b; if x != y && z <= 2 {} }[0m
+
+italic       [3mThe quick brown fox jumps over the lazy dog.[0m
+italic       [3mSPHINX OF BLACK QUARTZ, JUDGE MY VOW 0123456789[0m
+italic       [3m~!@#$%^&*()_+-={}[]|\:;"'<>,.?/ fi fl ffi[0m
+italic       [3mfn main() { let x = a->b; if x != y && z <= 2 {} }[0m
+
+bold italic  [1;3mThe quick brown fox jumps over the lazy dog.[0m
+bold italic  [1;3mSPHINX OF BLACK QUARTZ, JUDGE MY VOW 0123456789[0m
+bold italic  [1;3m~!@#$%^&*()_+-={}[]|\:;"'<>,.?/ fi fl ffi[0m
+bold italic  [1;3mfn main() { let x = a->b; if x != y && z <= 2 {} }[0m
+
+Mixed: plain [1mbold[0m [3mitalic[0m [1;3mbold italic[0m plain [1mb[3mbi[22mi[0m [1;31mbold red[0m [3;32mitalic green[0m
+[29;1H

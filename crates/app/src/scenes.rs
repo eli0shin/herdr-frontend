@@ -323,9 +323,18 @@ fn panes(s: &mut State) {
 }
 
 /// A screen file in a focused pane, at the grid `HERDR_FRONTEND_GRID` names
-/// ([`fixtures::screen_file`]); an empty 80 × 30 screen without one.
+/// ([`fixtures::screen_file`]); an empty 80 × 30 screen without one. It draws with the settings
+/// `HERDR_FRONTEND_SETTINGS` names, its fonts looked up as the window's are
+/// ([`fixtures::screen_settings`]), else Ghostty's defaults.
 fn screen_file(s: &mut State) {
-    s.with_settings(Settings::fixture());
+    match fixtures::screen_settings() {
+        Ok(Some(settings)) => s.configure(crate::config::Config::with_fonts(settings)),
+        Ok(None) => s.with_settings(Settings::fixture()),
+        Err(e) => {
+            eprintln!("screen-file: {e}");
+            s.with_settings(Settings::fixture());
+        }
+    }
     let (bytes, cols, rows) = fixtures::screen_file().unwrap_or_default();
     let (cols, rows) = if cols == 0 {
         (fixtures::COLS, fixtures::ROWS)

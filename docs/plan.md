@@ -20,6 +20,10 @@ Scope rules are in `AGENTS.md`.
   no Zig), behind our own `ghostty-vt-sys`. Each terminal runs on its own worker thread and
   hands out one snapshot per frame. We draw it ourselves, first on `rune::grid`. Cell metrics
   are Ghostty's, computed in whole device pixels. Ligatures are off.
+- **The terminal is Ghostty with Herdr around it.** Its font is an installed family found the way
+  Ghostty finds `font-family`, each style its own face (`docs/settings.md` "Fonts"). Eli's is
+  Operator Mono's Book and Bold, as installed, at 18.7 pt (17 × zoom 1.1). Herdr app's prepared
+  "Operator Mono Book Herdr" files are its own workaround and aren't used.
 - **UI:** Rune, pinned to one `dev` rev, with its `[patch.crates-io]` block, its toolchain, and
   rune-kit for shell pieces. There is one keymap and prefix-mode machine. Effects run outside
   handlers, and there is no I/O on the UI thread.

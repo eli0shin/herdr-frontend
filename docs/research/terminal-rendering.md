@@ -458,7 +458,8 @@ Worked example, JetBrains Mono (bundled by herdr-app; `upm 1000`, typo 1020/−3
 - 1x: 8.4 × 18.48 rounds to an **8 × 18** px cell.
 - 2x: 16.8 × 36.96 rounds to a **17 × 37** px cell.
 
-Eli's parity font, Operator Mono Book Herdr (`~/.config/herdr-app/fonts/DotfilesOperatorMonoBook-Regular.otf`).
+Eli's parity font, Operator Mono's Book face as installed (`~/Library/Fonts/OperatorMono-Book.otf`;
+Herdr app's prepared "Operator Mono Book Herdr" copy of it measures the same).
 His settings are `font_size` 17 and `zoom` 1.1. herdr-app multiplies them
 (`herdr-app:src/settings.rs:761-763`), so the terminal is at 18.7 pt. The font has `upm 1000`,
 hhea 960/−240/0, typo 800/−200/200, `USE_TYPO_METRICS` not set (so hhea applies), and an ASCII
@@ -748,7 +749,7 @@ That gives the renderer two requirements:
      0.1.18 (`herdr-core-protocol.md:14`). At `v0.1.18` (`9a9ae13`), its `font_cell_metrics`
      (`src/terminal.rs:1846-1906`) ports Ghostty's metrics: the same vertical-metrics order,
      rounded `ascent − descent + gap`, the widest ASCII advance, in device pixels. So
-     Operator Mono Book Herdr at 18.7 pt gives 10×22 at 1x and 21×45 at 2x in both apps.
+     Operator Mono Book at 18.7 pt gives 10×22 at 1x and 21×45 at 2x in both apps.
    - The pixel fields differ only when the two viewers use different fonts, sizes or display
      scales.
 
@@ -941,7 +942,7 @@ Each stage ends with tests in `cargo test` plus a fixture or screenshot check.
    headless and draws nothing.
 3. **Metrics and grid:** port face-metric extraction and `Metrics.calc`, plus grid and padding
    math. Golden tests against Ghostty's numbers for several fonts, sizes and scales. These must
-   include Eli's parity font, Operator Mono Book Herdr at 17 pt with zoom 1.1 (18.7 pt): a
+   include Eli's parity font, Operator Mono Book at 17 pt with zoom 1.1 (18.7 pt): a
    **10×22** cell at 1x and **21×45** at 2x (§2). Also include JetBrains Mono at 14 pt: 8×18
    and 17×37. Wire up `RESIZE` and `FACTS`.
 4. **Renderer MVP on `rune::grid`:** a `GridRow` builder from the render state (runs, colors,

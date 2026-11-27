@@ -5,14 +5,17 @@
 # (`pixel-diff`). Results go to target/ghostty/<screen>/: ghostty.png, ours.png, diff.png and
 # report.md.
 #
-#   scripts/ghostty-diff [--reuse] [SCREEN...]   screens: colors boxes nvim nvim-checklist
+#   scripts/ghostty-diff [--reuse] [SCREEN...]   screens: colors boxes nvim nvim-checklist styles
 #                                                (default: all)
 #
 # `--reuse` keeps each screen's last Ghostty capture and only draws and compares ours again, so a
 # renderer fix can be checked without opening Ghostty.
 #
 # Opens a Ghostty window for a few seconds per screen. macOS on a 2x display, JetBrains Mono 14 pt
-# (a 17 x 37 px cell).
+# (a 17 x 37 px cell), except `styles`: regular, bold, italic and bold italic in Operator Mono
+# Book at 18.7 pt (a 21 x 45 px cell), each style the face its style name picks, from
+# fixtures/styles.ghostty for Ghostty and fixtures/styles.json for ours. It needs Operator Mono
+# installed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -22,7 +25,7 @@ if [ "${1:-}" = "--reuse" ]; then
     shift
 fi
 screens=("$@")
-[ ${#screens[@]} -gt 0 ] || screens=(colors boxes nvim nvim-checklist)
+[ ${#screens[@]} -gt 0 ] || screens=(colors boxes nvim nvim-checklist styles)
 
 cargo build --quiet -p herdr-frontend --bins
 bin=target/debug
@@ -32,12 +35,21 @@ streams=$PWD/crates/terminal/tests/streams
 for screen in "${screens[@]}"; do
     out=target/ghostty/$screen
     mkdir -p "$out"
+    # The cell in device pixels, and the settings ours draws with (none: Ghostty's defaults).
+    cell_w=17 cell_h=37 settings=""
+    if [ "$screen" = styles ]; then
+        cell_w=21 cell_h=45 settings=$fixtures/styles.json
+    fi
     if $reuse; then
         [ -s "$out/ghostty.png" ] || { echo "ghostty-diff: no capture of $screen to reuse" >&2; exit 2; }
     else
         case $screen in
             colors | boxes)
                 scripts/ghostty-capture "$out" -- cat "$fixtures/$screen.bin"
+                ;;
+            styles)
+                scripts/ghostty-capture "$out" --config "$fixtures/styles.ghostty" -- \
+                    cat "$fixtures/styles.bin"
                 ;;
             nvim)
                 # Neovim with no user config, in a scratch home, splits and a visual selection as in
@@ -73,13 +85,20 @@ for screen in "${screens[@]}"; do
         regions=(--region "split=$((cols / 2)),0,1,$((rows - 2))" --region float=12,9,30,5
             --region statusline=0,-2,$cols,1 --region cmdline=0,-1,$cols,1)
     fi
-    # The snap's size in points: the grid at 8.5 x 18.5 pt a cell, rounded up.
-    width=$(( (cols * 17 + 1) / 2 ))
-    height=$(( (rows * 37 + 1) / 2 ))
+    # Each style's four lines of text (fixtures/make.py `styles`), after their labels.
+    if [ "$screen" = styles ]; then
+        regions=(--region regular=13,2,52,4 --region bold=13,7,52,4 --region italic=13,12,52,4
+            --region bold-italic=13,17,52,4)
+    fi
+    # The snap's size in points: the grid at half a cell's pixels a cell, rounded up.
+    width=$(( (cols * cell_w + 1) / 2 ))
+    height=$(( (rows * cell_h + 1) / 2 ))
     HERDR_FRONTEND_SCREEN="$out/screen.bin" HERDR_FRONTEND_GRID="${cols}x${rows}" \
+        HERDR_FRONTEND_SETTINGS="$settings" \
         "$bin/herdr-frontend" --snap "$out/ours.png" --scene screen-file \
         --size "${width}x${height}" --scale 2 >/dev/null 2>&1
-    "$bin/pixel-diff" ${regions[@]+"${regions[@]}"} "$out/ghostty.png" "$out/ours.png" \
+    HERDR_FRONTEND_SETTINGS="$settings" \
+        "$bin/pixel-diff" ${regions[@]+"${regions[@]}"} "$out/ghostty.png" "$out/ours.png" \
         "$out/screen.bin" "$cols" "$rows" "$out/diff.png" | tee "$out/report.md"
     echo
 done

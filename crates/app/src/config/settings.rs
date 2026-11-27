@@ -6,6 +6,10 @@
 //! (`docs/research/feature-inventory.md` §2), which is [`Settings::default`]. Keys herdr-frontend
 //! doesn't read (`sounds`, `telemetry`, `font_ligatures`, …) are ignored: it has no sounds, no
 //! telemetry and draws terminals without ligatures.
+//!
+//! The font style keys are Ghostty's (`font-style`, `font-style-bold`, `font-style-italic`,
+//! `font-style-bold-italic`), which Herdr app doesn't have: each names the face of the `font`
+//! family a style draws with, by its style name (`config::fonts`).
 
 use std::collections::BTreeMap;
 
@@ -18,6 +22,9 @@ pub const ZOOM_MAX: f32 = 3.0;
 
 /// The panels' text size before zoom: herdr-app's `ui_font_size`, which no file changes.
 pub const UI_FONT_SIZE: f32 = 13.0;
+
+/// Eli's terminal and panel font family, as installed (`~/Library/Fonts/OperatorMono-*.otf`).
+pub const FONT: &str = "Operator Mono";
 
 /// Light or dark: Eli's is always dark.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -37,9 +44,18 @@ pub struct Settings {
     /// How big the whole window is drawn, 1 as designed: terminals, panels and the layout's
     /// sizes. The zoom keys change it, in tenths, from 0.5 to 3.
     pub zoom: f32,
-    /// The terminals' font family and size (points at zoom 1, 6 to 72).
+    /// The terminals' font family and size (points at zoom 1, 6 to 72): Ghostty's `font-family`
+    /// and `font-size`.
     pub font: String,
     pub font_size: f32,
+    /// The style name of the face each terminal style draws with (`"Book"`, `"Bold Italic"`), as
+    /// Ghostty's `font-style*`. `None` finds the family's face by its bold and italic traits
+    /// instead. A file that names another `font` and leaves these out gets `None`: the defaults
+    /// are Operator Mono's style names.
+    pub font_style: Option<String>,
+    pub font_style_bold: Option<String>,
+    pub font_style_italic: Option<String>,
+    pub font_style_bold_italic: Option<String>,
     /// The panels' font family; its size is [`UI_FONT_SIZE`] at zoom 1.
     pub ui_font: String,
     /// Row height and column width multipliers, clamped to 0.8..2: Ghostty's `adjust-cell-height`
@@ -62,13 +78,18 @@ pub struct Settings {
 }
 
 impl Default for Settings {
-    /// Eli's `settings.json` (`docs/research/feature-inventory.md` §2).
+    /// Eli's `settings.json` (`docs/research/feature-inventory.md` §2), with Operator Mono's
+    /// Book weight and its own Bold, as installed.
     fn default() -> Settings {
         Settings {
             zoom: 1.1,
-            font: "Operator Mono Book Herdr".into(),
+            font: FONT.into(),
             font_size: 17.0,
-            ui_font: "Operator Mono Book Herdr".into(),
+            font_style: Some("Book".into()),
+            font_style_bold: Some("Bold".into()),
+            font_style_italic: Some("Book Italic".into()),
+            font_style_bold_italic: Some("Bold Italic".into()),
+            ui_font: FONT.into(),
             terminal_line_height: 1.0,
             terminal_cell_width: 1.0,
             terminal_scroll_speed: 1.0,
@@ -89,18 +110,53 @@ impl Settings {
             zoom: 1.0,
             font: "JetBrains Mono".into(),
             font_size: 14.0,
+            font_style: None,
+            font_style_bold: None,
+            font_style_italic: None,
+            font_style_bold_italic: None,
             ui_font: "JetBrains Mono".into(),
             ..Settings::default()
         }
+    }
+
+    /// The four `font_style*` keys, regular first.
+    pub fn font_styles(&self) -> [Option<&str>; 4] {
+        [
+            &self.font_style,
+            &self.font_style_bold,
+            &self.font_style_italic,
+            &self.font_style_bold_italic,
+        ]
+        .map(|s| s.as_deref())
     }
 
     /// The settings a file's text gives, and what's wrong with it. Text that isn't a settings
     /// object is an `Err`: the caller keeps what it had. A value out of range takes its default
     /// (or is clamped, where herdr-app clamps) and is reported.
     pub fn parse(text: &str) -> Result<(Settings, Vec<String>), String> {
+        let value: Value = serde_json::from_str(text).map_err(|e| format!("settings.json: {e}"))?;
         let mut settings: Settings =
-            serde_json::from_str(text).map_err(|e| format!("settings.json: {e}"))?;
+            Settings::deserialize(&value).map_err(|e| format!("settings.json: {e}"))?;
         let problems = settings.check();
+        // The style names are Operator Mono's: another family the file names keeps none it
+        // doesn't give, so its faces are found by their traits. After `check`, so an empty
+        // `font` (Operator Mono again) keeps them.
+        if !settings.font.trim().eq_ignore_ascii_case(FONT) {
+            let given = |key: &str| value.get(key).is_some();
+            for (key, style) in [
+                ("font_style", &mut settings.font_style),
+                ("font_style_bold", &mut settings.font_style_bold),
+                ("font_style_italic", &mut settings.font_style_italic),
+                (
+                    "font_style_bold_italic",
+                    &mut settings.font_style_bold_italic,
+                ),
+            ] {
+                if !given(key) {
+                    *style = None;
+                }
+            }
+        }
         Ok((settings, problems))
     }
 
@@ -131,6 +187,16 @@ impl Settings {
         self.terminal_scroll_speed = clamp(self.terminal_scroll_speed, 0.1, 5.0);
         if self.font.trim().is_empty() {
             self.font = d.font;
+        }
+        for style in [
+            &mut self.font_style,
+            &mut self.font_style_bold,
+            &mut self.font_style_italic,
+            &mut self.font_style_bold_italic,
+        ] {
+            if style.as_deref().is_some_and(|s| s.trim().is_empty()) {
+                *style = None;
+            }
         }
         if self.ui_font.trim().is_empty() {
             self.ui_font = d.ui_font;
@@ -189,9 +255,18 @@ mod tests {
         assert!(problems.is_empty());
         assert_eq!(s, Settings::default());
         assert_eq!(s.zoom, 1.1);
-        assert_eq!(s.font, "Operator Mono Book Herdr");
-        assert_eq!(s.ui_font, "Operator Mono Book Herdr");
+        assert_eq!(s.font, "Operator Mono");
+        assert_eq!(s.ui_font, "Operator Mono");
         assert_eq!(s.font_size, 17.0);
+        assert_eq!(
+            s.font_styles(),
+            [
+                Some("Book"),
+                Some("Bold"),
+                Some("Book Italic"),
+                Some("Bold Italic")
+            ]
+        );
         assert_eq!(
             (
                 s.terminal_line_height,
@@ -211,13 +286,13 @@ mod tests {
         let text = r#"{
           "zoom": 1.100000023841858,
           "sounds": { "enabled": false },
-          "font": "Operator Mono Book Herdr",
+          "font": "Operator Mono",
           "font_size": 17.0,
           "font_ligatures": false,
           "terminal_line_height": 1.0,
           "terminal_cell_width": 1.0,
           "terminal_scroll_speed": 1.0,
-          "ui_font": "Operator Mono Book Herdr",
+          "ui_font": "Operator Mono",
           "telemetry": false,
           "pane_scrollbars": false,
           "minimum_contrast": 1.0,
@@ -246,9 +321,28 @@ mod tests {
             ),
             (2.0, 0.8, 5.0)
         );
-        assert_eq!(s.font, "Operator Mono Book Herdr");
+        assert_eq!(s.font, "Operator Mono");
         assert_eq!(problems.len(), 3, "{problems:?}");
         assert!(problems[0].contains("zoom 9 is outside 0.5..3"));
+    }
+
+    #[test]
+    fn the_style_names_go_with_operator_mono() {
+        // Another family keeps only the styles the file gives; the rest are found by trait.
+        let (s, _) = Settings::parse(r#"{"font": "Menlo", "font_style_bold": "Bold"}"#).unwrap();
+        assert_eq!(s.font_styles(), [None, Some("Bold"), None, None]);
+        // Operator Mono, in any case, keeps Book and Bold; null or "" asks for traits.
+        let (s, _) = Settings::parse(
+            r#"{"font": "operator mono", "font_style_italic": null, "font_style": " "}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            s.font_styles(),
+            [None, Some("Bold"), None, Some("Bold Italic")]
+        );
+        // An empty font is Operator Mono, with its style names.
+        let (s, _) = Settings::parse(r#"{"font": ""}"#).unwrap();
+        assert_eq!(s, Settings::default());
     }
 
     #[test]

@@ -2,12 +2,13 @@
 # Capture what Ghostty.app draws for a program's output, and the output itself, for the renderer's
 # pixel diff (scripts/ghostty-diff, docs/research/renderer-gates.md).
 #
-#   scripts/ghostty-capture OUTDIR [--keep SECONDS] -- COMMAND [ARGS...]
+#   scripts/ghostty-capture OUTDIR [--keep SECONDS] [--config FILE] -- COMMAND [ARGS...]
 #
 # Starts a separate Ghostty instance with only this script's config (no user config): JetBrains
 # Mono, the font Ghostty embeds, at 14 pt, ligatures off, no padding, no window decoration, the
-# arctic colors, a steady block cursor. In it, COMMAND runs under `script`, which records every
-# byte it writes. Writes:
+# arctic colors, a steady block cursor. `--config FILE` adds FILE's lines after those (another
+# font-family and font-size, say). In it, COMMAND runs under `script`, which records every byte it
+# writes. Writes:
 #
 #   OUTDIR/ghostty.png  the window, captured with `screencapture -l` (the terminal running this
 #                       needs Screen Recording permission) and converted to sRGB
@@ -23,12 +24,16 @@ set -euo pipefail
 out=$(mkdir -p "$1" && cd "$1" && pwd)
 shift
 keep=2
-if [ "${1:-}" = "--keep" ]; then
-    keep=$2
-    shift 2
-fi
+extra=""
+while :; do
+    case "${1:-}" in
+        --keep) keep=$2; shift 2 ;;
+        --config) extra=$(cd "$(dirname "$2")" && pwd)/$(basename "$2"); shift 2 ;;
+        *) break ;;
+    esac
+done
 [ "${1:-}" = "--" ] && shift
-[ $# -gt 0 ] || { echo "usage: ghostty-capture OUTDIR [--keep SECONDS] -- COMMAND [ARGS...]" >&2; exit 2; }
+[ $# -gt 0 ] || { echo "usage: ghostty-capture OUTDIR [--keep SECONDS] [--config FILE] -- COMMAND [ARGS...]" >&2; exit 2; }
 app=${GHOSTTY_APP:-/Applications/Ghostty.app}
 
 work=$(mktemp -d)
@@ -72,6 +77,7 @@ confirm-close-surface = false
 quit-after-last-window-closed = true
 command = /bin/sh $work/show
 EOF
+[ -z "$extra" ] || cat "$extra" >>"$work/config"
 
 # The command's arguments, quoted for the shell in Ghostty.
 quoted=$(printf '%q ' "$@")

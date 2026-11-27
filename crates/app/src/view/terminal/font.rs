@@ -5,6 +5,10 @@
 //! that spaces glyphs exactly one cell apart, a line height of one cell, and ligatures off
 //! (`docs/research/terminal-rendering.md` §2 "Font fallback and shaping").
 //!
+//! An installed family (`config::fonts`) is registered as its private family: Rune picks each
+//! style's face by weight and slant within it, so regular, bold, italic and bold italic each draw
+//! the face Ghostty's discovery chose.
+//!
 //! A font other than JetBrains Mono keeps Ghostty's fallback order: its own faces, then the
 //! JetBrains Mono Ghostty embeds as its backup (`ghostty:src/font/SharedGridSet.zig:260-316`),
 //! then what the system finds. The text style names both families, so Rune tries them in that
@@ -16,7 +20,7 @@ use rune::{Family, TextStyle};
 use skrifa::{FontRef, MetadataProvider};
 use terminal::{DesiredSize, FaceError, FaceMetrics, Metrics, Modifier, Modifiers};
 
-use crate::config::fonts::FamilyFiles;
+use crate::config::fonts;
 
 /// JetBrains Mono's family name, as its file names it.
 pub const JETBRAINS_MONO_FAMILY: &str = "JetBrains Mono";
@@ -75,42 +79,26 @@ impl Font {
         })
     }
 
-    /// A family found in the font folders, with the bundled JetBrains Mono behind it, as
-    /// Ghostty's fallback order has it.
-    pub fn from_files(files: &FamilyFiles, points: f32) -> Result<Font, FontError> {
+    /// An installed family, its faces registered under its private name, with the bundled
+    /// JetBrains Mono behind it, as Ghostty's fallback order has it.
+    pub fn from_family(family: &fonts::Family, points: f32) -> Result<Font, FontError> {
         let backup = Font::jetbrains_mono(points);
-        let regular = files.faces.first().ok_or(FontError::NoFaces)?;
-        FontRef::from_index(&regular.bytes, regular.index)
-            .map_err(|err| FontError::Face(FaceError::Font(err)))?;
-        let mut family = None;
-        let mut registered: Vec<*const u8> = Vec::new();
-        for face in &files.faces {
-            // A collection's faces share one file: it registers once.
-            if registered.contains(&face.bytes.as_ptr()) {
-                continue;
-            }
-            registered.push(face.bytes.as_ptr());
+        let regular = family.regular();
+        FontRef::new(&regular.bytes).map_err(|err| FontError::Face(FaceError::Font(err)))?;
+        for face in family.faces.iter().flatten() {
             let names = rune::text::add_font(face.bytes.clone());
-            if family.is_none() {
-                family = names
-                    .iter()
-                    .find(|n| n.eq_ignore_ascii_case(&files.name))
-                    .or(names.first())
-                    .cloned();
+            if !names.contains(&family.private) {
+                return Err(FontError::Unregistered);
             }
         }
-        let family = family.ok_or(FontError::Unregistered)?;
-        if family.eq_ignore_ascii_case(JETBRAINS_MONO_FAMILY) {
-            return Ok(backup);
-        }
-        let quote = |name: &str| format!("\"{}\"", name.replace('"', ""));
-        let families = format!("{}, {}", quote(&family), quote(backup.family));
+        let private = family.private.replace('"', "");
+        let families = format!("\"{private}\", \"{}\"", backup.family);
         Ok(Font {
-            family: Box::leak(family.into_boxed_str()),
+            family: Box::leak(private.into_boxed_str()),
             families: Box::leak(families.into_boxed_str()),
             backup: true,
             regular: regular.bytes.clone(),
-            index: regular.index,
+            index: 0,
             points,
             modifiers: Modifiers::default(),
         })
@@ -288,15 +276,21 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::config::fonts;
 
     #[test]
-    fn another_family_keeps_jetbrains_mono_as_its_backup() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../terminal/tests/fonts");
-        let files = fonts::find("Geist Mono", &[dir]).expect("the test font");
-        let font = Font::from_files(&files, 17.0).unwrap();
-        assert_eq!(font.family(), "Geist Mono");
-        assert_eq!(font.families(), "\"Geist Mono\", \"JetBrains Mono\"");
+    fn a_family_registers_under_its_private_name_with_jetbrains_mono_behind_it() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../terminal/tests/fonts/GeistMono-Variable.ttf");
+        let data = Arc::from(std::fs::read(&path).unwrap());
+        let family =
+            fonts::Family::from_faces("Geist Mono", [Some((path, data, 0)), None, None, None])
+                .expect("the test font");
+        let font = Font::from_family(&family, 17.0).unwrap();
+        assert_eq!(font.family(), family.private);
+        assert_eq!(
+            font.families(),
+            format!("\"{}\", \"JetBrains Mono\"", family.private)
+        );
         assert_eq!(font.points, 17.0);
         // JetBrains Mono itself needs no backup.
         assert_eq!(Font::jetbrains_mono(14.0).families(), JETBRAINS_MONO_FAMILY);

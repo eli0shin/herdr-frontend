@@ -1,0 +1,9 @@
+# Eli's terminal font as Ghostty takes it: Operator Mono's Book face and its own Bold, each style
+# by its style name, at his effective 18.7 pt (font_size 17 x zoom 1.1). styles.json says the same
+# to herdr-frontend.
+font-family = Operator Mono
+font-style = Book
+font-style-bold = Bold
+font-style-italic = Book Italic
+font-style-bold-italic = Bold Italic
+font-size = 18.7

@@ -31,7 +31,7 @@ pub mod constraint;
 #[cfg(target_os = "macos")]
 mod coretext;
 #[cfg(target_os = "macos")]
-mod discovery;
+pub mod discovery;
 mod tables;
 
 use std::cell::RefCell;

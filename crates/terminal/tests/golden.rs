@@ -53,8 +53,8 @@ fn check(font: &FontFile, data: &[u8], points: f32, scale: f32, expected: Cell) 
 const ELI_POINTS: f32 = 17.0 * 1.1;
 
 #[test]
-fn operator_mono_book_herdr() {
-    let font = common::operator_mono("Regular");
+fn operator_mono_book() {
+    let font = common::operator_mono("Book");
     let Some(data) = font.load() else { return };
 
     // The parity cell, the same in Herdr app (0.1.18 and later) and in Ghostty.
@@ -125,7 +125,7 @@ fn operator_mono_book_herdr() {
 #[test]
 fn operator_mono_styles_have_the_regular_cell() {
     // Ghostty sizes the grid from the primary (regular) face only, but the styles agree anyway.
-    for style in ["Bold", "Italic", "BoldItalic"] {
+    for style in ["Bold", "BookItalic", "BoldItalic"] {
         let font = common::operator_mono(style);
         let Some(data) = font.load() else { continue };
         assert_eq!(
@@ -303,7 +303,7 @@ fn menlo() {
 
 #[test]
 fn modifiers_on_the_parity_font() {
-    let font = common::operator_mono("Regular");
+    let font = common::operator_mono("Book");
     let Some(data) = font.load() else { return };
     let face = FaceMetrics::from_data(&data, 0, DesiredSize::new(ELI_POINTS, 2.0)).unwrap();
 
