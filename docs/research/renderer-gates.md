@@ -21,8 +21,8 @@ same file. Its cell is 17 × 37 px at 2x. This doc answers the four gates in
   Powerline, and all five underline styles, are drawn on a port of Ghostty's sprite canvas and
   its z2d rasterizer. Against Ghostty, 335 sprite cells have no pixel off by more than 16 of 255,
   blocks and braille are identical, and every underline style, undercurl included, is identical.
-- **Gate 4 (layering) passes for the MVP.** Below-text kitty images will need two grids per pane,
-  which is a contained change.
+- **Gate 4 (layering) passes.** Below-text kitty images draw between two grids per pane (ticket
+  042, [Kitty graphics](#kitty-graphics)), a contained change inside the pane view.
 Follow-ups for later tickets:
 
 - **The 0.1 px:** grid can't shift a row's line by less than a pixel, so it can't add Ghostty's
@@ -32,7 +32,6 @@ Follow-ups for later tickets:
 - **Sprites not ported yet:** Symbols for Legacy Computing (U+1FB00 to U+1FBEF and its
   supplement) and branch drawing (U+F5D0 to U+F60D) still come from the font. `pixel-diff` lists
   them as `FontSprite`.
-- **Kitty graphics:** build the two-grid pane for below-text placements, and measure it.
 
 ## What was built
 
@@ -77,6 +76,8 @@ The renderer lives in `crates/app/src/view/terminal/`:
   computes it with `terminal::Size` and passes it in.
 - `look.rs`: the colors a view adds (selection, cursor, cursor text, faint opacity), and Eli's
   arctic theme.
+- `images.rs`: kitty images in their three layers (ticket 042; see
+  [Kitty graphics](#kitty-graphics)).
 
 `herdr_frontend::app()` turns Rune's font smoothing off (`FontSmoothing::Off`) for the whole
 window. That's how Ghostty rasterizes by default (`font-thicken = false`); see
@@ -84,7 +85,8 @@ window. That's how Ghostty rasterizes by default (`font-thicken = false`); see
 
 The scenes `terminal-colors`, `terminal-boxes`, `terminal-nvim`, `terminal-nvim-checklist`,
 `terminal-selection` and `terminal-panes` draw the fixture screens in `crates/app/fixtures/`
-(`just snap terminal-nvim`).
+(`just snap terminal-nvim`), and `terminal-images` draws the `kitten icat` recording in
+`crates/terminal/tests/streams/`.
 `tests/terminal_view.rs` checks them headless:
 
 - the grid is the terminal's size at the pane's top left;
@@ -284,16 +286,16 @@ nothing it draws is affected. Three later features are:
 - **Kitty images in the below-text layer** (z below 0, `types.h:380-407`, which includes Unicode
   placeholders) need two grids per pane: one with the fills only, and one with the text only,
   with the images between them. Both take the same rows' data, and each row is cached on its
-  own. The kitty graphics ticket has to build and measure this. A pane with no below-text
-  placements keeps the one grid.
+  own. A pane with no below-text placements keeps the one grid. Ticket 042 built this
+  ([Kitty graphics](#kitty-graphics)).
 - **Glyphs that overflow their row** are clipped. That affects tall accents and descenders in
   fonts whose glyphs reach outside the line, which `Metrics.zig:249-256` allows for. Pinned cells
   aren't clipped. For JetBrains Mono at 14 pt it doesn't show: no text pixel on the four screens
   is off by more than 64, and the ink weight matches. For Operator Mono at 18.7 pt, 0.01% of the
   text pixels are ([Terminal font styles](#terminal-font-styles)).
 
-**Passes for the MVP.** Below-text images are the one known case that needs the two-grid
-arrangement. That's a contained change inside the pane view, not a reason to leave grid.
+**Passes.** Below-text images are the one known case that needs the two-grid arrangement, and
+it stayed a contained change inside the pane view, not a reason to leave grid.
 
 ## Fidelity
 
@@ -472,6 +474,56 @@ Over all 806 text cells, our ink sits 0.210 px left of Ghostty's (the predicted 
 centering, see the follow-ups) and level with it (+0.004 px), with the same ink weight (ratio
 0.999). A wrong face, or a synthesized bold or italic, would show as a different weight and a
 far larger difference in its style's row.
+
+## Kitty graphics
+
+Ticket 042, stage 9 of [`terminal-rendering.md` §8](terminal-rendering.md#staged-plan)
+(implementation in §2 "Kitty graphics"). `scripts/ghostty-diff images` measured it on
+2026-11-27 against Ghostty.app 1.4.0, at a 177 × 51 grid. The screen is `kitten icat` 0.51.1
+drawing three test images (`streams/kitty-images.py`):
+
+- at their own size, and scaled by icat;
+- under the backgrounds, under the text and over it, with text and colored cells around them;
+- as unicode placeholders;
+- plus a hand-written row: a crop stretched over three cells from a pixel offset, zlib RGBA, and
+  an image placed and then deleted.
+
+| region | cells | identical | pixels differing | > 16 | > 64 | mean abs diff (0-255) |
+| --- | --- | --- | --- | --- | --- | --- |
+| photo (own size) | 16 | 0 | 95.87% | 59.38% | 3.58% | 10.59 |
+| scaled (by icat) | 64 | 0 | 97.92% | 59.67% | 3.95% | 10.74 |
+| below text | 60 | 8 | 58.53% | 33.55% | 2.15% | 6.25 |
+| below background | 60 | 17 | 40.98% | 14.92% | 0.77% | 3.03 |
+| above text | 4 | 2 | 8.15% | 0.00% | 0.00% | 0.44 |
+| dots (1 px checkerboard) | 2 | 0 | 50.00% | 0.00% | 0.00% | 0.33 |
+| placeholders | 144 | 64 | 54.17% | 33.12% | 2.15% | 5.95 |
+| by hand | 12 | 9 | 1.01% | 1.01% | 0.00% | 0.27 |
+
+**Where the images go matches Ghostty to the pixel.** Every image starts and ends on the same
+pixels in both captures:
+
+- the photo's one-pixel white frame, at its own size and icat's double;
+- the crop's box, x 22-67 and y 783-813 px, from five and six pixels into its cell;
+- the placeholders' pieces, one row of cells each;
+- the image cut off by the backgrounds under it.
+
+The layering matches too. Colored cells hide the below-background image, and letters stay over
+the below-text one. The half-transparent white over the text blends to the same grey (143 in
+both). Pure red, green, blue and white come out identical, and nothing of the deleted image is
+drawn.
+
+**The colors differ, on purpose.** Ghostty shows image pixels as Display P3 values, not sRGB. The
+photo's (253, 160, 1) comes out as (255, 154, 0), its middle (126, 160, 128) as (117, 161, 125),
+and the yellow (255, 220, 0) as (255, 218, 0). That accounts for the differences over 16 above,
+but the hand-written row's, which are the edge blending at the end of this section. Since
+PR #4913 Ghostty's Metal layer is always Display P3, and `load_color` converts every cell color
+from sRGB to P3. `image_fragment` samples the image and writes it out with no such step, though
+the PR says images are "assumed to be sRGB" (`ghostty:src/renderer/shaders/shaders.metal`). Kitty
+shows them as sRGB. herdr-frontend takes them as sRGB, the intent of both, and its surface is
+sRGB, so they draw as sent. Copying Ghostty would mean converting every image from P3 to sRGB,
+which clips saturated colors, to repeat what looks like a Ghostty bug. One smaller effect: Ghostty
+blends a scaled image's edge texels in linear light, so a stretched crop's one-pixel edge is a
+little lighter there.
 
 ## Font smoothing
 

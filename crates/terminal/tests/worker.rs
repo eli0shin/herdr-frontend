@@ -437,3 +437,37 @@ fn a_selection_drag_held_past_the_top_scrolls_on_the_worker() {
     assert!(s.screen[0].selection.is_some());
     terminal.select(SelectEvent::new(SelectAction::Release, 1.0, -40.0));
 }
+
+/// A playing kitty animation needs no output to move on: the worker wakes when the next frame is
+/// due and publishes it, and once the program stops it, the snapshots stop.
+#[test]
+fn a_kitty_animation_plays_on_the_worker() {
+    let (terminal, wakes) = spawn(config());
+    // libghostty-vt's example: red for 30 ms, then blue for 40 ms, looping.
+    terminal.write(
+        concat!(
+            "\x1b_Ga=T,f=32,i=2,s=1,v=1,q=2;/wAA/w==\x1b\\",
+            "\x1b_Ga=f,f=32,i=2,s=1,v=1,z=40,q=2;AAD//w==\x1b\\",
+            "\x1b_Ga=a,i=2,r=1,z=30,q=2\x1b\\",
+            "\x1b_Ga=a,i=2,s=3,q=2\x1b\\",
+        )
+        .as_bytes()
+        .to_vec(),
+    );
+    let first = |s: &Snapshot| s.images.first().map(|p| p.image.rgba[..4].to_vec());
+    for color in [[255, 0, 0, 255], [0, 0, 255, 255], [255, 0, 0, 255]] {
+        snapshot_where(&terminal, &wakes, |s| first(s) == Some(color.to_vec()));
+    }
+    terminal.write(b"\x1b_Ga=a,i=2,s=1,q=2\x1b\\".to_vec());
+    sync(&terminal);
+    // Take what the stop itself published, until the worker has nothing more to say.
+    let settle = Instant::now() + Duration::from_millis(150);
+    while Instant::now() < settle {
+        let _ = terminal.take_snapshot();
+        let _ = wakes.recv_timeout(Duration::from_millis(10));
+    }
+    let _ = terminal.take_snapshot();
+    while wakes.try_recv().is_ok() {}
+    // Stopped: no more frames come by themselves.
+    assert!(wakes.recv_timeout(Duration::from_millis(200)).is_err());
+}

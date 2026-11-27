@@ -11,6 +11,9 @@ copy-mode = { path = "../copy-mode" }
 # Ghostty's link pattern (`src/links.rs`) needs look-around, which `regex` lacks.
 fancy-regex = "0.20.2"
 ghostty-vt-sys = { path = "../ghostty-vt-sys" }
+# Decodes the PNGs kitty graphics send (libghostty-vt leaves it to the embedder). The version the
+# app's pixel diff and Rune's tree already use.
+png = "0.18.1"
 # Reads the font tables for the cell metrics. The version Rune's text stack already uses.
 skrifa = "0.44.0"
 

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use terminal::{Config, Row, Snapshot, Theme, Vt};
 
 use crate::config::settings::Settings;
-use crate::view::terminal::font::Font;
+use crate::view::terminal::font::{Face, Font};
 
 /// A fixture: its name and the bytes a program wrote to a `COLS` × `ROWS` terminal.
 pub struct Fixture {
@@ -47,20 +47,46 @@ pub const NVIM_CHECKLIST: Fixture = Fixture {
     bytes: include_bytes!("../fixtures/nvim-checklist.bin"),
 };
 
-pub const ALL: [&Fixture; 4] = [&COLORS, &BOXES, &NVIM_SPLITS, &NVIM_CHECKLIST];
+/// `kitten icat` drawing test images in each layer, scaled by icat and as unicode placeholders,
+/// then a crop with an offset and zlib RGBA by hand, laid out for 17 × 37 px cells
+/// (`crates/terminal/tests/images.rs` has the command line).
+pub const IMAGES: Fixture = Fixture {
+    name: "images",
+    bytes: include_bytes!("../../terminal/tests/streams/kitty-icat.bin"),
+};
+
+pub const ALL: [&Fixture; 5] = [&COLORS, &BOXES, &NVIM_SPLITS, &NVIM_CHECKLIST, &IMAGES];
 
 impl Fixture {
     /// The fixture's screen, replayed into a fresh terminal with `theme`'s colors.
     pub fn snapshot(&self, theme: &Theme) -> Snapshot {
         replay(self.bytes, COLS, ROWS, theme)
     }
+
+    /// [`Fixture::snapshot`] in a terminal sized with `face`'s cell, as a pane's terminal is:
+    /// kitty images need one to be placed.
+    pub fn snapshot_in(&self, theme: &Theme, face: &Face) -> Snapshot {
+        replay_in(self.bytes, COLS, ROWS, theme, face)
+    }
 }
 
-/// `bytes` written to a fresh `cols` × `rows` terminal with `theme`'s colors.
+/// `bytes` written to a fresh `cols` × `rows` terminal with `theme`'s colors, with no cell size.
 pub fn replay(bytes: &[u8], cols: u16, rows: u16, theme: &Theme) -> Snapshot {
+    replay_at(bytes, cols, rows, theme, (0, 0))
+}
+
+/// [`replay`] in a terminal sized with `face`'s cell.
+pub fn replay_in(bytes: &[u8], cols: u16, rows: u16, theme: &Theme, face: &Face) -> Snapshot {
+    let cell = (face.metrics.cell_width, face.metrics.cell_height);
+    replay_at(bytes, cols, rows, theme, cell)
+}
+
+fn replay_at(bytes: &[u8], cols: u16, rows: u16, theme: &Theme, cell: (u32, u32)) -> Snapshot {
     let mut vt = Vt::new(&Config {
         cols,
         rows,
+        cell_width: cell.0,
+        cell_height: cell.1,
         theme: theme.clone(),
         ..Config::default()
     });

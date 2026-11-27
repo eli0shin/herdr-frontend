@@ -778,6 +778,10 @@ The main way to reach agents. Agents are terminals that report OSC 7501 status: 
     shows a toast and stops the click.
 - [ ] **[Shipped, used] Kitty graphics, OSC 52 clipboard writes (≤1 MiB, reads never),
   `minimum_contrast` and file drag-and-drop into terminals** (remote: copied there) (`cfg/AGENTS.md`).
+  - herdr-frontend draws kitty images as Ghostty does (ticket 042, `terminal-rendering.md` §2
+    "Kitty graphics"), with one intentional difference: it shows image pixels as sRGB, as kitty
+    does and as Ghostty intends. Ghostty.app shows them as Display P3 values, so saturated images
+    look more vivid there (`renderer-gates.md` "Kitty graphics").
 - [ ] **[Shipped, used] Select all** (`terminal.select_all`), from the palette only. The docs give
   Cmd+A as the macOS default, but Eli's edited `keys.json` doesn't bind it, an edited keys file
   keeps no new defaults (`cfg/AGENTS.md` Keys), and the terminal menu doesn't offer it. The

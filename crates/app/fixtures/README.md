@@ -49,6 +49,12 @@ Program output the renderer's scenes, headless tests and Ghostty pixel diff draw
       nvim -n -i NONE -u "$PWD/../../../app/fixtures/nvim-checklist.lua" < steps
   ```
 
-`scripts/ghostty-diff` doesn't replay these files into Ghostty: Ghostty's window is whatever size
-the window manager gives it, so it runs the same programs live at Ghostty's grid and records what
-they write, and the renderer draws that recording at the same grid.
+The `terminal-images` scene draws `crates/terminal/tests/streams/kitty-icat.bin` instead, `kitten
+icat` showing kitty images (`fixtures.rs` `IMAGES`, `crates/terminal/tests/images.rs` has its
+command line). It's laid out for 17 × 37 px cells, so the terminal scenes size their terminals
+with a 2x face's cell.
+
+`scripts/ghostty-diff` doesn't replay the Neovim files into Ghostty: Ghostty's window is whatever
+size the window manager gives it, so it runs the same programs live at Ghostty's grid and records
+what they write, and the renderer draws that recording at the same grid. The synthetic screens and
+the kitty recording position everything themselves, so it `cat`s those.

@@ -2,7 +2,7 @@
 
 use crate::State;
 use crate::config::settings::Settings;
-use crate::fixtures::{self, BOXES, COLORS, Fixture, NVIM_CHECKLIST, NVIM_SPLITS};
+use crate::fixtures::{self, BOXES, COLORS, Fixture, IMAGES, NVIM_CHECKLIST, NVIM_SPLITS};
 use crate::link::{Fake, Offline};
 use crate::state::Status;
 use crate::view::terminal::TerminalPane;
@@ -10,12 +10,16 @@ use crate::view::terminal::TerminalPane;
 /// A scene: its name and how it changes the first state.
 type Scene = (&'static str, fn(&mut State));
 
+/// The display scale the terminal scenes size their terminals' cells for: the pixel diff's.
+const SNAP_SCALE: f32 = 2.0;
+
 pub(crate) const SCENES: &[Scene] = &[
     ("hello", |_| {}),
     ("terminal-colors", |s| one(s, &COLORS)),
     ("terminal-boxes", |s| one(s, &BOXES)),
     ("terminal-nvim", |s| one(s, &NVIM_SPLITS)),
     ("terminal-nvim-checklist", |s| one(s, &NVIM_CHECKLIST)),
+    ("terminal-images", |s| one(s, &IMAGES)),
     ("terminal-selection", selection),
     ("terminal-panes", panes),
     ("screen-file", screen_file),
@@ -443,10 +447,12 @@ fn shell_copy_mode(s: &mut State) {
 }
 
 /// `fixture` alone in a focused pane: what the Ghostty pixel diff compares, at Ghostty's
-/// defaults.
+/// defaults. Its terminal has the cell of a 2x snap, as the pixel diff's; at another scale the
+/// pane scales its images to the cell it draws.
 fn one(s: &mut State, fixture: &Fixture) {
     s.with_settings(Settings::fixture());
-    let mut pane = TerminalPane::new("pane-1", fixture.snapshot(&s.theme));
+    let face = s.face(SNAP_SCALE);
+    let mut pane = TerminalPane::new("pane-1", fixture.snapshot_in(&s.theme, &face));
     pane.focused = true;
     s.panes = vec![pane];
 }
@@ -500,7 +506,9 @@ fn screen_file(s: &mut State) {
     } else {
         (cols, rows)
     };
-    let mut pane = TerminalPane::new("pane-1", fixtures::replay(&bytes, cols, rows, &s.theme));
+    let face = s.face(SNAP_SCALE);
+    let snapshot = fixtures::replay_in(&bytes, cols, rows, &s.theme, &face);
+    let mut pane = TerminalPane::new("pane-1", snapshot);
     pane.focused = true;
     s.panes = vec![pane];
 }

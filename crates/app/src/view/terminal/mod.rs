@@ -11,10 +11,16 @@
 //! (`El::ime_cursor`), even when the program hides the cursor, so the candidate window opens
 //! there. What the input method composes draws over that cell, underlined, until it commits:
 //! libghostty-vt keeps no preedit (`docs/research/terminal-rendering.md` §3, "IME").
+//!
+//! Kitty images draw in Ghostty's order ([`images`]): those under the backgrounds before the
+//! grid, those over the text after it and the cursor. Images between the backgrounds and the
+//! text split the grid in two, its backgrounds and then its text, with the images between them;
+//! a pane without such images draws one grid.
 
 pub mod cursor;
 pub mod font;
 pub mod glyph;
+pub mod images;
 pub mod look;
 pub mod rows;
 pub mod scrollbar;
@@ -26,6 +32,7 @@ use rune::{El, OptionAsAlt, Shape, Transition, canvas, el, grid, text};
 use terminal::{Padding, Snapshot};
 
 use self::font::Face;
+use self::images::ImageCache;
 use self::look::{Look, color};
 use self::rows::RowCache;
 
@@ -43,6 +50,7 @@ pub struct TerminalPane {
     /// Which Option keys act as Alt while the pane has the keyboard.
     pub option_as_alt: OptionAsAlt,
     rows: RefCell<RowCache>,
+    images: RefCell<ImageCache>,
 }
 
 impl TerminalPane {
@@ -55,6 +63,7 @@ impl TerminalPane {
             preedit: None,
             option_as_alt: OptionAsAlt::Both,
             rows: RefCell::new(RowCache::default()),
+            images: RefCell::new(ImageCache::default()),
         }
     }
 
@@ -66,6 +75,11 @@ impl TerminalPane {
     /// How many rows the last view built rather than reused.
     pub fn rows_built(&self) -> usize {
         self.rows.borrow().built
+    }
+
+    /// How many kitty images the pane holds pixels for: the ones its last view drew.
+    pub fn images_held(&self) -> usize {
+        self.images.borrow().len()
     }
 
     /// The pane: the terminal's background, the grid at its top left after the padding, and the
@@ -92,19 +106,41 @@ impl TerminalPane {
         // Copy mode's cursor draws solid while its bar has the keyboard.
         let cursor_focused = focused || snapshot.copy.is_some();
         let (cell_w, cell_h) = face.cell_pt();
-        let (rows, atlas, spill) = {
+        let (grid_w, grid_h) = (
+            f32::from(snapshot.cols) * cell_w,
+            f32::from(snapshot.rows) * cell_h,
+        );
+        let layers = self
+            .images
+            .borrow_mut()
+            .layers(snapshot, face, (grid_w, grid_h));
+        let (fills, rows, atlas, spill) = {
             let mut cache = self.rows.borrow_mut();
-            let rows = cache.rows(&snapshot.screen, &snapshot.colors, face, look);
+            let (fills, rows) = if layers.below_text.is_some() {
+                let (fills, text) = cache.split(&snapshot.screen, &snapshot.colors, face, look);
+                (Some(fills), text)
+            } else {
+                (
+                    None,
+                    cache.rows(&snapshot.screen, &snapshot.colors, face, look),
+                )
+            };
             (
+                fills,
                 rows,
                 std::mem::take(&mut cache.atlas),
                 std::mem::take(&mut cache.spill),
             )
         };
-        let (grid_w, grid_h) = (
-            f32::from(snapshot.cols) * cell_w,
-            f32::from(snapshot.rows) * cell_h,
-        );
+        // The backgrounds alone, under the images between them and the text.
+        let fills = fills.map(|rows| {
+            grid(snapshot.cols, cell_w, cell_h, rows)
+                .key("screen-backgrounds")
+                .absolute(0.0, 0.0)
+                .size(grid_w, grid_h)
+                .a11y_hidden()
+                .inert()
+        });
         let mut screen = grid(snapshot.cols, cell_w, cell_h, rows)
             .key("screen")
             .label(if snapshot.title.is_empty() {
@@ -130,10 +166,14 @@ impl TerminalPane {
             .clip_soft(0.0)
             .child(
                 at_grid
+                    .children(layers.below_background)
+                    .children(fills)
+                    .children(layers.below_text)
                     .child(screen)
                     .children(spill_view(&spill, face, grid_w, grid_h))
                     .children(atlas.iter().map(|(row, cell)| cell.view(*row, face)))
                     .children(cursor::overlay(snapshot, cursor_focused, face, look))
+                    .children(layers.above_text)
                     .children(self.ime(focused, face)),
             )
     }

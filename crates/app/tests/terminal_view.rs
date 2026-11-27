@@ -226,3 +226,115 @@ fn unchanged_rows_are_not_built_again() {
         "only the prompt row changed"
     );
 }
+
+/// The rects of the images in one of a pane's image layers.
+fn images_in(rt: &Runtime<State>, layer: &str) -> Vec<[f32; 4]> {
+    let prefix = format!("pane-1/#0/{layer}/");
+    rt.elements()
+        .into_iter()
+        .filter(|e| e.path.contains(&prefix))
+        .map(|e| e.rect)
+        .collect()
+}
+
+/// `kitten icat`'s recording draws in Ghostty's order: images under the backgrounds, the
+/// backgrounds, images under the text, the text, the cursor, then images over it. Each image
+/// sits on its cells at its size, clipped to the grid, and placeholder cells read as blanks.
+#[test]
+fn kitty_images_draw_in_their_layers() {
+    let rt = runtime("terminal-images", (900.0, 700.0));
+    let paths: Vec<String> = rt.elements().into_iter().map(|e| e.path).collect();
+    let at = |key: &str| {
+        let path = format!("pane-1/#0/{key}");
+        paths
+            .iter()
+            .position(|p| p.ends_with(&path))
+            .unwrap_or_else(|| panic!("no {path}"))
+    };
+    let order = [
+        at("images-below-background"),
+        at("screen-backgrounds"),
+        at("images-below-text"),
+        at("screen"),
+        at("images-above-text"),
+    ];
+    assert!(order.is_sorted(), "layers out of order: {order:?}");
+    let grid = [
+        0.0,
+        0.0,
+        f32::from(fixtures::COLS) * CELL.0,
+        f32::from(fixtures::ROWS) * CELL.1,
+    ];
+    assert_eq!(element(&rt, "pane-1/#0/images-above-text").rect, grid);
+
+    // photo.png at its own 136 x 74 px from column 0 of row 1, icat's 272 x 148 px copy from
+    // column 10, glass.png and the dots on row 6, and the zlib RGBA image by hand on row 21.
+    let above = images_in(&rt, "images-above-text");
+    for rect in [
+        [0.0, CELL.1, 68.0, 37.0],
+        [10.0 * CELL.0, CELL.1, 136.0, 74.0],
+        [12.0 * CELL.0, 6.0 * CELL.1, 34.0, 18.5],
+        [46.0 * CELL.0, 6.0 * CELL.1, 17.0, 18.5],
+        [7.0 * CELL.0, 21.0 * CELL.1, 16.0, 16.0],
+    ] {
+        assert!(above.contains(&rect), "no {rect:?} in {above:?}");
+    }
+    // The crop: from 5, 6 px into column 1 of row 21, to the end of its 3 x 1 cells.
+    assert!(above.contains(&[CELL.0 + 2.5, 21.0 * CELL.1 + 3.0, 23.0, 15.5]));
+    assert_eq!(
+        images_in(&rt, "images-below-background"),
+        vec![[56.0 * CELL.0, CELL.1, 102.0, 55.5]]
+    );
+    // Under the text: icat's centred copy, and the placeholders one row of cells at a time.
+    let below = images_in(&rt, "images-below-text");
+    assert_eq!(below.len(), 7);
+    assert!(below.contains(&[32.0 * CELL.0, CELL.1, 102.0, 55.5]));
+    for row in 10..14 {
+        assert!(below.contains(&[20.0 * CELL.0, row as f32 * CELL.1, 136.0, CELL.1]));
+    }
+
+    let lines = read_lines(&rt);
+    assert!(lines.iter().all(|l| !l.contains('\u{10EEEE}')));
+    assert_eq!(lines[10], "", "a row of placeholders reads blank");
+}
+
+/// A pane draws its terminal's images in its own cell: when the terminal was last sized with
+/// another cell (the frame after a zoom or a move to another display), each image still covers
+/// the cells it was placed on. A pane lets go of an image's pixels once it's gone.
+#[test]
+fn images_scale_to_the_cell_the_pane_draws() {
+    let mut rt = runtime("terminal-colors", (680.0, 555.0));
+    let (theme, _) = herdr_frontend::view::terminal::look::arctic();
+    // A 10 x 22 px cell, where a 20 x 44 px image covers 2 x 2 cells.
+    let mut vt = terminal::Vt::new(&terminal::Config {
+        cols: fixtures::COLS,
+        rows: fixtures::ROWS,
+        cell_width: 10,
+        cell_height: 22,
+        theme,
+        ..terminal::Config::default()
+    });
+    let rgb = [255u8; 20 * 44 * 3];
+    let payload = base64(&rgb);
+    vt.write(format!("\x1b[3;5H\x1b_Ga=T,f=24,s=20,v=44,q=2;{payload}\x1b\\").as_bytes());
+    rt.state.panes[0].show(vt.snapshot());
+    rt.invalidate();
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        images_in(&rt, "images-above-text"),
+        vec![[4.0 * CELL.0, 2.0 * CELL.1, 2.0 * CELL.0, 2.0 * CELL.1]]
+    );
+    assert_eq!(rt.state.panes[0].images_held(), 1);
+
+    vt.write(b"\x1b_Ga=d,d=A,q=2\x1b\\");
+    rt.state.panes[0].show(vt.snapshot());
+    rt.invalidate();
+    rt.frame(1.0 / 60.0);
+    assert!(images_in(&rt, "images-above-text").is_empty());
+    assert_eq!(rt.state.panes[0].images_held(), 0);
+}
+
+fn base64(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}

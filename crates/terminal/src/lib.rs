@@ -48,11 +48,12 @@ pub use input::{
 };
 pub use snapshot::{
     ActiveScreen, Cell, CellFlags, Colors, CopyView, Cursor, CursorStyle, Dirty, Found, Grapheme,
-    Match, Modes, Rgb, Row, RowId, Scrollbar, Snapshot, Span, Underline, Width,
+    Image, ImageLayer, ImageRect, Match, Modes, Placement, Rgb, Row, RowId, Scrollbar, Snapshot,
+    Span, Underline, Width,
 };
 pub use vt::{
-    AUTOSCROLL_EVERY, ClipboardLocation, ColorScheme, Config, Event, Link, Progress, Scroll,
-    Scrollback, Theme, Vt,
+    AUTOSCROLL_EVERY, ClipboardLocation, ColorScheme, Config, Event, IMAGE_STORAGE_LIMIT, Link,
+    Progress, Scroll, Scrollback, Theme, Vt,
 };
 
 /// Called from the worker thread when there is something new for the UI: a snapshot to take or
@@ -424,12 +425,17 @@ impl Worker {
     fn run(mut self) {
         self.publish();
         loop {
-            // Sleep until a request comes, until a render hold has to end, or until a selection
-            // drag held past an edge scrolls again.
-            let deadline = match (self.vt.hold_deadline(), self.vt.autoscroll_deadline()) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            };
+            // Sleep until a request comes, until a render hold has to end, until a selection
+            // drag held past an edge scrolls again, or until a kitty animation's next frame. A
+            // frame that's already waiting to be published plays the animation on when it is.
+            let deadline = [
+                self.vt.hold_deadline(),
+                self.vt.autoscroll_deadline(),
+                self.vt.animation_deadline().filter(|_| !self.changed),
+            ]
+            .into_iter()
+            .flatten()
+            .min();
             let first = match deadline {
                 Some(deadline) => {
                     match self
@@ -469,6 +475,14 @@ impl Worker {
                 self.changed = true;
             }
             if self.vt.autoscroll(Instant::now()) {
+                self.changed = true;
+            }
+            // The snapshot moves the animation on to its due frame.
+            if self
+                .vt
+                .animation_deadline()
+                .is_some_and(|due| due <= Instant::now())
+            {
                 self.changed = true;
             }
             self.flush();

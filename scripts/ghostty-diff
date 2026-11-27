@@ -6,7 +6,7 @@
 # report.md.
 #
 #   scripts/ghostty-diff [--reuse] [SCREEN...]   screens: colors boxes nvim nvim-checklist styles
-#                                                (default: all)
+#                                                images (default: all)
 #
 # `--reuse` keeps each screen's last Ghostty capture and only draws and compares ours again, so a
 # renderer fix can be checked without opening Ghostty.
@@ -15,7 +15,8 @@
 # (a 17 x 37 px cell), except `styles`: regular, bold, italic and bold italic in Operator Mono
 # Book at 18.7 pt (a 21 x 45 px cell), each style the face its style name picks, from
 # fixtures/styles.ghostty for Ghostty and fixtures/styles.json for ours. It needs Operator Mono
-# installed.
+# installed. `images` is `kitten icat`'s kitty graphics recording (crates/terminal/tests/images.rs),
+# reported by image as well.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -25,7 +26,7 @@ if [ "${1:-}" = "--reuse" ]; then
     shift
 fi
 screens=("$@")
-[ ${#screens[@]} -gt 0 ] || screens=(colors boxes nvim nvim-checklist styles)
+[ ${#screens[@]} -gt 0 ] || screens=(colors boxes nvim nvim-checklist styles images)
 
 cargo build --quiet -p herdr-frontend --bins
 bin=target/debug
@@ -46,6 +47,9 @@ for screen in "${screens[@]}"; do
         case $screen in
             colors | boxes)
                 scripts/ghostty-capture "$out" -- cat "$fixtures/$screen.bin"
+                ;;
+            images)
+                scripts/ghostty-capture "$out" -- cat "$streams/kitty-icat.bin"
                 ;;
             styles)
                 scripts/ghostty-capture "$out" --config "$fixtures/styles.ghostty" -- \
@@ -84,6 +88,13 @@ for screen in "${screens[@]}"; do
     if [ "$screen" = nvim-checklist ]; then
         regions=(--region "split=$((cols / 2)),0,1,$((rows - 2))" --region float=12,9,30,5
             --region statusline=0,-2,$cols,1 --region cmdline=0,-1,$cols,1)
+    fi
+    # Each image's cells (streams/kitty-images.py `show`): in every layer, scaled by icat, as
+    # unicode placeholders, and the row by hand.
+    if [ "$screen" = images ]; then
+        regions=(--region photo=0,1,8,2 --region scaled=10,1,16,4 --region below-text=28,1,20,3
+            --region below-background=52,1,20,3 --region above-text=12,6,4,1 --region dots=46,6,2,1
+            --region placeholders=0,10,36,4 --region by-hand=0,21,12,1)
     fi
     # Each style's four lines of text (fixtures/make.py `styles`), after their labels.
     if [ "$screen" = styles ]; then
