@@ -27,6 +27,7 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-keys-help", shell_keys_help),
     ("shell-prefix", shell_prefix),
     ("shell-not-yet", shell_not_yet),
+    ("shell-tabs", shell_tabs),
 ];
 
 /// The app on the demo core ([`fixtures::demo_core`]): the sidebar, the tab strip with `work`
@@ -94,6 +95,15 @@ fn shell_prefix(s: &mut State) {
 fn shell_not_yet(s: &mut State) {
     shell(s);
     s.step(0.0, model::Action::Review);
+}
+
+/// The tab strip's pills ([`fixtures::tab_strip_core`]): `work` selected with Neovim zoomed, a
+/// Pi session's name, the agent's tab left out, a shell numbered 3 and a long name cut short.
+fn shell_tabs(s: &mut State) {
+    s.connect(Box::new(fixtures::tab_strip_core()));
+    s.settle();
+    s.step(0.0, model::Action::PaneZoom);
+    s.settle();
 }
 
 /// `fixture` alone in a focused pane: what the Ghostty pixel diff compares, at Ghostty's

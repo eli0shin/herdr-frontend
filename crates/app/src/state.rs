@@ -676,6 +676,9 @@ impl State {
                         Rename::Space(_) => Action::SpaceRename,
                     },
                     PopupState::Confirm(_) => Action::SpaceClose,
+                    PopupState::Menu(menu) => match &menu.target {
+                        model::MenuTarget::Tab(tab) => Action::TabMenu(tab.clone()),
+                    },
                 };
                 self.not_yet(&action);
                 self.step(self.now, Action::Popup(PopupAction::Close));

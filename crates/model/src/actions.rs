@@ -8,8 +8,8 @@ use crate::action::{Action, CopyAction, Direction, Popup, PopupAction, Split};
 use crate::effect::{Effect, Effects, Level, Pick, TerminalCommand, Toast};
 use crate::geometry;
 use crate::mode::{
-    self, Confirm, Confirmed, CopyState, JumpPopup, ListPopup, Mode, PopupState, Prompt, Rename,
-    Visual,
+    self, Confirm, Confirmed, CopyState, JumpPopup, ListPopup, Menu, Mode, PopupState, Prompt,
+    Rename, Visual,
 };
 use crate::model::{EDITOR_LABEL, Launch, Model};
 use crate::world::SpaceExt;
@@ -20,7 +20,19 @@ impl Model {
             Action::App(command) => fx.push(Effect::App(command)),
             Action::Open(popup) => self.open(popup, fx),
             Action::CopyMode => self.copy_mode(fx),
-            Action::TabNew => self.new_tab(fx),
+            Action::TabNew => self.new_tab(None, fx),
+            Action::NewTabIn(space) => {
+                if self.world.space(&space).is_some() {
+                    self.new_tab(Some(&space), fx);
+                }
+            }
+            Action::TabMenu(tab) => {
+                if let Some(space) = self.world.space_of(&tab).filter(|s| s.tab(&tab).is_some()) {
+                    let menu = Menu::tab(&tab, &space.id);
+                    self.close_mode(fx);
+                    self.open_popup(PopupState::Menu(menu));
+                }
+            }
             Action::TabClose => {
                 if let Some(tab) = self.shown_tab().map(|t| t.id.clone()) {
                     self.close_tab(&tab, fx);
@@ -159,7 +171,6 @@ impl Model {
             Action::Copy(copy) => self.copy(copy, fx),
             Action::Review
             | Action::PaneResize(_)
-            | Action::TabMenu(_)
             | Action::Peek(_)
             | Action::FoldSubagents(_)
             | Action::TerminalMenu(_)
@@ -179,11 +190,20 @@ impl Model {
             .unwrap_or_else(|| self.home.clone())
     }
 
-    /// `tab.new`: a tab after the selected one, in the focused terminal's folder. With no space,
-    /// a new space on this machine.
-    fn new_tab(&mut self, fx: &mut Effects) {
-        let folder = self.new_folder();
-        let Some(space) = self.active_space() else {
+    /// `tab.new`: a tab after the selected one of `space` (else the shown space), in the focused
+    /// terminal's folder, or the space's own when it isn't the shown one. With no space, a new
+    /// space on this machine.
+    fn new_tab(&mut self, space: Option<&str>, fx: &mut Effects) {
+        let shown = self.active_space().map(|s| s.id.clone());
+        let space = match space {
+            Some(id) => self.world.space(id),
+            None => self.active_space(),
+        };
+        let folder = match space {
+            Some(s) if Some(&s.id) != shown.as_ref() && !s.folder.is_empty() => s.folder.clone(),
+            _ => self.new_folder(),
+        };
+        let Some(space) = space else {
             let launch = Launch::Space {
                 space: fresh_id_on("sp", None),
                 name: String::new(),
@@ -501,6 +521,16 @@ impl Model {
                 };
                 self.mode = Mode::Normal;
                 self.edit(intent, fx);
+            }
+            (PopupState::Menu(menu), PopupAction::Up) => menu.step(-1),
+            (PopupState::Menu(menu), PopupAction::Down) => menu.step(1),
+            (PopupState::Menu(menu), PopupAction::Choose) => {
+                let item = menu.items.get(menu.cursor).map(|i| i.action.clone());
+                // Closes first, so what it runs can open a prompt of its own.
+                self.mode = Mode::Normal;
+                if let Some(action) = item {
+                    self.run(action, fx);
+                }
             }
             (PopupState::Confirm(confirm), PopupAction::Choose) => {
                 let then = confirm.then.clone();

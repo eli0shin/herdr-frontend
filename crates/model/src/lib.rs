@@ -8,6 +8,7 @@
 //! - [`action`]: every action of the keybinding table (`feature-inventory.md` §22).
 //! - [`keys`]: chords in Eli's key syntax, the key file and the default keymap.
 //! - [`help`]: the keys help's rows, from the keymap.
+//! - [`names`]: what tabs are called on screen, and the tab bar's pills.
 //! - [`mode`]: who has the keyboard: normal, a prefix sequence, a popup, copy mode.
 //! - [`geometry`]: where panes sit, and which pane lies in a direction.
 //! - [`effect`]: what a step asks the app to do.
@@ -25,6 +26,7 @@ pub mod help;
 pub mod keys;
 pub mod mode;
 mod model;
+pub mod names;
 pub mod view;
 pub mod world;
 
@@ -37,7 +39,8 @@ pub use geometry::{Geometry, Rect};
 pub use keys::{
     Binding, Chord, Context, ELI_KEYS, KEY_FILE, Key, KeyFileError, Keymap, Lookup, Mods, Press,
 };
-pub use mode::{Mode, PopupState};
+pub use mode::{Menu, MenuItem, MenuTarget, Mode, PopupState};
 pub use model::{EDITOR_LABEL, Event, Input, Model, RETRY, REVIEW_LABEL, TerminalUpdate};
+pub use names::TabPill;
 pub use view::{JumpList, View};
 pub use world::{Machine, MachineKey, SpaceExt, World, folder_name, tab_name};

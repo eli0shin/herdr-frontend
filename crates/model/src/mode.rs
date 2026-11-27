@@ -40,6 +40,8 @@ pub enum PopupState {
     Prompt(Prompt),
     /// A confirm dialog.
     Confirm(Confirm),
+    /// A context menu.
+    Menu(Menu),
 }
 
 impl PopupState {
@@ -48,7 +50,60 @@ impl PopupState {
         match self {
             PopupState::List(list) => Some(list.popup),
             PopupState::Jump(_) => Some(Popup::AgentJump),
-            PopupState::Prompt(_) | PopupState::Confirm(_) => None,
+            PopupState::Prompt(_) | PopupState::Confirm(_) | PopupState::Menu(_) => None,
+        }
+    }
+}
+
+/// What a context menu is for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MenuTarget {
+    /// A tab pill, right-clicked.
+    Tab(String),
+}
+
+/// One row of a context menu: its label, what it runs, and the named action whose key it shows
+/// on its right (its first `global` binding, [`crate::help::hint`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MenuItem {
+    pub label: String,
+    pub action: Action,
+    pub hint: Option<Action>,
+}
+
+/// A context menu (Herdr app's shipped `menu` mod, `cfg/mods/menu/main.js`): ↑/↓ move, wrapping,
+/// Enter runs the item under the cursor, Esc closes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Menu {
+    pub target: MenuTarget,
+    pub items: Vec<MenuItem>,
+    pub cursor: usize,
+}
+
+impl Menu {
+    /// The tab menu: Rename, New tab (in the tab's space), Close (`menu/main.js` `items`, case
+    /// `"tab"`).
+    pub fn tab(tab: &str, space: &str) -> Menu {
+        let item = |label: &str, action, hint| MenuItem {
+            label: label.into(),
+            action,
+            hint: Some(hint),
+        };
+        Menu {
+            target: MenuTarget::Tab(tab.to_owned()),
+            items: vec![
+                item("Rename", Action::RenameTabOf(tab.into()), Action::TabRename),
+                item("New tab", Action::NewTabIn(space.into()), Action::TabNew),
+                item("Close", Action::CloseTabOf(tab.into()), Action::TabClose),
+            ],
+            cursor: 0,
+        }
+    }
+
+    pub(crate) fn step(&mut self, by: isize) {
+        let n = self.items.len() as isize;
+        if n > 0 {
+            self.cursor = (self.cursor as isize + by).rem_euclid(n) as usize;
         }
     }
 }
@@ -184,6 +239,13 @@ pub fn popup_key(state: &PopupState, chord: Chord) -> Option<Action> {
         (Key::Escape, Mods::NONE) => return list(P::Close),
         (Key::Enter, Mods::NONE) => return list(P::Choose),
         _ => {}
+    }
+    if let PopupState::Menu(_) = state {
+        return match (key, mods) {
+            (Key::Up, Mods::NONE) => list(P::Up),
+            (Key::Down, Mods::NONE) => list(P::Down),
+            _ => None,
+        };
     }
     let PopupState::List(popup) = state else {
         return None;
@@ -349,6 +411,30 @@ mod tests {
             assert_eq!(popup_key(&s, chord("up")), None);
             assert_eq!(popup_key(&s, chord("x")), None);
         }
+    }
+
+    #[test]
+    fn menus_read_arrows_enter_and_escape_and_nothing_types() {
+        let s = PopupState::Menu(Menu::tab("tb1", "sp1"));
+        for (k, a) in [
+            ("up", PopupAction::Up),
+            ("down", PopupAction::Down),
+            ("enter", PopupAction::Choose),
+            ("escape", PopupAction::Close),
+        ] {
+            assert_eq!(popup_key(&s, chord(k)), Some(Action::Popup(a)), "{k}");
+        }
+        for k in ["ctrl-n", "ctrl-p", "j", "x"] {
+            assert_eq!(popup_key(&s, chord(k)), None, "{k}");
+        }
+        assert_eq!(s.popup(), None);
+        let mut menu = Menu::tab("tb1", "sp1");
+        let labels: Vec<&str> = menu.items.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(labels, ["Rename", "New tab", "Close"]);
+        menu.step(-1);
+        assert_eq!(menu.cursor, 2, "wraps");
+        menu.step(1);
+        assert_eq!(menu.cursor, 0);
     }
 
     #[test]

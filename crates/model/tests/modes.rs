@@ -732,7 +732,6 @@ fn unbuilt_features_say_not_yet() {
         assert!(fx.list.contains(&Effect::NotYet(action)), "{keys}");
     }
     for action in [
-        Action::TabMenu("tb1".into()),
         Action::Peek("a2".into()),
         Action::FoldSubagents("a2".into()),
         Action::TerminalMenu("p1".into()),

@@ -383,8 +383,10 @@ pub enum Action {
         tab: String,
         to: usize,
     },
-    /// Right-click a tab pill.
+    /// Right-click a tab pill: the tab menu.
     TabMenu(String),
+    /// The tab menu's "New tab": a new tab in that space.
+    NewTabIn(String),
     /// Click a pane.
     FocusPane(String),
     /// Click an Agents row: focus that terminal's pane.
@@ -484,6 +486,7 @@ impl Action {
             | Action::CloseTabOf(_)
             | Action::MoveTab { .. }
             | Action::TabMenu(_)
+            | Action::NewTabIn(_)
             | Action::FocusPane(_)
             | Action::FocusAgent(_)
             | Action::Peek(_)

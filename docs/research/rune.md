@@ -591,7 +591,8 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   keys help from the keymap. List popups keep a query and a wrapping cursor; the feature that fills them reports
   `PopupRows` and resolves `Effect::Pick`. Prompts, confirms and the agent-jump bar resolve in the model.
 - **Not built here** (they return `Effect::NotYet`): Neovim-aware Ctrl+H/J/K/L where the editor
-  label is set, `pane.resize`, the review view, peek, menus, sub-agent folds, links and pane drag. Writing
+  label is set, `pane.resize`, the review view, peek, the terminal menu, sub-agent folds, links and
+  pane drag. The tab menu is a `PopupState::Menu` (ticket 021) that the window doesn't draw yet. Writing
   `herdr.seen` labels (`SeenTracker`) and drawing alerts are ticket 025's; the model keeps
   `Attention` for displayed status and marks what the person looks at as seen.
 
@@ -623,7 +624,7 @@ Keep `model` free of Rune types where practical, so core logic tests run without
 - **Window.** Borderless (`WindowOptions::borderless`): AppKit's borderless style has square
   corners, no title bar and no traffic lights. `Chrome { drag_regions: true }` makes only the
   38 pt sidebar top row and tab strip (`.window_drag()`) move it. The view is the sidebar
-  placeholder (366 pt), the tab strip placeholder, and the tab area, where panes sit at the
+  placeholder (366 pt), the tab strip, and the tab area, where panes sit at the
   model's `pane_rects` (`Geometry { gap: 1 }`) over a border-colored fill. The tab area's
   `on_layout_tx` reports the geometry; before the first layout it comes from the window size
   (`App::on_window_geometry`, `SIZE` headless).
@@ -635,6 +636,17 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   for the program's modes and sends them as DATA. The focused pane's element takes them in
   `El::on_key`. With nothing focused, `AppSpec::on_key` types into the model's focused pane and
   gives it focus back. A click focuses a pane (`Action::FocusPane`).
+- **Tab strip** (ticket 021, `view::tabs`, `feature-inventory.md` §4). `Model::tab_pills` says
+  what each shown tab's pill reads (`model::names`: a name, a Pi session from its first Pi pane's
+  title with ` · N` on duplicates, else its number among the shown tabs), whether it is
+  selected or zoomed (" Z"), and its status. Pills are 29 pt rows in a `scroll_x` row. A pill's
+  `on_drag` renames on the second press of a double-click (`Drag::clicks`); on release it picks
+  the pill under the pointer (`Tx::element_at_in` reading the pill's `El::data`) and shows its
+  own tab or moves to the other's place (`Action::MoveTab`, by id). `on_secondary_press` opens
+  the tab menu, the × runs `Action::CloseTabOf`, and the strip's `on_wheel` steps
+  `tab.next`/`tab.prev` for a vertical delta of a point or more, leaving sideways scrolls to the
+  pills. Glyphs (spinner, ×, monitor, server) are `rune::Icon`s (`view::icons`); the spinner
+  turns with `LoopSpec::rotation(0.9)`.
 - **Overlays.** The key file reloads live from the home. The tab strip shows the prefix
   indicator. Toasts sit at the bottom right (the model's toasts, and "not yet" for unbuilt
   actions and for popups the window doesn't draw yet). The keys help (`cmd-/`) is the one popup

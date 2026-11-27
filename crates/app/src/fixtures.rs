@@ -173,3 +173,66 @@ pub fn demo_core() -> crate::link::Fake {
     }
     fake
 }
+
+/// The tab strip's core: one space whose tabs show each kind of pill. `work` splits Neovim
+/// beside a shell; an unnamed Pi tab goes by its session; an agent's tab (Claude, working) is
+/// left out of the strip; an unnamed shell is numbered among the shown tabs (3, not its own 4);
+/// a long name is cut short at 170 pt.
+pub fn tab_strip_core() -> crate::link::Fake {
+    let work = tab(
+        "tb-work",
+        "work",
+        split(
+            "tb-work",
+            "row",
+            vec![pane("pn-1", "t1"), pane("pn-2", "t2")],
+        ),
+    );
+    let one = |id: &str, name: &str, pane_id: &str, address: &str| {
+        tab(id, name, split(id, "row", vec![pane(pane_id, address)]))
+    };
+    let doc = serde_json::json!({"spaces": [{
+        "id": "sp-1",
+        "name": "herdr-frontend",
+        "folder": "/tmp",
+        "tabs": [
+            work,
+            one("tb-pi", "", "pn-3", "t3"),
+            one("tb-agent", "", "pn-4", "t4"),
+            one("tb-shell", "", "pn-5", "t5"),
+            one("tb-long", "a tab whose name is longer than the strip lets a pill be", "pn-6", "t6"),
+        ],
+    }]});
+    let mut terminals: Vec<herdr_proto::Terminal> =
+        [("t1", "nvim"), ("t2", "zsh"), ("t5", "zsh"), ("t6", "zsh")]
+            .into_iter()
+            .map(|(a, program)| herdr_proto::Terminal {
+                argv: vec![program.into()],
+                ..terminal(a, COLS, ROWS)
+            })
+            .collect();
+    terminals.push(herdr_proto::Terminal {
+        argv: vec!["pi".into()],
+        title: "π - tab strip - herdr-frontend".into(),
+        cwd: "/code/herdr-frontend".into(),
+        ..terminal("t3", COLS, ROWS)
+    });
+    terminals.push(herdr_proto::Terminal {
+        argv: vec!["claude".into()],
+        status: Some(herdr_proto::Status {
+            state: herdr_proto::StatusState::Working,
+            app: "claude".into(),
+            ..Default::default()
+        }),
+        ..terminal("t4", COLS, ROWS)
+    });
+    let fake = crate::link::Fake::new(doc, terminals);
+    {
+        let mut core = fake.core();
+        core.screens.insert("t1".into(), NVIM_SPLITS.bytes.to_vec());
+        for address in ["t2", "t3", "t4", "t5", "t6"] {
+            core.screens.insert(address.into(), b"$ ".to_vec());
+        }
+    }
+    fake
+}

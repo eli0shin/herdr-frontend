@@ -342,6 +342,7 @@ impl Model {
             Mode::Popup(PopupState::Jump(_)) => vec![Popup::AgentJump.as_str()],
             Mode::Popup(PopupState::Prompt(_)) => vec!["prompt"],
             Mode::Popup(PopupState::Confirm(_)) => vec!["confirm"],
+            Mode::Popup(PopupState::Menu(_)) => vec!["menu"],
             Mode::Copy(_) => vec!["copy-mode"],
             Mode::Normal | Mode::Prefix { .. } => vec![],
         };

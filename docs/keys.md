@@ -66,11 +66,12 @@ half-saved file. At start, a home without a key file gets the defaults written t
 ## Modes
 
 - **Prefix.** A key that starts longer bindings waits up to 1 s for the next one. The tab strip's
-  right end shows the keys so far (`ctrl-g …`) until the sequence runs, is dropped (an unbound
-  sequence is swallowed whole) or times out.
+  right end, before the machine label, shows the keys so far (`ctrl-g …`) until the sequence
+  runs, is dropped (an unbound sequence is swallowed whole) or times out.
 - **Popup.** The file's `popup` keys come first, then the popup's own keys (§22 "Keys inside
   Eli's popups"), then one-key global bindings. `tab.close` and `pane.close` close the popup
-  instead.
+  instead. A context menu (the tab menu) reads ↑ and ↓ (wrapping), Enter and Esc, and holds every
+  other key.
 - **Copy.** The file's `copy` keys come first, then copy mode's own keys, then one-key global
   bindings.
 
