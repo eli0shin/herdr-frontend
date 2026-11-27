@@ -83,8 +83,9 @@ Every action goes through `model::step`. An action whose feature isn't built yet
 "Not yet" toast that names the command. A popup or copy mode the window doesn't draw yet closes
 at once with that toast, so it can't hold the keyboard unseen. The window draws the keys help,
 the palette, the pickers, the prompt and confirm dialogs, the menus, the settings dialog
-(`docs/popups.md`) and the sidebar's sort menu; the new-space folder picker, the PR finder, the
-machine filter and the agent-jump bar still say "not yet". The terminal's sends, paste, copy and paste-image run
+(`docs/popups.md`), the sidebar's sort menu and the agent-jump bar (`docs/sidebar.md`); the
+new-space folder picker, the PR finder and the machine filter still say "not yet". The
+terminal's sends, paste, copy and paste-image run
 in the focused terminal (`docs/research/terminal-rendering.md` §3); find and select all say "not
 yet" until ticket 019.
 

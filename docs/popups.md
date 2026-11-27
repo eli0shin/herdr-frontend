@@ -78,6 +78,7 @@ herdr-frontend reads no branches yet.
 | Settings | `cmd-,`, `ctrl-g c` | 520 wide dialog | `settings.json`, `keys.json`, `programs.json` and the theme's file (when the theme came from the home's `themes/`, or the settings name one that isn't built in), each with its path; what is wrong with the files now; "Show the home folder". | Opens the file in a new tab running `$EDITOR`, else Neovim; the window follows the saved file. The last row shows the home in Finder. |
 | Keys help | `cmd-/` | 640 × 520 dialog | `docs/keys.md` "Keys help". | — |
 | Sort menu | the sidebar's sort button | under that button, in the sidebar's own frame (`view::sidebar`) | The sorts, the current one checked. | Sorts the Agents list. |
+| Agent-jump bar | `ctrl-;` | 360 × 32, 6 from the top (8 window points at least) | No rows: "JUMP", the labels it takes ("1–9 · 0 · a s d · Esc"), the letter typed so far; the sidebar's rows show their labels, bright (`docs/sidebar.md`). | No Enter: a whole label focuses its row. |
 
 Menus show each item's `global` key, as the keys help lists it (single keys before sequences).
 "Send right-clicks to pane" sets the terminal's `herdr.right-click=program` label, which Herdr
