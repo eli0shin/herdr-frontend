@@ -104,3 +104,7 @@ shown space when it is this computer's, else the first of this computer's spaces
 `shell-confirm`, `shell-tab-menu`, `shell-terminal-menu`, `shell-settings`, `shell-keys-help`.
 The picker scenes run on `fixtures::busy_core`: agents in other spaces, one that needs you, a
 working one with a sub-agent, and a quiet space.
+
+![the picker](images/shell-picker.png)
+
+![the terminal menu](images/shell-terminal-menu.png)
