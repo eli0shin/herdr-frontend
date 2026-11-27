@@ -10,7 +10,7 @@ core: never break the shared layout documents, labels, or terminal state that He
   popups, palette and toasts are native Rune elements; terminal panes are GPU-rendered views.
 - Features are built in Rust, configured by files (keys, theme, settings). No JS mod runtime.
 - Parity target is Eli's own setup (`docs/research/feature-inventory.md`): his eli layout and arctic
-  theme; terminal fonts follow his Ghostty config. Shipped-but-unused Herdr features are out of scope.
+  theme, with the real Operator Mono family (Book weight) at his current 18.7 pt. Shipped-but-unused Herdr features are out of scope.
 - herdr-frontend is a client of herdr-core, not of Herdr app. Shared state is exactly what lives in
   herdr-core (terminals, agents, labels, the per-machine layout document). Never read, write,
   import from or sync with Herdr app's files (`~/.config/herdr-app`, its `shared.json`, its fonts,
