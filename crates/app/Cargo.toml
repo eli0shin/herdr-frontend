@@ -4,6 +4,8 @@ description = "Native desktop client of herdr-core, on Rune"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+# MIT, but for the z2d rasterizer port, which stays MPL-2.0 (THIRD-PARTY-NOTICES.md).
+license = "MIT AND MPL-2.0"
 publish.workspace = true
 # `cargo run` opens the app; `--bin pixel-diff` is the Ghostty comparison.
 default-run = "herdr-frontend"

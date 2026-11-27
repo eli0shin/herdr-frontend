@@ -1,3 +1,18 @@
+// SPDX-License-Identifier: MPL-2.0
+//   Copyright © 2024-2026 Chris Marchesi
+//   Copyright © 2002 University of Southern California
+//
+// This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy
+// of the MPL was not distributed with this file, You can obtain one at
+// https://mozilla.org/MPL/2.0/.
+//
+// This file is a Rust port, modified for herdr-frontend, of z2d
+// (https://github.com/vancluever/z2d at 40af3e84a4e15a9f31d126b3f281f23ce6a3dae5). Portions of
+// the z2d code it ports were derived and adapted from the Cairo project
+// (https://www.cairographics.org/): `Spline.zig` from cairo-spline.c, `arc.zig` from cairo-arc.c and
+// cairo-matrix.c, `Pen.zig` from cairo-pen.c. It stays under the MPL 2.0, not the MIT License of the rest of
+// herdr-frontend. See THIRD-PARTY-NOTICES.md and licenses/z2d-LICENSE.txt.
+
 //! The path rasterizer Ghostty's sprite canvas draws with: a port of z2d 0.13's default fill
 //! (`z2d:src/painter.zig` `fill`, `internal/tess/fill_plotter.zig`, `internal/tess/Spline.zig`,
 //! `internal/tess/Polygon.zig` and `internal/raster/multisample.zig` at `40af3e84`, the revision

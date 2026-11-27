@@ -15,6 +15,7 @@ members = [
 version = "0.0.1"
 edition = "2024"
 rust-version = "1.99.1"
+license = "MIT"
 publish = false
 
 # Rune is pinned to one `dev` rev. Every Rune line here and in [patch.crates-io] uses the same URL
