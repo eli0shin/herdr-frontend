@@ -18,6 +18,7 @@ use crate::input::{
 
 mod copy;
 mod find;
+mod images;
 mod link;
 mod select;
 
@@ -25,6 +26,7 @@ use crate::snapshot::{
     ActiveScreen, Cell, CellFlags, Colors, Cursor, CursorStyle, Dirty, Grapheme, Modes, Rgb, Row,
     RowId, Scrollbar, Snapshot, Span, Underline, Width,
 };
+pub use images::STORAGE_LIMIT as IMAGE_STORAGE_LIMIT;
 pub use link::Link;
 pub use select::AUTOSCROLL_EVERY;
 
@@ -50,6 +52,10 @@ pub struct Config {
     pub option_as_alt: OptionAsAlt,
     /// How long a program may hold its frame (synchronized output) before it shows anyway.
     pub render_hold_timeout: Duration,
+    /// The most bytes of kitty images each screen keeps; zero turns kitty graphics off. Images
+    /// come only in the escape sequence itself: a herdr-core terminal's program may be on another
+    /// machine, so file, temporary-file and shared-memory transmissions stay off.
+    pub image_storage_limit: u64,
 }
 
 impl Default for Config {
@@ -68,6 +74,7 @@ impl Default for Config {
             clipboard_max_bytes: 1 << 20,
             option_as_alt: OptionAsAlt::default(),
             render_hold_timeout: Duration::from_secs(1),
+            image_storage_limit: IMAGE_STORAGE_LIMIT,
         }
     }
 }
@@ -236,12 +243,15 @@ pub struct Vt {
     underlined: Vec<Span>,
     /// Copy mode, while it runs.
     copying: Option<copy::Copying>,
+    /// The kitty images the last snapshot listed.
+    images: images::Images,
 }
 
 impl Vt {
     pub fn new(config: &Config) -> Vt {
         let cols = config.cols.max(1);
         let rows = config.rows.max(1);
+        images::install_png_decoder();
         // SAFETY: every handle is created here, checked, and freed once in `Drop`. The userdata
         // pointer is the boxed `Effects`, whose address is stable for the terminal's life, and
         // each callback's signature matches its option's documented type.
@@ -338,6 +348,12 @@ impl Vt {
                 GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES,
                 (&raw const clipboard_max).cast(),
             );
+            let images: u64 = config.image_storage_limit;
+            set(
+                term,
+                GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT,
+                (&raw const images).cast(),
+            );
 
             let mut vt = Vt {
                 term,
@@ -360,6 +376,7 @@ impl Vt {
                 hovered_address: None,
                 underlined: Vec::new(),
                 copying: None,
+                images: images::Images::new(),
             };
             vt.set_scrollback(config.scrollback);
             vt.set_theme(&config.theme);
@@ -524,6 +541,11 @@ impl Vt {
         self.effects().hold
     }
 
+    /// When the next frame of a playing kitty animation is due: take a snapshot then.
+    pub fn animation_deadline(&self) -> Option<Instant> {
+        self.images.next_frame()
+    }
+
     /// When the current hold must end, if there is one.
     pub fn hold_deadline(&self) -> Option<Instant> {
         self.effects().hold.map(|since| since + self.hold_timeout)
@@ -571,6 +593,8 @@ impl Vt {
             self.refresh_copy_search();
             let state = self.effects().state;
             if self.effects().hold.is_none() {
+                // Animations move on once per frame drawn, before the frame is read.
+                self.images.tick(self.term, Instant::now());
                 self.effects_mut().meta = update(state, self.term);
             }
             self.effects_mut().captured = false;
@@ -682,6 +706,7 @@ impl Vt {
             };
             // In copy mode its cursor is the one that shows.
             let cursor = self.copy_cursor().unwrap_or(program_cursor);
+            let images = self.images.list(state, self.term);
             ok(
                 ghostty_render_state_clean(state),
                 "ghostty_render_state_clean",
@@ -737,6 +762,7 @@ impl Vt {
                 find: self.found(),
                 link: self.underlined.clone(),
                 copy: self.copy_view(),
+                images,
             }
         }
     }
@@ -1049,6 +1075,7 @@ impl Drop for Vt {
                 copying.free();
             }
             self.selector.free(self.term);
+            self.images.free();
             ghostty_mouse_event_free(self.mouse_event);
             ghostty_mouse_encoder_free(self.mouse);
             ghostty_key_event_free(self.key_event);

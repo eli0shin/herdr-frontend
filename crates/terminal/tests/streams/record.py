@@ -10,7 +10,7 @@ Every byte the program writes is saved to OUT.bin. The few startup queries in AN
 canned answer, as a dark terminal would give, so a program doesn't stall or warn waiting for
 one; the replay tests check what our own terminal answers to the same queries.
 
-Each recording's command line is in ../replay.rs next to the test that replays it.
+Each recording's command line is in ../replay.rs (or ../images.rs) next to the test that replays it.
 """
 
 import ast

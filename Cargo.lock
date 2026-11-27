@@ -3571,6 +3571,7 @@ dependencies = [
  "ghostty-vt-sys",
  "objc2-core-foundation",
  "objc2-core-text",
+ "png 0.18.1",
  "skrifa",
 ]
 

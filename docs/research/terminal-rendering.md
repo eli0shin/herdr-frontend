@@ -613,8 +613,53 @@ Draw each placement in its layer, ordered by z within the layer. The three layer
 cell backgrounds, between backgrounds and text, and above text (`types.h:380-407`,
 `render.h:197-375`, `guides/images.md`). On `rune::grid`, the middle layer needs gate 4's
 two-grid workaround. Clip fixed and relative placements to the viewport. Pixel values are in the
-cell size passed to `ghostty_terminal_resize`. Because our cell is whole pixels, no extra scaling
-is needed.
+cell size passed to `ghostty_terminal_resize`. Our cell is whole pixels, and a settled pane's
+terminal is sized with the cell the pane draws, so a settled pane needs no extra scaling. The
+frame after a zoom or a move to another display draws in the face's new cell before the terminal
+is resized, so it scales each image by the face's cell over the terminal's.
+
+**Implemented** in ticket 042:
+
+- **The worker** (`crates/terminal/src/vt/images.rs`) installs a PNG decoder (the `png` crate)
+  with `ghostty_sys_set` once, before the first terminal. It sets the storage limit to Ghostty's
+  `image-storage-limit` default, 320 MB a screen. Images come only in the escape sequence: a
+  herdr-core terminal's program may be on another machine, so the file, temporary-file and
+  shared-memory mediums stay off, and `kitten icat` falls back to sending the pixels inline.
+- **Each snapshot** carries `Snapshot::images`, the render state's list in drawing order (by
+  layer, then z). The list is read again only when `IMAGE_PLACEMENTS_GENERATION` changes; until
+  then the snapshot shares the last list's `Arc`. Every entry keeps its cell, offset, size and
+  source rectangle in the terminal's pixels.
+- **Pixels** are read from the storage once per image generation and converted to straight-alpha
+  RGBA (RGB, gray and gray-alpha are widened). Unchanged images share their `Arc` from snapshot to
+  snapshot. Once the list stops naming a generation, its pixels are dropped.
+- **Render holds:** during a hold the list is the one captured when the hold began. An image whose
+  storage pixels have moved on since then waits for the next frame instead of showing new pixels
+  early.
+- **Animations** play on the worker. Each snapshot calls `ghostty_kitty_graphics_animation_tick`,
+  and the worker wakes at the next frame's due time, at least 8 ms later, to publish it. With
+  nothing playing it sleeps.
+- **The pane** (`crates/app/src/view/terminal/images.rs`) uploads each generation once as a Rune
+  `Pixels` and draws each placement as an element at its cell, clipped to the grid, with
+  `pixels_wrap` for a source rectangle smaller than the image. It draws in the face's cell. If the
+  terminal was last sized with another cell (the frame after a zoom or a move to another
+  display), every image scales by the face's cell over the terminal's, so it still covers its
+  cells. That is #15254's rule, and the step Herdr app missed (§5, item 3).
+- **Layers:** images below the backgrounds go before the grid. Images above the text go after it
+  and after the cursor, as Ghostty draws its cursor in the text pass. Images between the
+  backgrounds and the text split the pane into two grids from the same cached rows: a grid of
+  backgrounds (`screen-backgrounds`), then the images, then the text grid (`screen`). A pane with
+  no such images keeps one grid.
+- **Placeholder cells** (U+10EEEE) draw no glyph, as in Ghostty. The image list positions their
+  pieces.
+- **Colors:** pixels are taken as sRGB, as kitty takes them and as Ghostty intends. Ghostty.app
+  shows them as Display P3 values, so saturated images look more vivid there
+  ([`renderer-gates.md`](renderer-gates.md) "Kitty graphics").
+
+`crates/terminal/tests/images.rs` replays `kitten icat` output (`streams/kitty-icat.bin`) and
+hand-written commands: placements in each layer, scaled, cropped, with offsets and as
+placeholders; formats; scrolling, deletion, both screens, render holds and animation. The
+`terminal-images` scene draws the same recording, and `just ghostty-diff images` compares it with
+Ghostty.
 
 ## 3. Input
 
@@ -1067,7 +1112,8 @@ Each stage ends with tests in `cargo test` plus a fixture or screenshot check.
    Built in ticket 019 (§2 "What herdr-frontend does (ticket 019)"), without pixel-smooth
    scrolling: Ghostty scrolls whole lines.
 8. **Copy/visual mode** (§6).
-9. **Kitty graphics.**
+9. **Kitty graphics.** Built in ticket 042 (§2 "Kitty graphics"), measured against Ghostty in
+   `renderer-gates.md` "Kitty graphics".
 10. **Multi-viewer sizing** with herdr-core (§4). Built in ticket 031: the policy, its tests on
     an isolated core beside a second viewer, and Eli's two-app checklist are in `docs/interop.md`.
     Then an iOS spike: xcframework iOS slice plus Rune `LayerHost`.

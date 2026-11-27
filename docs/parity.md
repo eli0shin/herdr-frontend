@@ -44,11 +44,11 @@ Differences that come from the harness, not from either app:
 ## Summary
 
 Every item passes, differs on purpose, or was fixed here, except four gaps filed as their own
-tickets, of which 040, 041 and 043 are done:
+tickets, all now done:
 
 - **040** dead-space sweep (§3, and its toast in §8): done (`docs/dead-spaces.md`);
 - **041** space names and branches from git checkouts (§3, and the space picker's branch matching): done;
-- **042** kitty graphics (§17);
+- **042** kitty graphics (§17): done, with its colors in sRGB on purpose;
 - **043** the peek's find bar, terminal menu and Cmd-hover address underline (§15, §10): done.
 
 Fixed in this ticket: the lone tab pill (§1), the Agents list's icon colors (§2), the hollow
@@ -266,7 +266,7 @@ panel buttons ([`14-panels--01-a-shell-tab`](images/parity/14-panels--01-a-shell
 | Links: Cmd-click URLs, paths through nvim-links, addresses peek | Pass | `app/scrollback.rs::cmd_hover_underlines_links_and_cmd_click_opens_urls`, `::cmd_click_on_a_source_path_opens_it_in_neovim_beside_the_pane`; `app/peek.rs::cmd_click_on_a_live_terminals_address_peeks_it` |
 | File links open in Neovim (local and remote) | Pass | `model/links.rs` (6 tests), `src/links.rs` |
 | OSC 52 writes (≤ 1 MiB, reads never), `minimum_contrast`, drag and drop (remote: copied there) | Pass | `terminal/tests/vt.rs::clipboard_writes_are_capped`, `::clipboard_writes_can_be_denied`; `view/terminal/rows.rs::minimum_contrast_whitens_or_blackens_dim_text_but_never_graphics`; `app/input.rs::a_file_dropped_on_a_pane_types_its_path`, `::a_remote_terminal_gets_files_copied_beside_it_first` |
-| Kitty graphics | Follow-up (042) | Image placements aren't drawn yet |
+| Kitty graphics | Pass, Intentional | Drawn as Ghostty draws them (ticket 042, `docs/research/terminal-rendering.md` §2 "Kitty graphics"): `terminal/tests/images.rs` (`kitten icat`'s recording: every placement's layer, cell, size and crop, formats, scrolling, deletion, render holds, animation), `app/terminal_view.rs::kitty_images_draw_in_their_layers`, `::images_scale_to_the_cell_the_pane_draws`. `just ghostty-diff images` puts every image on Ghostty's pixels. Intentional: pixels show as sRGB, as kitty shows them and as Ghostty intends; Ghostty.app shows them as Display P3 values, so saturated images look more vivid there (`docs/research/renderer-gates.md` "Kitty graphics") |
 | Select all (palette) | Pass | `app/scrollback.rs::select_all_takes_the_scrollback_and_copy_on_select_can_be_off`; [`17-terminal--09-select-all`](images/parity/17-terminal--09-select-all.jpg). Ghostty's select all ends at the last cell with text, the prompt row included. Herdr app's selection stops a row short in the screenshot |
 
 ## §18 Session continuity and naming
@@ -348,3 +348,7 @@ The differing pixels are anti-aliasing at glyph edges: under 0.01% of them diffe
 quarter of the range, and the text's centroid moves at most 0.21 px
 (`docs/research/renderer-gates.md` explains where the rest comes from). Herdr app's heavier text in the e2e screenshots is its prepared font
 family (§2), not a renderer difference to match.
+
+The `images` screen (ticket 042, `kitten icat` in each layer) places every image on the same
+pixels as Ghostty. Its colors differ on purpose: Ghostty shows image pixels as Display P3 values,
+herdr-frontend as sRGB (`docs/research/renderer-gates.md` "Kitty graphics").

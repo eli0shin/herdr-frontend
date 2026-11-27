@@ -32,6 +32,9 @@ use super::sprite::{self, AlphaBox, Kind};
 /// A text weight Ghostty's bold face draws at.
 const BOLD: f32 = 700.0;
 
+/// The character kitty's unicode placeholders print where a piece of an image goes.
+const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
+
 /// One row, built: what [`BuiltRow::grid_row`] hands Rune, kept apart so tests can read it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BuiltRow {
@@ -212,8 +215,11 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
         }
 
         let text = cell.text.as_str();
+        // A kitty image placeholder shows its piece of the image (`super::images`), not a glyph,
+        // as in Ghostty.
         let drawn = !text.is_empty()
             && text != " "
+            && !text.starts_with(KITTY_PLACEHOLDER)
             && !cell.flags.contains(CellFlags::INVISIBLE)
             && matches!(cell.width, Width::Narrow | Width::Wide);
         let mut chars = text.chars();
@@ -484,11 +490,26 @@ fn decorations(
 impl BuiltRow {
     /// The row as Rune's grid draws it.
     pub fn grid_row(&self, face: &Face) -> GridRow {
-        let mut row =
-            GridRow::new(self.text.clone(), self.spans.clone(), face.style()).wraps(self.wraps);
+        self.fills_on(self.text_row(face))
+    }
+
+    /// The row's backgrounds alone, for the grid under the images that go between the
+    /// backgrounds and the text ([`RowCache::split`]).
+    pub fn fills_row(&self, face: &Face) -> GridRow {
+        self.fills_on(GridRow::new(String::new(), Vec::new(), face.style()).wraps(self.wraps))
+    }
+
+    fn fills_on(&self, mut row: GridRow) -> GridRow {
         for &(start, end, color) in &self.fills {
             row = row.fill(start, end, color);
         }
+        row
+    }
+
+    /// The row without its backgrounds: its text, pinned cells and sprites.
+    pub fn text_row(&self, face: &Face) -> GridRow {
+        let mut row =
+            GridRow::new(self.text.clone(), self.spans.clone(), face.style()).wraps(self.wraps);
         for cell in &self.cells {
             row = row.cell(
                 cell.col,
@@ -512,7 +533,7 @@ impl BuiltRow {
 pub struct RowCache {
     /// What every cached row was built with: the face, the look and the default colors.
     key: Option<CacheKey>,
-    rows: HashMap<RowId, CachedRow>,
+    rows: HashMap<RowId, Cached>,
     /// Rows built (not reused) by the last [`RowCache::rows`] call.
     pub built: usize,
     /// The atlas cells of the last [`RowCache::rows`] call's rows, by row.
@@ -524,9 +545,17 @@ pub struct RowCache {
 /// A row's sprite parts below it ([`BuiltRow::spill`]), each box in its color at its coverage.
 pub type Spill = Rc<[(AlphaBox, Color)]>;
 
-/// A built row: the snapshot row it was built from, what Rune draws, its atlas cells and its
-/// sprites' spill.
-type CachedRow = (Arc<Row>, Rc<GridRow>, Rc<[AtlasCell]>, Spill);
+/// A built row: the snapshot row it was built from, the grid rows Rune draws of it (each made
+/// the first time it's asked for), its atlas cells and its sprites' spill.
+struct Cached {
+    row: Arc<Row>,
+    built: Rc<BuiltRow>,
+    whole: Option<Rc<GridRow>>,
+    /// Its backgrounds and its text as two grid rows.
+    split: Option<(Rc<GridRow>, Rc<GridRow>)>,
+    atlas: Rc<[AtlasCell]>,
+    spill: Spill,
+}
 
 #[derive(Clone, PartialEq)]
 struct CacheKey {
@@ -545,6 +574,49 @@ impl RowCache {
         face: &Face,
         look: &Look,
     ) -> Vec<Rc<GridRow>> {
+        self.each(screen, colors, face, look, |cached| {
+            cached
+                .whole
+                .get_or_insert_with(|| Rc::new(cached.built.grid_row(face)))
+                .clone()
+        })
+    }
+
+    /// [`RowCache::rows`] as two grids: every row's backgrounds, and over them its text. A
+    /// grid paints a row's background and then its text before the next row, so images that go
+    /// between the backgrounds and the text (`terminal-rendering.md` §2, gate 4) draw between
+    /// these two grids.
+    pub fn split(
+        &mut self,
+        screen: &[Arc<Row>],
+        colors: &Colors,
+        face: &Face,
+        look: &Look,
+    ) -> (Vec<Rc<GridRow>>, Vec<Rc<GridRow>>) {
+        self.each(screen, colors, face, look, |cached| {
+            cached
+                .split
+                .get_or_insert_with(|| {
+                    (
+                        Rc::new(cached.built.fills_row(face)),
+                        Rc::new(cached.built.text_row(face)),
+                    )
+                })
+                .clone()
+        })
+        .into_iter()
+        .unzip()
+    }
+
+    /// `grid_row(row)` for each row of `screen`, building only the rows that changed.
+    fn each<T>(
+        &mut self,
+        screen: &[Arc<Row>],
+        colors: &Colors,
+        face: &Face,
+        look: &Look,
+        mut grid_row: impl FnMut(&mut Cached) -> T,
+    ) -> Vec<T> {
         let key = CacheKey {
             face: face.key(),
             look: look.key(),
@@ -563,24 +635,28 @@ impl RowCache {
             .iter()
             .enumerate()
             .map(|(y, row)| {
-                let (grid_row, atlas, spill) = match self.rows.remove(&row.id) {
-                    Some((was, grid_row, atlas, spill)) if Arc::ptr_eq(&was, row) => {
-                        (grid_row, atlas, spill)
-                    }
+                let mut cached = match self.rows.remove(&row.id) {
+                    Some(cached) if Arc::ptr_eq(&cached.row, row) => cached,
                     _ => {
                         self.built += 1;
                         let built = build(row, colors, face, look);
-                        let atlas: Rc<[AtlasCell]> = built.atlas.clone().into();
-                        let spill: Spill = built.spill.clone().into();
-                        (Rc::new(built.grid_row(face)), atlas, spill)
+                        Cached {
+                            row: row.clone(),
+                            atlas: built.atlas.clone().into(),
+                            spill: built.spill.clone().into(),
+                            built: Rc::new(built),
+                            whole: None,
+                            split: None,
+                        }
                     }
                 };
                 self.atlas
-                    .extend(atlas.iter().map(|cell| (y as u16, cell.clone())));
-                if !spill.is_empty() {
-                    self.spill.push((y as u16, spill.clone()));
+                    .extend(cached.atlas.iter().map(|cell| (y as u16, cell.clone())));
+                if !cached.spill.is_empty() {
+                    self.spill.push((y as u16, cached.spill.clone()));
                 }
-                kept.insert(row.id, (row.clone(), grid_row.clone(), atlas, spill));
+                let grid_row = grid_row(&mut cached);
+                kept.insert(row.id, cached);
                 grid_row
             })
             .collect();
@@ -1010,5 +1086,33 @@ mod tests {
         // A changed look builds everything again.
         cache.rows(&first.screen, &first.colors, &face, &Look::default());
         assert_eq!(cache.built, 2);
+    }
+
+    /// The split grid comes from the same cache: a row built once hands back its backgrounds
+    /// and its text without being built again, and the whole row too.
+    #[test]
+    fn the_cache_splits_rows_without_building_them_again() {
+        let face = face();
+        let look = arctic().1;
+        let first = screen("\x1b[41mred\x1b[0m\r\ntwo");
+        let mut cache = RowCache::default();
+        let (fills, text) = cache.split(&first.screen, &first.colors, &face, &look);
+        assert_eq!((fills.len(), text.len(), cache.built), (2, 2, 2));
+        let (again, _) = cache.split(&first.screen, &first.colors, &face, &look);
+        assert_eq!(cache.built, 0);
+        assert!(fills.iter().zip(&again).all(|(a, b)| Rc::ptr_eq(a, b)));
+        cache.rows(&first.screen, &first.colors, &face, &look);
+        assert_eq!(cache.built, 0);
+    }
+
+    /// A kitty placeholder cell shows its piece of an image, not a glyph, as in Ghostty: the
+    /// row keeps its column and its background, and draws no text there.
+    #[test]
+    fn kitty_placeholders_draw_no_glyph() {
+        let row = built("\x1b[44m\u{10EEEE}\u{305}\u{305}\x1b[0mx");
+        assert_eq!(row.text, " x");
+        assert!(row.cells.is_empty());
+        assert!(row.atlas.is_empty());
+        assert_eq!(row.fills.len(), 1);
     }
 }

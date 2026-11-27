@@ -52,6 +52,87 @@ pub struct Snapshot {
     pub link: Vec<Span>,
     /// Copy mode, while it runs. Its cursor is [`Snapshot::cursor`] then.
     pub copy: Option<CopyView>,
+    /// The kitty images on screen, in the order to draw them: by layer, then by z within one.
+    /// The same `Arc` while nothing about them changed.
+    pub images: Arc<[Placement]>,
+}
+
+/// One rectangle of one kitty image to draw, from the render state's image list
+/// (`docs/research/terminal-rendering.md` "Kitty graphics").
+///
+/// Pixel values are in the terminal's cell, [`Snapshot::cell_width`] by
+/// [`Snapshot::cell_height`]: a view whose cell is another size scales them by its cell over that
+/// one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Placement {
+    pub image: Image,
+    pub layer: ImageLayer,
+    /// Orders images within their layer, lowest first.
+    pub z: i32,
+    /// The top-left cell, in viewport cells. Negative when the image starts above or left of the
+    /// viewport; it can also reach past the right or bottom edge, so a view clips it.
+    pub col: i32,
+    pub row: i32,
+    /// Where the image starts in that cell, in pixels from its top left.
+    pub offset_x: u32,
+    pub offset_y: u32,
+    /// The size to draw at, in pixels.
+    pub width: u32,
+    pub height: u32,
+    /// The part of the image to draw, in image pixels, stretched to `width` × `height`.
+    pub source: ImageRect,
+}
+
+/// Where a kitty image draws relative to the cells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ImageLayer {
+    /// Under the cell backgrounds: only cells with the default background show it.
+    BelowBackground,
+    /// Over the cell backgrounds and under the text (unicode placeholders are here).
+    BelowText,
+    /// Over the text.
+    AboveText,
+}
+
+/// A rectangle of image pixels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ImageRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A kitty image's pixels, decoded: straight-alpha RGBA, rows top first. Cloning shares them.
+#[derive(Clone)]
+pub struct Image {
+    /// The program's image id.
+    pub id: u32,
+    /// Changes whenever the pixels do (a new transmission, an animation frame) and is never
+    /// reused, not even by another image or terminal: a cache can key the pixels by it alone.
+    pub generation: u64,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Arc<[u8]>,
+}
+
+impl PartialEq for Image {
+    /// Same generation, same pixels.
+    fn eq(&self, other: &Image) -> bool {
+        self.generation == other.generation && self.id == other.id
+    }
+}
+
+impl Eq for Image {}
+
+impl fmt::Debug for Image {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Image")
+            .field("id", &self.id)
+            .field("generation", &self.generation)
+            .field("size", &(self.width, self.height))
+            .finish()
+    }
 }
 
 /// What copy mode's bar shows of the terminal.
