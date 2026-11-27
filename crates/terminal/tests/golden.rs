@@ -4,6 +4,11 @@
 //! The cell sizes for Operator Mono and JetBrains Mono are worked by hand in the research doc. The
 //! rest of each row (baseline, lines, box and cursor) follows from the font tables the same way;
 //! `tests/coretext.rs` checks the inputs against CoreText, which is where Ghostty gets them.
+//!
+//! The numbers are Ghostty's on macOS, at its 72 DPI, so these run there only, as that check does.
+//! Other platforms' 96 DPI gives other cells.
+
+#![cfg(target_os = "macos")]
 
 mod common;
 

@@ -145,9 +145,15 @@ fn every_pane_attaches_resumed_and_hidden_tabs_wait() {
         assert!(!attach.observe);
         assert_eq!(attach.history, 2000);
         assert_eq!((attach.cols, attach.rows), (fixtures::COLS, fixtures::ROWS));
+        // JetBrains Mono 14 pt at 2x: 17 × 37 px at macOS's 72 DPI, 22 × 49 at 96.
+        let cell = if cfg!(target_os = "macos") {
+            [17, 37]
+        } else {
+            [22, 49]
+        };
         assert_eq!(
             attach.display.as_ref().and_then(|d| d.cell),
-            Some([17, 37]),
+            Some(cell),
             "the cell at 2x"
         );
     }

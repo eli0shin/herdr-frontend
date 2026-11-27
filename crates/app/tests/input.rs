@@ -409,10 +409,12 @@ fn dragging_selects_and_letting_go_copies_while_the_program_leaves_the_mouse() {
     let (x, y) = cell(&rt, 0, 0);
     rt.pointer_down(x, y);
     rt.frame(1.0 / 60.0);
+    // Most of the way into "o", past where Ghostty counts the cell as selected.
     let (x2, y2) = cell(&rt, 4, 0);
-    rt.pointer_move(x2 + 6.0, y2);
+    let x2 = x2 + 0.75 * rt.state.face(2.0).cell_pt().0;
+    rt.pointer_move(x2, y2);
     rt.frame(1.0 / 60.0);
-    rt.pointer_up(x2 + 6.0, y2);
+    rt.pointer_up(x2, y2);
     frames(&mut rt, 3);
     assert_eq!(typed(&fake, from), b"", "nothing for the program");
     assert_eq!(board.text().as_deref().map(String::as_str), Some("hello"));
