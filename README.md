@@ -65,6 +65,9 @@ The first build downloads the pinned libghostty-vt xcframework (16 MB), checks i
 caches it in `~/Library/Caches/ghostty-vt-sys` (set `GHOSTTY_VT_CACHE_DIR` to move it). It needs
 `curl`, `unzip` and `lipo` from the Xcode Command Line Tools, but no Zig. The bindings in
 `crates/ghostty-vt-sys/src/bindings.rs` are committed, so only `just bindings` needs libclang.
+On Linux, which CI builds and tests on, the first build instead downloads the release's source
+and the pinned Zig, checks them and builds the library once into `~/.cache/ghostty-vt-sys`
+(`crates/ghostty-vt-sys/build.rs`).
 
 herdr-client's tests start their own isolated herdr-core (a `test-*` session with scratch dirs under
 `/tmp`), never yours. They use the `hc` on your machine, or `HERDR_TEST_HC=/path/to/herdr-core`, and

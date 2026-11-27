@@ -13,15 +13,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # GitHub's macOS runners cost money, so CI runs on a free Linux runner. `just ci`
+  # (scripts/local-ci) runs the same steps on a Mac, where the macOS-only code and tests run too.
   check:
-    runs-on: xcode-27
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
       - name: docs
         run: test -f README.md && test -f AGENTS.md
+      - name: packages
+        # Mesa's software Vulkan driver (lavapipe) for the headless Rune tests, libxkbcommon for
+        # Rune's keyboard handling to link against, and libclang for the bindings check.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1 libxkbcommon-dev libclang-dev
       - name: toolchain
         # Installs the channel and components rust-toolchain.toml pins.
         run: |
@@ -29,11 +35,12 @@ jobs:
           rustup show
       - uses: Swatinem/rust-cache@v2
       - name: libghostty-vt cache
-        # The pinned xcframework zip that crates/ghostty-vt-sys/build.rs downloads and verifies.
+        # The pinned downloads and the Zig build of libghostty-vt that crates/ghostty-vt-sys/build.rs
+        # makes and verifies.
         uses: actions/cache@v6
         with:
-          path: ~/Library/Caches/ghostty-vt-sys
-          key: ghostty-vt-${{ hashFiles('crates/ghostty-vt-sys/build.rs') }}
+          path: ~/.cache/ghostty-vt-sys
+          key: ghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/ghostty-vt-sys/build.rs') }}
       - name: herdr-core
         # The pinned hc that herdr-client's tests start isolated cores with (HERDR_TEST_HC). Taken
         # straight from the release tarball, checksum-checked, never installed or started here.
@@ -42,14 +49,14 @@ jobs:
           HC_VERSION: 0.1.22
         run: |
           case "$(uname -m)" in
-            arm64) target=macos-aarch64 sha=90798daadefa8d126b90ef0bcdbe9c7dda9c6cfbf011a247065ab5da348f350e ;;
-            x86_64) target=macos-x86_64 sha=35144041969e870ddb4edcd2fd08fd26dfe5cee7d18e6b48adb276f90a48aa19 ;;
+            x86_64) target=linux-x86_64 sha=3054ec3992ce80c5715d721caa9dcefa6056721d15dc113f4750afce763ba5df ;;
+            aarch64) target=linux-aarch64 sha=98757985245d45f8d73dd85e68b139b7f167c28488bb89edd9834c3f5a5cf4cf ;;
             *) echo "no hc build for $(uname -m)" >&2; exit 1 ;;
           esac
           dir="$RUNNER_TEMP/herdr-core"
           mkdir -p "$dir"
           curl -fsSL "https://releases.herdr.dev/core/$HC_VERSION/herdr-core-$target.tar.gz" -o "$dir/hc.tar.gz"
-          echo "$sha  $dir/hc.tar.gz" | shasum -a 256 -c -
+          echo "$sha  $dir/hc.tar.gz" | sha256sum -c -
           tar -xzf "$dir/hc.tar.gz" -C "$dir"
           "$dir/herdr-core" --version
           echo "HERDR_TEST_HC=$dir/herdr-core" >> "$GITHUB_ENV"

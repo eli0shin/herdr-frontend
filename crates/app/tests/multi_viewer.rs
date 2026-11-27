@@ -152,13 +152,16 @@ fn the_app_and_herdr_app_share_terminals_without_fighting_over_the_size() {
     };
     let herdr = connect(&core);
     // `a`, the pane the app focuses, echoes what's typed. `b` waits for a go, then turns on
-    // in-band size reports (mode 2048) and prints the first report a viewer sends it.
+    // in-band size reports (mode 2048) and prints the first report a viewer sends it, read a
+    // byte at a time up to its final `t` (POSIX `sh`, which has no `read -d`).
     let a = run(&herdr, &core, "printf 'cat-ready\\n'; exec cat", START);
     let b = run(
         &herdr,
         &core,
-        "stty -echo; printf 'query-ready\\n'; read go; stty -icanon; printf '\\033[?2048h'; \
-         IFS= read -r -d t reply; printf 'reply=%s|\\n' \"${reply#?}\"; exec cat",
+        "stty -echo; printf 'query-ready\\n'; read go; stty -icanon min 1; \
+         printf '\\033[?2048h'; reply=; \
+         while c=$(dd bs=1 count=1 2>/dev/null) && [ \"$c\" != t ]; do reply=\"$reply$c\"; done; \
+         printf 'reply=%s|\\n' \"${reply#?}\"; exec cat",
         START,
     );
 

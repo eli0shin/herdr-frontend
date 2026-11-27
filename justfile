@@ -64,6 +64,6 @@ check-pins:
 bindings *args:
     cargo run --locked -p ghostty-vt-sys --features bindgen --bin ghostty-vt-bindgen -- {{args}}
 
-# Run everything CI runs, on this Mac (for when GitHub Actions can't run): prints `local-ci: PASS <sha>`.
+# Run what CI runs, on this Mac, so the macOS-only code and tests are checked too: prints `local-ci: PASS <sha>`.
 ci:
     scripts/local-ci

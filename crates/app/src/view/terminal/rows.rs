@@ -915,18 +915,24 @@ mod tests {
         assert_eq!(row.text, "│─x");
         assert_eq!(row.spans[0].color, Some(Color::TRANSPARENT));
         assert_eq!(row.spans[1].color, Some(rgb(FG)));
-        // │ centered in column 0, ─ across column 1, at Ghostty's 2 px.
+        // │ centered in column 0, ─ across column 1, at the light line's thickness: 2 px on macOS
+        // (other platforms' 96 DPI makes the cell and the line bigger).
         let cell_w = face.metrics.cell_width as i32;
+        let thick = face.metrics.box_thickness as i32;
+        let x0 = (cell_w - thick) / 2;
+        if cfg!(target_os = "macos") {
+            assert_eq!((x0, thick), (7, 2));
+        }
         assert!(row.boxes.iter().all(|(_, c)| *c == rgb(FG)));
         assert!(
             row.boxes
                 .iter()
-                .any(|(b, _)| b.x0 == 7 && b.x1 == 9 && b.y0 == 0)
+                .any(|(b, _)| b.x0 == x0 && b.x1 == x0 + thick && b.y0 == 0)
         );
         assert!(
             row.boxes
                 .iter()
-                .any(|(b, _)| b.x0 == cell_w && b.y1 - b.y0 == 2)
+                .any(|(b, _)| b.x0 == cell_w && b.y1 - b.y0 == thick)
         );
     }
 

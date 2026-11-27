@@ -6,8 +6,22 @@ use herdr_frontend::fixtures::{self, BOXES, COLORS, NVIM_CHECKLIST, NVIM_SPLITS}
 use herdr_frontend::{State, app, spec};
 use rune::{ElementInfo, Env, Runtime};
 
-/// JetBrains Mono 14 pt at 2x: a 17 × 37 px cell, 8.5 × 18.5 pt.
-const CELL: (f32, f32) = (8.5, 18.5);
+/// JetBrains Mono 14 pt at 2x: a 17 × 37 px cell, 8.5 × 18.5 pt, at macOS's 72 DPI, and a
+/// 22 × 49 px one, 11 × 24.5 pt, at the 96 DPI Ghostty gives other platforms.
+const CELL: (f32, f32) = if cfg!(target_os = "macos") {
+    (8.5, 18.5)
+} else {
+    (11.0, 24.5)
+};
+
+/// The fixtures' grid, in points: 680 × 555 on macOS.
+const GRID: (f32, f32) = (
+    fixtures::COLS as f32 * CELL.0,
+    fixtures::ROWS as f32 * CELL.1,
+);
+
+/// A pane bigger than the grid: 900 × 700 on macOS.
+const BIG: (f32, f32) = (GRID.0 + 220.0, GRID.1 + 145.0);
 
 fn runtime(scene: &str, size: (f32, f32)) -> Runtime<State> {
     let mut rt = app().headless_runtime(size, Env::new(true, 2.0));
@@ -48,7 +62,7 @@ fn each_fixture_draws_at_its_real_grid_pinned_top_left() {
         ("terminal-nvim-checklist", &NVIM_CHECKLIST),
     ] {
         // A pane bigger than the grid: the grid keeps the terminal's size, at the top left.
-        let rt = runtime(scene, (900.0, 700.0));
+        let rt = runtime(scene, BIG);
         let screen = element(&rt, "pane-1/#0/screen");
         assert_eq!(screen.role, "terminal", "{scene}");
         assert_eq!(
@@ -62,7 +76,7 @@ fn each_fixture_draws_at_its_real_grid_pinned_top_left() {
             "{scene}: the grid is the terminal's, not the pane's"
         );
         let pane = element(&rt, "pane-1");
-        assert_eq!(pane.rect, [0.0, 0.0, 900.0, 700.0], "{scene}");
+        assert_eq!(pane.rect, [0.0, 0.0, BIG.0, BIG.1], "{scene}");
 
         // Every row reads as the terminal's text, except what the program made invisible.
         let (theme, _) = herdr_frontend::view::terminal::look::arctic();
@@ -84,7 +98,7 @@ fn each_fixture_draws_at_its_real_grid_pinned_top_left() {
 
 #[test]
 fn neovim_splits_read_as_neovim_drew_them() {
-    let rt = runtime("terminal-nvim", (680.0, 555.0));
+    let rt = runtime("terminal-nvim", GRID);
     let lines = read_lines(&rt);
     assert!(
         lines[0].starts_with("  1 line 1 of the pager fixture"),
@@ -159,7 +173,7 @@ fn the_neovim_checklist_draws_as_ghostty_does() {
     }
 
     // The cursor is in the cmdline, after what's typed.
-    let rt = runtime("terminal-nvim-checklist", (680.0, 555.0));
+    let rt = runtime("terminal-nvim-checklist", GRID);
     assert_eq!(element(&rt, "pane-1/#0/spill").rect[..2], [0.0, 0.0]);
     let cursor = element(&rt, "pane-1/#0/cursor");
     assert_eq!(cursor.rect[1], 29.0 * CELL.1);
@@ -169,14 +183,14 @@ fn the_neovim_checklist_draws_as_ghostty_does() {
 #[test]
 fn the_cursor_sits_on_its_cell() {
     // The colors screen parks a steady block on "$ " at row 29, column 2.
-    let rt = runtime("terminal-colors", (680.0, 555.0));
+    let rt = runtime("terminal-colors", GRID);
     let cursor = element(&rt, "pane-1/#0/cursor");
     assert_eq!(cursor.rect, [2.0 * CELL.0, 28.0 * CELL.1, CELL.0, CELL.1]);
 }
 
 #[test]
 fn an_unfocused_pane_still_shows_its_cursor() {
-    let rt = runtime("terminal-selection", (680.0, 555.0));
+    let rt = runtime("terminal-selection", GRID);
     assert!(!rt.state.panes[0].focused);
     element(&rt, "pane-1/#0/cursor");
 }
@@ -194,7 +208,7 @@ fn four_panes_each_draw_their_terminal() {
 
 #[test]
 fn unchanged_rows_are_not_built_again() {
-    let mut rt = runtime("terminal-colors", (680.0, 555.0));
+    let mut rt = runtime("terminal-colors", GRID);
     assert_eq!(rt.state.panes[0].rows_built(), usize::from(fixtures::ROWS));
 
     // The same snapshot again: every row comes from the cache.
@@ -242,7 +256,7 @@ fn images_in(rt: &Runtime<State>, layer: &str) -> Vec<[f32; 4]> {
 /// sits on its cells at its size, clipped to the grid, and placeholder cells read as blanks.
 #[test]
 fn kitty_images_draw_in_their_layers() {
-    let rt = runtime("terminal-images", (900.0, 700.0));
+    let rt = runtime("terminal-images", BIG);
     let paths: Vec<String> = rt.elements().into_iter().map(|e| e.path).collect();
     let at = |key: &str| {
         let path = format!("pane-1/#0/{key}");
@@ -280,17 +294,32 @@ fn kitty_images_draw_in_their_layers() {
         assert!(above.contains(&rect), "no {rect:?} in {above:?}");
     }
     // The crop: from 5, 6 px into column 1 of row 21, to the end of its 3 x 1 cells.
-    assert!(above.contains(&[CELL.0 + 2.5, 21.0 * CELL.1 + 3.0, 23.0, 15.5]));
+    assert!(above.contains(&[
+        CELL.0 + 2.5,
+        21.0 * CELL.1 + 3.0,
+        3.0 * CELL.0 - 2.5,
+        CELL.1 - 3.0
+    ]));
     assert_eq!(
         images_in(&rt, "images-below-background"),
         vec![[56.0 * CELL.0, CELL.1, 102.0, 55.5]]
     );
-    // Under the text: icat's centred copy, and the placeholders one row of cells at a time.
+    // Under the text: icat's centred copy, and the placeholders one row of cells at a time. The
+    // image fills its 16 x 4 placeholder cells exactly at the macOS cell; at another cell it's
+    // centred in them, so there only the columns are exact.
     let below = images_in(&rt, "images-below-text");
     assert_eq!(below.len(), 7);
     assert!(below.contains(&[32.0 * CELL.0, CELL.1, 102.0, 55.5]));
-    for row in 10..14 {
-        assert!(below.contains(&[20.0 * CELL.0, row as f32 * CELL.1, 136.0, CELL.1]));
+    let placeholders: Vec<_> = below.iter().filter(|r| r[0] == 20.0 * CELL.0).collect();
+    assert_eq!(placeholders.len(), 4, "{below:?}");
+    for (row, rect) in (10..14).zip(placeholders) {
+        let y = row as f32 * CELL.1;
+        if cfg!(target_os = "macos") {
+            assert_eq!(*rect, [20.0 * CELL.0, y, 16.0 * CELL.0, CELL.1]);
+        } else {
+            assert_eq!(rect[2], 16.0 * CELL.0, "{rect:?}");
+            assert!((rect[1] - y).abs() <= 1.0, "{rect:?} on row {row}");
+        }
     }
 
     let lines = read_lines(&rt);
@@ -303,7 +332,7 @@ fn kitty_images_draw_in_their_layers() {
 /// the cells it was placed on. A pane lets go of an image's pixels once it's gone.
 #[test]
 fn images_scale_to_the_cell_the_pane_draws() {
-    let mut rt = runtime("terminal-colors", (680.0, 555.0));
+    let mut rt = runtime("terminal-colors", GRID);
     let (theme, _) = herdr_frontend::view::terminal::look::arctic();
     // A 10 x 22 px cell, where a 20 x 44 px image covers 2 x 2 cells.
     let mut vt = terminal::Vt::new(&terminal::Config {

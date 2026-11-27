@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Runs what .github/workflows/ci.yml runs, on this Mac, for when GitHub Actions can't run.
-# Same steps and coverage: the docs check, the pinned and checksum-checked hc 0.1.22 for the
-# isolated-core tests (HERDR_TEST_HC, so they can't skip), `just --list` and `just test`.
+# Runs what .github/workflows/ci.yml runs, on this Mac. CI runs on free Linux runners, so this is
+# where the macOS-only code and tests (CoreText, the xcframework link) are checked. Same steps: the
+# docs check, the pinned and checksum-checked hc 0.1.22 for the isolated-core tests (HERDR_TEST_HC,
+# so they can't skip), `just --list` and `just test`.
 # It takes the shared build lock so only one full build runs at a time, and refuses a dirty
 # worktree so a PASS always names a commit. Prints `local-ci: PASS <sha>` on success.
 set -euo pipefail
