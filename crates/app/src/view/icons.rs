@@ -1,3 +1,9 @@
+// Portions of this file are ported from Herdr app (https://github.com/herdrdev/herdr-app at
+// v0.1.18, 9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c), licensed under the Apache License 2.0
+// (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend: the path data
+// of its shipped mods' SVG icons, many of them Lucide icons (ISC,
+// assets/icons/LICENSE-Lucide.txt). See THIRD-PARTY-NOTICES.md.
+
 //! The chrome's one-color glyphs, tinted with `.color()`: the same shapes as the icons Herdr
 //! app's shipped mods draw (`mods/workspace-chrome/*.svg`, `mods/pane/close.svg`, Lucide-style
 //! glyphs, `assets/icons/LICENSES.md`).

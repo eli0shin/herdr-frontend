@@ -1,3 +1,8 @@
+// Portions of this file are ported from Herdr app (https://github.com/herdrdev/herdr-app at
+// v0.1.18, 9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c), licensed under the Apache License 2.0
+// (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend. See
+// THIRD-PARTY-NOTICES.md.
+
 //! A terminal pane's scrollbar (`pane_scrollbars`), as Herdr app draws and drags it
 //! (`app:src/terminal.rs` `scrollbar_thumb`): a lane from the grid's right edge to the pane's (the
 //! last 8 points when the grid fills the pane, so scrollback showing up never reflows the

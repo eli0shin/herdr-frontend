@@ -9,8 +9,8 @@
   (MIT) and oh-my-pi (MIT).
 - `eli.json`: Eli's `~/.dotfiles/home/.config/herdr-app/programs.json`, applied over
   `herdr.json`: Pi in purple, Neovim with its full-color logo.
-- `../program-icons/neovim.svg`: Eli's Neovim logo, from devicons/devicon (MIT; the file's first
-  line says where it comes from).
+- `../program-icons/neovim.svg`: Eli's Neovim logo, the Neovim logo by Jason Long (CC BY 3.0),
+  from devicons/devicon (MIT; the file's first line says where it comes from).
 - `../themes/arctic.json`: Eli's `~/.dotfiles/home/.config/herdr-app/themes/arctic.json`.
 
 `crates/app/build.rs` embeds the icons; `crates/app/src/config/programs.rs` reads the tables.

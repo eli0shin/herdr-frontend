@@ -1,3 +1,8 @@
+// Portions of this file are ported from Herdr app (https://github.com/herdrdev/herdr-app at
+// v0.1.18, 9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c), licensed under the Apache License 2.0
+// (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend. See
+// THIRD-PARTY-NOTICES.md.
+
 //! The shared world as this screen sees it: each machine's layout from its [`Mirror`], and the
 //! core's terminal records. Everything here is shared with Herdr app and every other client; this
 //! screen's own choices (focus, zoom, the selected tab) are in [`crate::view`].

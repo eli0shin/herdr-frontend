@@ -1,3 +1,8 @@
+// Portions of this file are ported from Herdr app (https://github.com/herdrdev/herdr-app at
+// v0.1.18, 9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c), licensed under the Apache License 2.0
+// (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend. See
+// THIRD-PARTY-NOTICES.md.
+
 //! The tab and agent picker (`cmd-p`, Herdr app's shipped `picker`, `feature-inventory.md` §10):
 //! 640 wide, at most 0.8 of the window, 40 from the top, "Go to…". Spaces with an agent first,
 //! each under its avatar and name, then "earlier: N quiet spaces ▾", then "new tab", "new space"

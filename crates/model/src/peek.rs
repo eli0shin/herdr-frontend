@@ -1,3 +1,8 @@
+// Portions of this file are ported from Herdr app (https://github.com/herdrdev/herdr-app at
+// v0.1.18, 9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c), licensed under the Apache License 2.0
+// (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend. See
+// THIRD-PARTY-NOTICES.md.
+
 //! Peek (`feature-inventory.md` §15): a live terminal in an overlay over the window, without
 //! moving focus. Herdr app's `terminal.peek` and its shipped `peek` mod (`cfg/mods/peek/main.js`,
 //! `app:src/window.rs` `peek_terminal`, `keep_terminal`).

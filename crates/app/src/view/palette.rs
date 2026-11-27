@@ -1,3 +1,8 @@
+// Portions of this file are ported from Herdr app (https://github.com/herdrdev/herdr-app at
+// v0.1.18, 9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c), licensed under the Apache License 2.0
+// (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend. See
+// THIRD-PARTY-NOTICES.md.
+
 //! The command palette (`cmd-shift-p`, Herdr app's `frame-palette`, `feature-inventory.md`
 //! §10): 620 wide, at most 0.85 of the window, 60 from the top. Every command by name with its
 //! key; empty, the recent ones first and then every group under its title; typed, the matches

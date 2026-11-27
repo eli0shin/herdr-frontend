@@ -1,3 +1,8 @@
+// Portions of this file are ported from Herdr app (https://github.com/herdrdev/herdr-app at
+// v0.1.18, 9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c), licensed under the Apache License 2.0
+// (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend. See
+// THIRD-PARTY-NOTICES.md.
+
 //! This screen's own view of the shared world: the shown space, each space's selected tab, each
 //! tab's focused pane, focus history and zoom, settled tabs, recently closed spaces, seen
 //! attention and the tab jump list. None of it goes in the shared document (protocol rule 6):

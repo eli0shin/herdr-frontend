@@ -1,3 +1,8 @@
+// Portions of this file are ported from Herdr app (https://github.com/herdrdev/herdr-app at
+// v0.1.18, 9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c), licensed under the Apache License 2.0
+// (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend. See
+// THIRD-PARTY-NOTICES.md.
+
 //! Context menus (Herdr app's `menu` mod, `feature-inventory.md` §10), at the pointer: 31-point
 //! items, each with its icon, its label and its command's `global` key, a divider above closing
 //! items. ↑/↓ move, Enter runs, Esc or a press outside closes. The tab menu is 200 wide, the
