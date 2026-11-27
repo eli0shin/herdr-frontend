@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Runs what .github/workflows/ci.yml runs, on this Mac, for when GitHub Actions can't run.
+# Same steps and coverage: the docs check, the pinned and checksum-checked hc 0.1.22 for the
+# isolated-core tests (HERDR_TEST_HC, so they can't skip), `just --list` and `just test`.
+# It takes the shared build lock so only one full build runs at a time, and refuses a dirty
+# worktree so a PASS always names a commit. Prints `local-ci: PASS <sha>` on success.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "local-ci: the worktree has uncommitted changes; commit them first" >&2
+  exit 1
+fi
+sha=$(git rev-parse HEAD)
+
+# The docs step.
+test -f README.md && test -f AGENTS.md
+
+# The herdr-core step: the same pinned release CI uses, never installed or started here.
+hc_version=0.1.22
+case "$(uname -m)" in
+  arm64) target=macos-aarch64 hc_sha=90798daadefa8d126b90ef0bcdbe9c7dda9c6cfbf011a247065ab5da348f350e ;;
+  x86_64) target=macos-x86_64 hc_sha=35144041969e870ddb4edcd2fd08fd26dfe5cee7d18e6b48adb276f90a48aa19 ;;
+  *) echo "local-ci: no hc build for $(uname -m)" >&2; exit 1 ;;
+esac
+hc_dir="${HOME}/Library/Caches/herdr-frontend-ci/herdr-core-$hc_version-$target"
+if [[ ! -x "$hc_dir/herdr-core" ]]; then
+  mkdir -p "$hc_dir"
+  curl -fsSL "https://releases.herdr.dev/core/$hc_version/herdr-core-$target.tar.gz" -o "$hc_dir/hc.tar.gz"
+  echo "$hc_sha  $hc_dir/hc.tar.gz" | shasum -a 256 -c - >/dev/null
+  tar -xzf "$hc_dir/hc.tar.gz" -C "$hc_dir"
+fi
+"$hc_dir/herdr-core" --version
+export HERDR_TEST_HC="$hc_dir/herdr-core"
+
+# One full build at a time across all worktrees, as the disk can't hold more.
+lock=/tmp/herdr-frontend-build.lock
+until mkdir "$lock" 2>/dev/null; do sleep 15; done
+trap 'rmdir "$lock"' EXIT
+export CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only
+
+# The justfile and just test steps.
+just --list >/dev/null
+just test
+
+echo "local-ci: PASS $sha"

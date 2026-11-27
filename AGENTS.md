@@ -36,6 +36,10 @@ and runs `tickets lint`. Only the orchestrator runs `tickets done`.
 
 - Commit messages: lowercase conventional commits, single line, no AI co-author lines.
 - Work on a branch via `repos`, open a PR to the landing branch, CI must pass, squash merges.
+- While GitHub Actions can't run (billing), `just ci` (scripts/local-ci) is the required check: it
+  runs exactly what CI runs and prints `local-ci: PASS <sha>`. Run it on your pushed head, then
+  tell the orchestrator with `ask_orchestrator`, including that line. The orchestrator reruns it
+  on the same commit before reviewing.
 - Run checks through the `justfile`, the way Eli does: `just test` before every push, plus the
   recipes your change touches (`just run`, `just snap`, `just e2e`, `just bundle`, …). Never report
   a recipe as passing unless you ran that recipe and it passed; if a tool is missing, say so and

@@ -63,3 +63,7 @@ check-pins:
 # Regenerate crates/ghostty-vt-sys/src/bindings.rs from the pinned headers (`--check` fails on a diff).
 bindings *args:
     cargo run --locked -p ghostty-vt-sys --features bindgen --bin ghostty-vt-bindgen -- {{args}}
+
+# Run everything CI runs, on this Mac (for when GitHub Actions can't run): prints `local-ci: PASS <sha>`.
+ci:
+    scripts/local-ci
