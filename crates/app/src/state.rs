@@ -405,16 +405,9 @@ impl State {
             Some(_) => Config::load(&sources, None),
             None => Config::default(),
         };
-        // The shared state and the list's times, imported from Herdr app's home on the first run.
-        let herdr_app = home.as_ref().and(sources.herdr_app.as_deref());
-        let (shared, loaded) = Shared::load(home.as_ref().map(|h| h.dir()), herdr_app);
-        let (times, times_imported) = shared::load_times(home.as_ref().map(|h| h.dir()), herdr_app);
-        if loaded == shared::Loaded::Imported {
-            shared::save(home.as_ref(), &shared);
-        }
-        if times_imported && let Some(home) = &home {
-            home.save(shared::TIMES, shared::times_json(&times));
-        }
+        // The shared state and the list's times: the home's, else the defaults.
+        let shared = Shared::load(home.as_ref().map(|h| h.dir()));
+        let times = shared::load_times(home.as_ref().map(|h| h.dir()));
         let sidebar = Sidebar {
             width: shared.sidebar_px(),
             hidden: shared.sidebar_hidden(),

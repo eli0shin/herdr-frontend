@@ -16,8 +16,9 @@ use model::agents::{Row, Sort};
 use rune::{ElementInfo, Env, Key, KeyEvent, Mods, Runtime};
 use serde_json::Value;
 
-/// Herdr app's home for this test binary: Eli-like values for a home's first run to import.
-fn herdr_app() -> PathBuf {
+/// A Herdr app home with its own values, which herdr-frontend must never read (`AGENTS.md`):
+/// a fresh home starts from the defaults whatever it holds.
+fn decoy_herdr_app() -> PathBuf {
     static ONCE: std::sync::Once = std::sync::Once::new();
     let dir =
         std::env::temp_dir().join(format!("herdr-frontend-sidebar-app-{}", std::process::id()));
@@ -26,13 +27,12 @@ fn herdr_app() -> PathBuf {
         std::fs::create_dir_all(dir.join("layouts/.state")).unwrap();
         std::fs::write(
             dir.join(SHARED),
-            r#"{"layout": "eli", "agents.sort": "grouped", "sidebar.width": 268,
-                "space.colors": {"sp-2": "ansi1"}}"#,
+            r#"{"agents.sort": "grouped", "space.colors": {"sp-2": "ansi1"}}"#,
         )
         .unwrap();
         std::fs::write(
             dir.join("layouts/.state/eli.json"),
-            r#"{"nodes": {"sidebar": {"size": {"px": 420.0}, "hidden": false}}}"#,
+            r#"{"nodes": {"sidebar": {"size": {"px": 420.0}, "hidden": true}}}"#,
         )
         .unwrap();
         // SAFETY: set once, before any thread of this test binary reads it.
@@ -53,7 +53,7 @@ fn scratch(name: &str) -> PathBuf {
 
 /// A runtime on the agents core, settled and laid out; with a home when given one.
 fn runtime_with(home: Option<&Path>) -> (Runtime<State>, Fake) {
-    herdr_app();
+    decoy_herdr_app();
     let fake = agents_core();
     let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
     if let Some(dir) = home {
@@ -376,47 +376,46 @@ fn the_edge_drags_the_width_between_200_and_600() {
 }
 
 #[test]
-fn a_homes_first_run_imports_herdr_apps_values_and_keeps_its_own_after() {
-    let dir = scratch("import");
+fn a_fresh_home_starts_from_the_defaults_and_keeps_its_own_after() {
+    let dir = scratch("home");
     let (mut rt, _) = runtime_with(Some(&dir));
-    // From Herdr app: grouped, its layout's 420 pt sidebar (not the rail's 268), sp-2's color.
-    assert_eq!(rt.state.shared.sort(), Sort::Grouped);
-    assert_eq!(element(&rt, "sidebar").unwrap().rect[2], 420.0);
-    assert_eq!(rt.state.shared.space_colors()["sp-2"], "ansi1");
-    // Written to the home, with the colors the other spaces got and the published order.
+    // Nothing comes from Herdr app's home: priority, the 366 pt sidebar, colors assigned afresh.
+    assert_eq!(rt.state.shared.sort(), Sort::Priority);
+    assert_eq!(element(&rt, "sidebar").unwrap().rect[2], 366.0);
+    // The home gets the colors the spaces were given, the published order and the times.
     let file = eventually(&dir, SHARED, |v| v.get("dotfiles.agents.order").is_some());
-    assert_eq!(file["space.colors"]["sp-2"], "ansi1");
     assert_eq!(file["space.colors"]["sp-1"], "ansi6");
+    assert_eq!(file["space.colors"]["sp-2"], "ansi3");
     assert_eq!(file["dotfiles.agents.order"]["addresses"][0], "t15");
     eventually(&dir, TIMES, |v| v["changed"]["t10"]["s"] == "working");
 
     // Changes go to the home; Herdr app's file is left as it was.
     click(&mut rt, "ag-sort");
-    click(&mut rt, "sort-menu/sort-priority");
+    click(&mut rt, "sort-menu/sort-grouped");
     let cmd = Mods {
         cmd: true,
         ..Mods::default()
     };
     press(&mut rt, Key::Text("b".into()), cmd);
     let file = eventually(&dir, SHARED, |v| v["sidebar.hidden"] == true);
-    assert_eq!(file["agents.sort"], "priority");
+    assert_eq!(file["agents.sort"], "grouped");
     let app_file: Value =
-        serde_json::from_str(&std::fs::read_to_string(herdr_app().join(SHARED)).unwrap()).unwrap();
-    assert_eq!(app_file["agents.sort"], "grouped");
+        serde_json::from_str(&std::fs::read_to_string(decoy_herdr_app().join(SHARED)).unwrap())
+            .unwrap();
     assert!(app_file.get("dotfiles.agents.order").is_none());
 
     // The next run reads the home's own file.
     drop(rt);
     let (rt, _) = runtime_with(Some(&dir));
-    assert_eq!(rt.state.shared.sort(), Sort::Priority);
+    assert_eq!(rt.state.shared.sort(), Sort::Grouped);
     assert!(!has(&rt, "sidebar"), "still hidden");
-    assert_eq!(shared_file(&dir)["sidebar.px"], 420.0);
+    assert_eq!(shared_file(&dir)["space.colors"]["sp-2"], "ansi3");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn with_no_agents_the_list_says_how_they_show_up() {
-    herdr_app();
+    decoy_herdr_app();
     let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
     rt.state.with_settings(Settings::fixture());
     rt.state.connect(Box::new(fixtures::demo_core()));
@@ -429,7 +428,7 @@ fn with_no_agents_the_list_says_how_they_show_up() {
 
 #[test]
 fn the_edge_follows_the_pointer_at_any_zoom() {
-    herdr_app();
+    decoy_herdr_app();
     let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
     rt.state.with_settings(Settings {
         zoom: 2.0,

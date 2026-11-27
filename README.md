@@ -54,9 +54,9 @@ default one. It reads the shared layout and never writes it except for edits it 
 list's shared state, and its `settings.json`, themes, programs and fonts) live in
 `$HERDR_FRONTEND_HOME`, else `~/.config/herdr-frontend`. With no settings it looks like Eli's
 Herdr app: arctic, Operator Mono Book Herdr 17 pt (found in Herdr app's `fonts/`, else JetBrains
-Mono), zoom 1.1; edits apply while it runs. `docs/settings.md` lists every key. On its first run
-it imports Herdr app's shared state (agent sort, space colors, machine filter, sidebar width)
-without touching Herdr app's files (`docs/sidebar.md`). `--snap`, `--tree` and `--script` never connect
+Mono), zoom 1.1; edits apply while it runs. `docs/settings.md` lists every key. The Agents
+list's sort, space colors, machine filter and the sidebar's width start from defaults and live
+only in that home (`docs/sidebar.md`). `--snap`, `--tree` and `--script` never connect
 to a core and read no settings. Release builds keep those three flags too (Rune's `tooling`
 feature).
 

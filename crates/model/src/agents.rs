@@ -28,7 +28,7 @@ use crate::world::World;
 
 /// Eli's Pi label: a session's orchestration role, ticket and watched PRs (JSON).
 pub const WATCH_LABEL: &str = "dotfiles.pi_pr_watch";
-/// Shared keys the list reads and writes (herdr-app's names, so values carry over).
+/// Shared keys the list reads and writes, by the names Eli's mods gave them.
 pub const SORT_KEY: &str = "agents.sort";
 pub const ORDER_KEY: &str = "dotfiles.agents.order";
 pub const HIDDEN_MACHINES_KEY: &str = "dotfiles.agents.hidden-machines";

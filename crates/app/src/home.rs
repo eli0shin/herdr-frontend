@@ -7,7 +7,7 @@
 //!   tab, each tab's focused pane, recents and seen attention.
 //! - `window.json`: where the window was ([`crate::window::Placement`]).
 //! - `shared.json` and `agents.json`: the app-local shared state and the Agents list's times
-//!   ([`crate::shared`], `docs/sidebar.md`), imported from Herdr app's home on the first run.
+//!   ([`crate::shared`], `docs/sidebar.md`), from the defaults on the first run.
 //! - `settings.json`, `themes/`, `programs.json`, `icons/`, `program-icons/` and `fonts/`: the
 //!   look and preferences ([`crate::config`], `docs/settings.md`). Only the zoom keys write here,
 //!   and only `settings.json`'s `zoom`.

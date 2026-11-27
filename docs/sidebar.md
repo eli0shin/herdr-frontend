@@ -67,21 +67,14 @@ so the order is never stale.
 
 | File | What it is |
 | --- | --- |
-| `shared.json` | The app-local shared state (§0): `space.colors`, `agents.sort`, `dotfiles.agents.order`, `dotfiles.agents.hidden-machines` and the rest under Herdr app's names, plus `sidebar.px` and `sidebar.hidden` |
+| `shared.json` | The app-local shared state (§0): `space.colors`, `agents.sort`, `dotfiles.agents.order` and `dotfiles.agents.hidden-machines` (the names Eli's mods gave them), plus `sidebar.px` and `sidebar.hidden` |
 | `agents.json` | Each agent's last state change, `{"changed": {address: {s, at}}}` as `eli-agents` stores it. Gone agents are forgotten after 30 days |
 
-**First run.** With no `shared.json` in the home, Eli's current values come from Herdr app's home
-(`$HERDR_APP_HOME`, else `~/.config/herdr-app`), read only:
-
-- its `shared.json`, as is;
-- the sidebar's width and visibility from its layout's state (`layouts/.state/<layout>.json`
-  `nodes.sidebar`). Herdr app's own `sidebar.width` is the narrow rail's way back, which
-  herdr-frontend doesn't have;
-- the list's times from the `eli-agents` mod's store (`data/eli-agents/store.json`), when there
-  is no `agents.json`.
-
-The imported values are written to the home at once. After that only the home's files are read,
-and Herdr app's files are never written.
+**Defaults.** A home without these files starts from the defaults: the priority sort, no hidden
+machines, colors assigned as spaces appear, a 366 pt sidebar that shows, and no times. Everything
+lives only in herdr-frontend's home. herdr-frontend is a client of herdr-core, so it never reads,
+imports from or syncs with Herdr app's files (`AGENTS.md`); what the two share is what herdr-core
+holds (terminals, labels such as `herdr.pinned`, and the layout documents).
 
 **Space colors** are assigned as the shipped picker does: a space without a color gets the one the
 fewest spaces use, from `ansi6, ansi3, ansi4, ansi5, ansi2, ansi1`; home (`~`) gets none. The list
@@ -106,6 +99,5 @@ its colors.
 - Space colors of spaces on a machine whose layout hasn't been read yet are kept; `colors.js`
   drops every stored id `spaces()` doesn't return, so a slow machine's spaces lost their colors.
 - The mod's "old local pins" carry-over (pins kept in its `localStorage` from before pins were
-  core labels, written to `terminal.pin` once the terminal is live) isn't built. Pins are the
-  core's `herdr.pinned` label, and Eli's `eli-agents` store has no pins left to carry over.
+  core labels) isn't built: that storage is Herdr app's. Pins are the core's `herdr.pinned` label.
 - The narrow rail (a sidebar under 160 pt) isn't built: Eli's 200 pt minimum never reaches it.
