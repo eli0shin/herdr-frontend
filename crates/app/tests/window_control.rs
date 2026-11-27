@@ -197,8 +197,8 @@ fn the_window_serves_every_cli_command_on_a_live_core() {
     let scratch = Scratch::new();
     let home = scratch.0.as_path();
     let socket = home.join(SOCKET);
-    // The bundled font, so the settings have nothing to report whatever font folders the
-    // machine has; the zoom and size stay Eli's defaults.
+    // The bundled font, so the settings have nothing to report whatever fonts the machine has
+    // installed; the zoom and size stay Eli's defaults.
     std::fs::write(
         home.join("settings.json"),
         r#"{"font": "JetBrains Mono", "ui_font": "JetBrains Mono"}"#,

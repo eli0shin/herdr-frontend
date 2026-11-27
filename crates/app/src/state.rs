@@ -274,7 +274,7 @@ pub struct State {
     /// the Ghostty pixel diff.
     pub panes: Vec<TerminalPane>,
     pub font: Font,
-    /// The panels' font family, when the font folders have it; Rune's sans otherwise.
+    /// The panels' font family, when it's installed; Rune's sans otherwise.
     ui_family: Option<&'static str>,
     /// The colors terminals start with.
     pub theme: Theme,
