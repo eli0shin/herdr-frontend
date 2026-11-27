@@ -642,7 +642,14 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   corners, no title bar and no traffic lights. `Chrome { drag_regions: true }` makes only the
   38 pt sidebar top row and tab strip (`.window_drag()`) move it. The view is the Agents
   sidebar (366 pt by default, `docs/sidebar.md`), the tab strip, and the tab area, where panes
-  sit at the model's `pane_rects` (`Geometry { gap: 1 }`) over a border-colored fill. Each divider has a
+  sit at the model's `pane_rects` (`Geometry { gap: 1 }`) over a border-colored fill. Each pane
+  is a slot keyed by its id (`slot-<id>`), so another tab's pane is a new slot, not this one
+  springing to a new rect. The slot and the terminal in it (`Transition::none()`, and
+  `.instant_changes()` on the terminal's grid, not its root, whose frame keeps following the
+  slot's through a resize) show whole the frame they mount and are gone the frame they
+  unmount. Rune's default entrance and exit fade every element in an input-caused commit, and
+  the old and new terminals crossfading let the border fill flash through on every agent or
+  tab click. `tests/switching.rs` checks this frame by frame from `--frames` dumps. Each divider has a
   6 pt handle centered on its gap (`on_drag`, the resize cursor) that writes sizes as it moves; a
   cancelled drag puts them back. A movable pane's 18 pt top strip shows a 28 × 18 grip while the
   pointer is on it. The tab area, the panes' parent, follows the pointer for this, so only the
@@ -662,7 +669,10 @@ Keep `model` free of Rune types where practical, so core logic tests run without
 - **Tab strip** (ticket 021, `view::tabs`, `feature-inventory.md` §4). `Model::tab_pills` says
   what each shown tab's pill reads (`model::names`: a name, a Pi session from its first Pi pane's
   title with ` · N` on duplicates, else its number among the shown tabs), whether it is
-  selected or zoomed (" Z"), and its status. Pills are 29 pt rows in a `scroll_x` row. A pill's
+  selected or zoomed (" Z"), and its status. Pills are 29 pt rows in one row (`tab-pills`)
+  inside a `scroll_x` row: `scroll_x` stretches its content to the viewport, and a lone pill
+  would be that content. The pills' row has `.instant_changes()` and `.motion(Spring::NONE)`,
+  so a tab or space switch swaps pills, ×, colors and widths in one frame. A pill's
   `on_drag` renames on the second press of a double-click (`Drag::clicks`); on release it picks
   the pill under the pointer (`Tx::element_at_in` reading the pill's `El::data`) and shows its
   own tab or moves to the other's place (`Action::MoveTab`, by id). `on_secondary_press` opens
