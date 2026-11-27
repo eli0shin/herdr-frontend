@@ -94,8 +94,8 @@ The tracker holds the dependency graph. These are the stages:
   herdr-frontend through its control socket, never OS-level input. Feature tickets add their
   steps to `crates/app/tests/e2e/scenarios/`.
 - Two checks are required before a merge. GitHub's `ci` job runs `just --list` and `just test`
-  (pin check, fmt, clippy, tests and the bindings check) on a free `ubuntu-latest` runner, since
-  macOS runners cost money. It runs that recipe rather than repeating its commands, with the
+  (pin check, fmt, clippy, tests and the bindings check) on a free `ubuntu-latest` runner, by Eli's
+  choice (macOS runners run only the release build). It runs that recipe rather than repeating its commands, with the
   pinned hc so herdr-client's isolated-core tests run, and Mesa's software Vulkan for the headless
   Rune tests. `just ci` (`scripts/local-ci`) runs the same steps on a Mac, where the macOS-only
   code and tests (CoreText, the xcframework link) run too, plus `just e2e` when a change adds or

@@ -43,7 +43,8 @@ and runs `tickets lint`. Only the orchestrator runs `tickets done`.
 - Work on a branch via `repos`, open a PR to the landing branch, the required checks must pass,
   squash merges.
 - Two checks are required. GitHub's `ci` job runs `just --list` and `just test` on a free Linux
-  runner (macOS runners cost money), and must be green on the PR. `just ci` (scripts/local-ci)
+  runner (Eli's choice: PR CI stays on Linux; macOS runners are used only for release builds),
+  and must be green on the PR. `just ci` (scripts/local-ci)
   runs the same steps on this Mac, where the macOS-only code and tests run too, and prints
   `local-ci: PASS <sha>`. Run it on your pushed head, plus `just e2e` when your change adds or
   changes scenarios, then tell the orchestrator with `ask_orchestrator`, including that line and
