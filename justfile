@@ -10,8 +10,9 @@ default:
 build:
     cargo build
 
-# Run the pin check, fmt, clippy, the tests and the bindings check, as CI does.
+# Run the pin and version checks, fmt, clippy, the tests and the bindings check, as CI does.
 test: check-pins
+    scripts/sync-version --check
     cargo fmt --all -- --check
     cargo clippy --all-targets --locked -- -D warnings
     cargo test --locked

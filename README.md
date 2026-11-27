@@ -79,6 +79,11 @@ touches.
 
 Rune is pinned to one `dev` rev in `Cargo.toml`; bump it as `docs/research/rune.md` §1 describes.
 
+Releases are versioned with Changesets, which needs [Bun](https://bun.sh): each user-visible PR
+adds a changeset (`bun install` once, then `bunx changeset`), and merging the "chore: version
+packages" PR tags the version and creates its GitHub Release. `herdr-frontend --version` prints
+it. `docs/release.md` has the whole flow.
+
 ## License
 
 MIT ([LICENSE](LICENSE)), copyright Eli Oshinsky. herdr-frontend ports code from Ghostty (MIT),

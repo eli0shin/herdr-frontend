@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # version.yml starts it on the version PR's branch, whose pushes start no workflow themselves.
+  workflow_dispatch:
 
 permissions:
   contents: read

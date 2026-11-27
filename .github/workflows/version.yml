@@ -1,0 +1,72 @@
+name: version
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+# One run at a time, each push's in turn. None is cancelled: a run still waiting can be the one
+# that tags a merged version PR, and a later run never tags that version.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  # With changesets on main, opens or updates the "chore: version packages" PR. Once that PR
+  # merges there are none left, so the next run tags the new version and creates its GitHub
+  # Release from CHANGELOG.md (docs/release.md).
+  version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the version branch, the tag and the release
+      pull-requests: write # the version PR
+      actions: write # starting ci on the version PR
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - name: install
+        run: bun install --frozen-lockfile
+      - name: versions agree
+        # package.json, Cargo.toml and Cargo.lock carry one version; never tag a main where they don't.
+        run: scripts/sync-version --check
+      - name: version PR or release
+        id: changesets
+        uses: changesets/action@v2
+        with:
+          # `changeset version`, then the version copied into Cargo.toml and Cargo.lock.
+          version-script: bun run version-packages
+          # The package is private, so this only tags v<version>; the action pushes the tag and
+          # creates the release.
+          publish-script: bunx changeset git-tag
+          pr-title: "chore: version packages"
+          commit-message: "chore: version packages"
+          create-github-releases: true
+      - name: ci on the version PR
+        # A push or PR made with GITHUB_TOKEN starts no workflows, but a dispatch does: run ci on
+        # the version branch so the version PR's head commit gets its check.
+        if: steps.changesets.outputs.pr-number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref changeset-release/main
+      - name: release tag
+        id: release
+        if: steps.changesets.outputs.published == 'true'
+        run: echo "tag=v$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
+
+  # The hook for a release's build and upload (ticket 045). A release created with GITHUB_TOKEN
+  # starts no `release` workflow, so the run that created it calls the artifacts workflow itself.
+  artifacts:
+    needs: version
+    if: needs.version.outputs.published == 'true'
+    uses: ./.github/workflows/release-artifacts.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+    permissions:
+      contents: read # uploading to the release needs contents: write here and in the workflow
