@@ -6,9 +6,13 @@
 //! - `view.json`: this screen's view ([`model::View::to_json`]): the space shown, each space's
 //!   tab, each tab's focused pane, recents and seen attention.
 //! - `window.json`: where the window was ([`crate::window::Placement`]).
+//! - `settings.json`, `themes/`, `programs.json`, `icons/`, `program-icons/` and `fonts/`: the
+//!   look and preferences ([`crate::config`], `docs/settings.md`). Only the zoom keys write here,
+//!   and only `settings.json`'s `zoom`.
 //!
 //! Files are written whole to a temporary name and renamed into place, so a crash never leaves
-//! half a file. Writes during a run go to a [`Saver`] thread, off the UI thread; the last writes
+//! half a file. A file that is a symlink (a dotfiles-managed `settings.json`) is written through
+//! to its target, so the link stays. Writes during a run go to a [`Saver`] thread, off the UI thread; the last writes
 //! on close and quit are made at once, as the process may end right after.
 
 use std::collections::HashMap;
@@ -121,6 +125,11 @@ fn write(written: &Mutex<HashMap<PathBuf, u64>>, path: &Path, version: u64, text
 }
 
 fn write_whole(path: &Path, text: &str) -> std::io::Result<()> {
+    let target = match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => std::fs::canonicalize(path)?,
+        _ => path.to_owned(),
+    };
+    let path = target.as_path();
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -163,6 +172,31 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(!dir.join("window.json.tmp").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_symlinked_file_is_written_through_to_its_target() {
+        let dir = scratch("symlink");
+        std::fs::create_dir_all(dir.join("dotfiles")).unwrap();
+        std::fs::write(dir.join("dotfiles/settings.json"), "{}").unwrap();
+        std::os::unix::fs::symlink(
+            dir.join("dotfiles/settings.json"),
+            dir.join("settings.json"),
+        )
+        .unwrap();
+        let home = Home::at(&dir);
+        home.save_now("settings.json", "{\"zoom\": 1.2}".into());
+        assert!(
+            std::fs::symlink_metadata(dir.join("settings.json"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("dotfiles/settings.json")).unwrap(),
+            "{\"zoom\": 1.2}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

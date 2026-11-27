@@ -22,7 +22,7 @@ use std::sync::Arc;
 use rune::{Color, GridRow, Shape, Span, TextStyle};
 use terminal::{CellFlags, Colors, Rgb, Row, RowId, Underline, Width};
 
-use super::font::Face;
+use super::font::{Face, FaceKey};
 use super::glyph::{self, AtlasCell, GlyphImage};
 use super::look::{Look, color};
 use super::sprite::{self, AlphaBox, Kind};
@@ -175,14 +175,25 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
             _ => None,
         };
 
+        // Text too close to its background is drawn white or black (`minimum_contrast`).
+        let mut ink_fg = fg;
+        let mut text_rgb = resolved.fg;
+        if look.minimum_contrast > 1.0 && !single.is_some_and(no_min_contrast) {
+            let bg = resolved.bg.unwrap_or(colors.background);
+            text_rgb = contrasted(resolved.fg, bg, look.minimum_contrast);
+            if text_rgb != resolved.fg {
+                ink_fg = color(text_rgb).alpha(fg.a);
+            }
+        }
+
         // A character Ghostty draws itself draws as its sprite, in the vector layer. It stays in
         // the row, drawn transparent, so a screen reader still reads it.
-        let mut ink_fg = fg;
         if drawn
             && let Some(c) = single
             && let Some(glyph) = sprite::glyph(c, span_cols as u8, metrics)
         {
-            push_sprite(&glyph, x0, fg, &mut built.boxes);
+            // `ink_fg`: `minimum_contrast` recolors the sprites it doesn't exempt (braille).
+            push_sprite(&glyph, x0, ink_fg, &mut built.boxes);
             ink_fg = Color::TRANSPARENT;
         }
 
@@ -206,7 +217,7 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
             };
             built.atlas.push(AtlasCell {
                 col,
-                pixels: g.pixels(resolved.fg, alpha),
+                pixels: g.pixels(text_rgb, alpha),
                 glyph: g,
             });
             ink_fg = Color::TRANSPARENT;
@@ -297,6 +308,43 @@ pub(super) fn atlas_glyph(
 /// [`atlas_glyph`] for a cell, its row's neighbors read from `row`.
 pub(super) fn atlas_glyph_at(row: &Row, x: usize, face: &Face) -> Option<std::rc::Rc<GlyphImage>> {
     atlas_glyph(row, &code_points(row), x, face)
+}
+
+/// Ghostty's `contrasted_color`: `fg` when its contrast ratio with `bg` reaches `min`, else white
+/// or black, whichever contrasts more with `bg`.
+pub(super) fn contrasted(fg: Rgb, bg: Rgb, min: f32) -> Rgb {
+    if contrast_ratio(fg, bg) >= min {
+        return fg;
+    }
+    let (white, black) = (Rgb::new(255, 255, 255), Rgb::new(0, 0, 0));
+    if contrast_ratio(white, bg) > contrast_ratio(black, bg) {
+        white
+    } else {
+        black
+    }
+}
+
+/// WCAG's contrast ratio, from relative luminance in linear light (Ghostty's `contrast_ratio`).
+fn contrast_ratio(a: Rgb, b: Rgb) -> f32 {
+    let luminance = |c: Rgb| {
+        let ch = |v: u8| rune::color::srgb_decode(f32::from(v) / 255.0);
+        0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b)
+    };
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// Characters whose color `minimum_contrast` never changes: box drawing, block elements, legacy
+/// computing and Powerline, which draw shapes rather than text (Ghostty's `noMinContrast`,
+/// `ghostty:src/renderer/cell.zig`).
+fn no_min_contrast(c: char) -> bool {
+    matches!(
+        c,
+        '\u{2500}'..='\u{259F}'
+            | '\u{1FB00}'..='\u{1FBFF}'
+            | '\u{1CC00}'..='\u{1CEBF}'
+            | '\u{E0B0}'..='\u{E0D7}'
+    )
 }
 
 fn span(start: usize, end: usize, ink: Ink, style: &TextStyle) -> Span {
@@ -395,8 +443,8 @@ type CachedRow = (Arc<Row>, Rc<GridRow>, Rc<[AtlasCell]>);
 
 #[derive(Clone, PartialEq)]
 struct CacheKey {
-    face: (usize, u32, u32),
-    look: [u32; 5],
+    face: FaceKey,
+    look: [u32; 6],
     foreground: Rgb,
     background: Rgb,
 }
@@ -475,6 +523,45 @@ mod tests {
 
     const FG: u32 = 0xd4d4d4;
     const BG: u32 = 0x1e1e1e;
+
+    #[test]
+    fn minimum_contrast_whitens_or_blackens_dim_text_but_never_graphics() {
+        // Black text (ANSI 0 is arctic's background) on the default background, and a box line.
+        let bytes = "\x1b[30mab\x1b[0m cd\x1b[30m\u{2500}";
+        let snapshot = screen(bytes);
+        let row = |min: f32| {
+            let look = Look {
+                minimum_contrast: min,
+                ..arctic().1
+            };
+            build(&snapshot.screen[0], &snapshot.colors, &face(), &look)
+        };
+        // Off (Eli's 1): the program's colors stay.
+        assert_eq!(row(1.0).spans[0].color, Some(rgb(BG)));
+        // On: the invisible text turns white, the readable text keeps its color.
+        let on = row(4.5);
+        assert_eq!(on.spans[0].color, Some(rgb(0xffffff)));
+        assert!(on.spans.iter().any(|s| s.color == Some(rgb(FG))));
+        // The box-drawing line keeps its color.
+        assert!(on.boxes.iter().all(|(_, c)| *c == rgb(BG)));
+        // A braille sprite is text to Ghostty: it turns white too.
+        let braille = screen("\x1b[30m\u{2836}");
+        let look = Look {
+            minimum_contrast: 4.5,
+            ..arctic().1
+        };
+        let row = build(&braille.screen[0], &braille.colors, &face(), &look);
+        assert!(!row.boxes.is_empty());
+        assert!(row.boxes.iter().all(|(_, c)| *c == rgb(0xffffff)));
+        assert_eq!(
+            contrasted(Rgb::new(250, 250, 250), Rgb::new(255, 255, 255), 3.0),
+            Rgb::new(0, 0, 0)
+        );
+        assert_eq!(
+            contrasted(Rgb::new(0, 0, 0), Rgb::new(255, 255, 255), 3.0),
+            Rgb::new(0, 0, 0)
+        );
+    }
 
     #[test]
     fn a_span_per_change_of_color_weight_or_slant() {

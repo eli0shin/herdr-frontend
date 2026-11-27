@@ -1,6 +1,7 @@
 //! Named states for `--snap --scene NAME` (`--list-scenes` lists them).
 
 use crate::State;
+use crate::config::settings::Settings;
 use crate::fixtures::{self, BOXES, COLORS, Fixture, NVIM_CHECKLIST, NVIM_SPLITS};
 use crate::link::{Fake, Offline};
 use crate::state::Status;
@@ -95,8 +96,10 @@ fn shell_not_yet(s: &mut State) {
     s.step(0.0, model::Action::Review);
 }
 
-/// `fixture` alone in a focused pane: what the Ghostty pixel diff compares.
+/// `fixture` alone in a focused pane: what the Ghostty pixel diff compares, at Ghostty's
+/// defaults.
 fn one(s: &mut State, fixture: &Fixture) {
+    s.with_settings(Settings::fixture());
     let mut pane = TerminalPane::new("pane-1", fixture.snapshot(&s.theme));
     pane.focused = true;
     s.panes = vec![pane];
@@ -104,6 +107,7 @@ fn one(s: &mut State, fixture: &Fixture) {
 
 /// The colors screen with three rows selected, in an unfocused pane (a hollow cursor).
 fn selection(s: &mut State) {
+    s.with_settings(Settings::fixture());
     let mut snapshot = COLORS.snapshot(&s.theme);
     fixtures::select(&mut snapshot, 15..=17, 8, 40);
     s.panes = vec![TerminalPane::new("pane-1", snapshot)];
@@ -111,6 +115,7 @@ fn selection(s: &mut State) {
 
 /// Four panes, 2 × 2, the Neovim one focused.
 fn panes(s: &mut State) {
+    s.with_settings(Settings::fixture());
     let mut selected = COLORS.snapshot(&s.theme);
     fixtures::select(&mut selected, 15..=17, 8, 40);
     let snapshots = [
@@ -133,6 +138,7 @@ fn panes(s: &mut State) {
 /// A screen file in a focused pane, at the grid `HERDR_FRONTEND_GRID` names
 /// ([`fixtures::screen_file`]); an empty 80 × 30 screen without one.
 fn screen_file(s: &mut State) {
+    s.with_settings(Settings::fixture());
     let (bytes, cols, rows) = fixtures::screen_file().unwrap_or_default();
     let (cols, rows) = if cols == 0 {
         (fixtures::COLS, fixtures::ROWS)

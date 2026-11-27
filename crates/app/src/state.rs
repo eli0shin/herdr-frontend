@@ -32,10 +32,13 @@ use model::{
     Action, AppCommand, CopyAction, Effect, Event, Focus, Input, Level, Model, Popup, PopupAction,
     Toast, View,
 };
-use rune::{KeyEvent, TextEdit, Tx};
+use rune::{Family, ImageCache, KeyEvent, TextEdit, TextStyle, Tx};
 use serde_json::{Map, Value, json};
 use terminal::{GridSize, Output, Padding, PaddingBalance, ScreenSize, Size, Terminal, Theme};
 
+use crate::config::settings::{self, Settings, UI_FONT_SIZE};
+use crate::config::theme::Chrome;
+use crate::config::{Config, SETTINGS, Sources, Watcher as ConfigWatcher};
 use crate::control::{self, Control};
 use crate::home::{Home, VIEW};
 use crate::keyfile::{self, Loaded, Watcher};
@@ -43,11 +46,12 @@ use crate::link::{Link, News, Offline, Out};
 use crate::toast::{self, Toasts};
 use crate::view::terminal::TerminalPane;
 use crate::view::terminal::font::{Face, Font};
-use crate::view::terminal::look::{self, ChromeColors, Look};
+use crate::view::terminal::look::Look;
 use crate::window::Keeper;
 use crate::{chord, keys};
 
-/// The terminal font's size until settings land: Ghostty's and Herdr app's 14 pt default.
+/// Ghostty's and Herdr app's default terminal font size, 14 pt: the renderer's fixtures and the
+/// Ghostty pixel diff draw at it ([`Settings::fixture`]).
 pub const TERMINAL_POINTS: f32 = 14.0;
 
 /// Lines of scrollback a terminal's first paint brings, as Herdr app asks.
@@ -133,7 +137,7 @@ struct Ui {
     window: Vec<AppCommand>,
 }
 
-/// The window's tab area, as laid out.
+/// The window's tab area, as laid out, in view points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Area {
     w: f32,
@@ -153,16 +157,31 @@ pub struct State {
     /// the Ghostty pixel diff.
     pub panes: Vec<TerminalPane>,
     pub font: Font,
+    /// The panels' font family, when the font folders have it; Rune's sans otherwise.
+    ui_family: Option<&'static str>,
     /// The colors terminals start with.
     pub theme: Theme,
     pub look: Look,
-    pub chrome: ChromeColors,
+    /// The panels' colors.
+    pub chrome: Chrome,
+    /// What the files say (`docs/settings.md`).
+    pub config: Config,
+    sources: Sources,
+    watcher: Option<ConfigWatcher>,
+    /// `settings.json` texts the zoom keys wrote, oldest first, until the watcher reads the
+    /// newest back: one it reads before that is stale and is skipped.
+    own_writes: Vec<String>,
+    /// Program icons, rasterized per path and size in device pixels.
+    images: Option<ImageCache>,
+    icons: RefCell<BTreeMap<(String, u32), rune::Image>>,
     /// The sidebar's width, or `None` when it's hidden.
     pub sidebar: Option<f32>,
     /// The font at the display scale the last frame drew at.
     face: RefCell<Option<Face>>,
     scale: f32,
     area: Option<Area>,
+    /// The window's size in window points, as last reported.
+    window_points: (f32, f32),
     window_active: bool,
     /// The terminal that takes the size.
     in_use: Option<String>,
@@ -215,14 +234,14 @@ fn user_home() -> String {
 }
 
 impl State {
-    /// A state on `link`, restoring the view saved in `home`.
+    /// A state on `link`, restoring the view saved in `home` and reading its settings. With no
+    /// home it has the built-in defaults: Eli's settings, arctic, no font files.
     pub fn new(link: Box<dyn Link>, home: Option<Home>, window: Keeper) -> State {
         let view = home
             .as_ref()
             .and_then(|h| h.read(VIEW))
             .and_then(|text| View::from_json(&text).ok())
             .unwrap_or_default();
-        let (theme, look) = look::arctic();
         let mut model = Model::with_view(user_home(), view);
         let mut toasts = Toasts::default();
         let mut keys_read = None;
@@ -237,6 +256,14 @@ impl State {
             }
             keys_read = start.text;
         }
+        let sources = match &home {
+            Some(home) => Sources::new(Some(home.dir().to_owned())),
+            None => Sources::none(),
+        };
+        let config = match &home {
+            Some(_) => Config::load(&sources, None),
+            None => Config::default(),
+        };
         let mut s = State {
             model,
             link,
@@ -246,13 +273,21 @@ impl State {
             viewers: BTreeMap::new(),
             panes: Vec::new(),
             font: Font::jetbrains_mono(TERMINAL_POINTS),
-            theme,
-            look,
-            chrome: ChromeColors::arctic(),
+            ui_family: None,
+            theme: Theme::default(),
+            look: Look::default(),
+            chrome: config.theme.chrome(),
+            config: Config::default(),
+            sources,
+            watcher: None,
+            own_writes: Vec::new(),
+            images: None,
+            icons: RefCell::new(BTreeMap::new()),
             sidebar: Some(SIDEBAR),
             face: RefCell::new(None),
             scale: 2.0,
             area: None,
+            window_points: crate::SIZE,
             window_active: true,
             in_use: None,
             resized_at: f64::NEG_INFINITY,
@@ -270,21 +305,199 @@ impl State {
             help_filter: TextEdit::default(),
             redraw: false,
         };
+        s.configure_all(config);
         s.window_sized(crate::SIZE.0, crate::SIZE.1);
         s
     }
 
-    /// The window's size, in points, before its first layout: the panes' first frame is laid
-    /// out for the tab area it leaves (Rune reports where elements are only after a frame).
+    /// Runs with `settings` and the built-in theme and programs, as if a file said so: scenes and
+    /// tests ([`Settings::fixture`] for the renderer's fixtures and geometry tests).
+    pub fn with_settings(&mut self, settings: Settings) {
+        let config = Config::from_settings(settings);
+        self.configure(config);
+    }
+
+    /// The zoom the window draws at.
+    pub fn zoom(&self) -> f32 {
+        self.config.settings.zoom
+    }
+
+    /// Takes a new config: the font, theme and zoom it changes apply at once, to terminals
+    /// already on screen too.
+    pub fn configure(&mut self, config: Config) {
+        let old = &self.config;
+        let font_changed = old.font != config.font
+            || old.settings.font != config.settings.font
+            || old.settings.font_size != config.settings.font_size
+            || old.settings.terminal_line_height != config.settings.terminal_line_height
+            || old.settings.terminal_cell_width != config.settings.terminal_cell_width;
+        let ui_changed =
+            old.ui_font != config.ui_font || old.settings.ui_font != config.settings.ui_font;
+        let look_changed = old.theme != config.theme
+            || old.settings.minimum_contrast != config.settings.minimum_contrast;
+        let zoom_changed = old.settings.zoom != config.settings.zoom;
+        self.apply_config(config, font_changed, ui_changed, look_changed);
+        if zoom_changed {
+            self.zoomed();
+        }
+    }
+
+    /// Takes everything from `config`, whatever was there before.
+    fn configure_all(&mut self, config: Config) {
+        self.apply_config(config, true, true, true);
+    }
+
+    fn apply_config(&mut self, config: Config, font: bool, ui: bool, look: bool) {
+        let s = &config.settings;
+        if font {
+            let base = match &config.font {
+                Some(files) => Font::from_files(files, s.font_size).unwrap_or_else(|e| {
+                    eprintln!("herdr-frontend: font {:?}: {e}", s.font);
+                    Font::jetbrains_mono(s.font_size)
+                }),
+                None => Font::jetbrains_mono(s.font_size),
+            };
+            self.font = base.adjusted(s.terminal_line_height, s.terminal_cell_width);
+            *self.face.borrow_mut() = None;
+        }
+        if ui {
+            self.ui_family = match &config.ui_font {
+                Some(files) => Font::from_files(files, UI_FONT_SIZE)
+                    .ok()
+                    .map(|f| f.family()),
+                None if s
+                    .ui_font
+                    .eq_ignore_ascii_case(crate::view::terminal::font::JETBRAINS_MONO_FAMILY) =>
+                {
+                    Some(Font::jetbrains_mono(UI_FONT_SIZE).family())
+                }
+                None => None,
+            };
+        }
+        // Icon files may have new bytes under the same paths.
+        self.icons.borrow_mut().clear();
+        if look {
+            self.theme = config.theme.terminal();
+            self.look = config.theme.look(s.minimum_contrast);
+            self.chrome = config.theme.chrome();
+            for viewer in self.viewers.values() {
+                viewer.terminal.set_theme(self.theme.clone());
+            }
+        }
+        self.config = config;
+    }
+
+    /// The panels' text at `size` points (before zoom).
+    pub fn ui_font(&self, size: f32, weight: f32) -> TextStyle {
+        let style = TextStyle::new(size, weight);
+        match self.ui_family {
+            Some(family) => style.family(Family::Named(family)),
+            None => style,
+        }
+    }
+
+    /// The zoom keys: `steps` tenths in or out, or back to 1 with 0. The new zoom is written to
+    /// `settings.json`, keeping the file's other keys.
+    pub fn zoom_by(&mut self, steps: i32) {
+        let zoom = settings::next_zoom(self.zoom(), steps);
+        if zoom == self.zoom() {
+            return;
+        }
+        self.config.settings.zoom = zoom;
+        self.zoomed();
+        let Some(home) = &self.home else { return };
+        match settings::with_zoom(self.config.settings_text.as_deref(), zoom) {
+            Some(text) => {
+                home.save(SETTINGS, text.clone());
+                self.config.settings_text = Some(text.clone());
+                self.own_writes.push(text);
+            }
+            None => {
+                let why = "settings.json isn't a JSON object, so the zoom isn't saved".to_owned();
+                if !self.config.problems.contains(&why) {
+                    self.config.problems.push(why);
+                }
+            }
+        }
+    }
+
+    /// The zoom changed. Once laid out, the tab area's next layout brings its new size in the
+    /// new points; before that, the first frame's area comes from the window's size.
+    fn zoomed(&mut self) {
+        if self.area.is_none() {
+            let (w, h) = self.window_points;
+            self.window_sized_points(w, h, self.zoom());
+        }
+    }
+
+    /// A config the watcher read. One holding a zoom write of ours that a newer one follows is
+    /// stale: the newer one comes next.
+    fn reloaded(&mut self, config: Config) {
+        if let Some(text) = config.settings_text.as_ref()
+            && let Some(at) = self.own_writes.iter().position(|w| w == text)
+        {
+            if at + 1 < self.own_writes.len() {
+                return;
+            }
+            self.own_writes.clear();
+        } else {
+            self.own_writes.clear();
+        }
+        self.configure(config);
+    }
+
+    /// What only the window knows, for `status` ([`crate::control::Control::drain`]): the zoom,
+    /// the font sizes and what's wrong with the files.
+    pub fn window_status(&self) -> Map<String, Value> {
+        let mut status = Map::new();
+        // As the file has them (1.1, not the f32's 1.100000023841858).
+        let short = |v: f32| (f64::from(v) * 1e4).round() / 1e4;
+        status.insert("zoom".into(), json!(short(self.zoom())));
+        status.insert(
+            "font_size".into(),
+            json!(short(self.config.settings.font_size)),
+        );
+        status.insert("ui_font_size".into(), json!(UI_FONT_SIZE));
+        status.insert("errors".into(), json!(self.config.problems));
+        status
+    }
+
+    /// The image a program icon draws, rasterized for `size` points at `scale`. `None` before
+    /// setup, which makes the image cache.
+    pub fn icon_image(&self, path: &str, size: f32, scale: f32) -> Option<rune::Image> {
+        let images = self.images.as_ref()?;
+        let bytes = self.config.programs.icon(path)?;
+        let px = (size * scale).ceil() as u32;
+        let image = self
+            .icons
+            .borrow_mut()
+            .entry((path.to_owned(), px))
+            .or_insert_with(|| images.svg(bytes.clone(), size, scale))
+            .clone();
+        if self.synchronous {
+            let _ = image.wait();
+        }
+        Some(image)
+    }
+
+    /// The window's size, in window points, before its first layout: the panes' first frame is
+    /// laid out for the tab area it leaves (Rune reports where elements are only after a frame).
     pub fn window_sized(&mut self, w: f32, h: f32) {
+        self.window_points = (w, h);
         if self.area.is_some() {
             return;
         }
+        self.window_sized_points(w, h, self.zoom());
+    }
+
+    /// The tab area a `w` × `h` window leaves at zoom `k`: the view lays out in `1 / k` as many
+    /// points.
+    fn window_sized_points(&mut self, w: f32, h: f32, k: f32) {
         let area = model::Rect::new(
             0.0,
             0.0,
-            (w - self.sidebar.unwrap_or(0.0)).max(0.0),
-            (h - crate::view::shell::BAR).max(0.0),
+            (w / k - self.sidebar.unwrap_or(0.0)).max(0.0),
+            (h / k - crate::view::shell::BAR).max(0.0),
         );
         self.step(
             self.now,
@@ -441,8 +654,8 @@ impl State {
         }
     }
 
-    /// An app command: the window's own are Rune's, the sidebar is this state's, the escape
-    /// hatch resets the key file; the rest aren't built yet.
+    /// An app command: the window's own are Rune's, the sidebar and the zoom are this state's,
+    /// the escape hatch resets the key file; the rest aren't built yet.
     fn app_command(&mut self, command: AppCommand) {
         match command {
             AppCommand::Quit | AppCommand::CloseWindow | AppCommand::Maximize => {
@@ -465,13 +678,13 @@ impl State {
                     }
                 }
             }
+            AppCommand::ZoomIn => self.zoom_by(1),
+            AppCommand::ZoomOut => self.zoom_by(-1),
+            AppCommand::ZoomReset => self.zoom_by(0),
             // macOS's menu hides the app on ⌘H and ⌥⌘H before the window sees them.
-            AppCommand::Hide
-            | AppCommand::HideOthers
-            | AppCommand::ZoomIn
-            | AppCommand::ZoomOut
-            | AppCommand::ZoomReset
-            | AppCommand::LayoutSwitch => self.not_yet(&Action::App(command)),
+            AppCommand::Hide | AppCommand::HideOthers | AppCommand::LayoutSwitch => {
+                self.not_yet(&Action::App(command))
+            }
         }
     }
 
@@ -531,6 +744,11 @@ impl State {
     pub fn pump(&mut self, now: f64) -> bool {
         self.now = self.now.max(now);
         let now = self.now;
+        let mut changed = false;
+        if let Some(config) = self.watcher.as_ref().and_then(ConfigWatcher::latest) {
+            self.reloaded(config);
+            changed = true;
+        }
         if let Some(due) = self.tick_at
             && now >= due
         {
@@ -545,7 +763,7 @@ impl State {
             self.wake_at(due);
         }
         // Before the link, so a fake core answers the calls a `do` made in this same pump.
-        let mut changed = self.drain_control(now);
+        changed |= self.drain_control(now);
         // A fake core answers on the next poll, so keep going until it is quiet.
         for _ in 0..64 {
             let mut news = Vec::new();
@@ -567,10 +785,13 @@ impl State {
     /// Runs the requests the control socket took (`ls`, `status`, `do`) through the model, and
     /// carries out their effects. True when any came in.
     fn drain_control(&mut self, now: f64) -> bool {
+        if self.control.is_none() {
+            return false;
+        }
+        let facts = self.window_status();
         let Some(control) = &mut self.control else {
             return false;
         };
-        let facts = window_facts(&self.font);
         let before = self.model.mode().clone();
         let Some(fx) = control.drain(&mut self.model, now, &facts) else {
             return false;
@@ -995,6 +1216,15 @@ impl State {
     pub fn setup(s: &mut State, waker: rune::Waker) {
         s.waker = Some(waker.clone());
         s.serve(waker.clone());
+        s.images = Some(ImageCache::new(waker.clone()));
+        if s.sources.home.is_some() && s.watcher.is_none() {
+            let wake = waker.clone();
+            s.watcher = Some(ConfigWatcher::start(
+                s.sources.clone(),
+                &s.config,
+                move || wake(),
+            ));
+        }
         if !s.started {
             s.link.start(waker.clone());
             s.started = true;
@@ -1162,13 +1392,4 @@ impl State {
         // The socket goes with the window, even when the process ends before the state drops.
         s.control = None;
     }
-}
-
-/// What only the window knows for `status`: its zoom and font sizes (`docs/cli.md`).
-fn window_facts(font: &Font) -> Map<String, Value> {
-    let mut facts = Map::new();
-    facts.insert("zoom".into(), json!(1.0));
-    facts.insert("font_size".into(), json!(font.points));
-    facts.insert("ui_font_size".into(), json!(crate::view::shell::UI_POINTS));
-    facts
 }

@@ -6,7 +6,8 @@
 //! For each such cell:
 //!
 //! - **Font fallback** follows Ghostty's order (`font/CodepointResolver.zig`,
-//!   `font/SharedGridSet.zig`): the Symbols Nerd Font Ghostty embeds, then Apple Color Emoji for
+//!   `font/SharedGridSet.zig`): for a terminal font other than JetBrains Mono, the JetBrains Mono
+//!   Ghostty embeds as its backup (`SharedGridSet.zig:260-316`), then the Symbols Nerd Font Ghostty embeds, then Apple Color Emoji for
 //!   emoji presentation, then the fallback faces already loaded, then CoreText's fallback for the
 //!   character, scaled so its ideograph width matches the terminal font's
 //!   (`Collection.SizeAdjustment.ic_width`). A character is emoji when a variation selector says
@@ -135,7 +136,7 @@ impl AtlasCell {
     }
 }
 
-type Key = ((usize, u32, u32), String, bool, u32);
+type Key = (super::font::FaceKey, String, bool, u32);
 
 thread_local! {
     static GLYPHS: RefCell<HashMap<Key, Option<Rc<GlyphImage>>>> = RefCell::new(HashMap::new());

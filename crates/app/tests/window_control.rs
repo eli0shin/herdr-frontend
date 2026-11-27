@@ -197,6 +197,13 @@ fn the_window_serves_every_cli_command_on_a_live_core() {
     let scratch = Scratch::new();
     let home = scratch.0.as_path();
     let socket = home.join(SOCKET);
+    // The bundled font, so the settings have nothing to report whatever font folders the
+    // machine has; the zoom and size stay Eli's defaults.
+    std::fs::write(
+        home.join("settings.json"),
+        r#"{"font": "JetBrains Mono", "ui_font": "JetBrains Mono"}"#,
+    )
+    .expect("settings.json");
     let mut rt = live(Live::new(core.transport()), Some(Home::at(home)))
         .headless_runtime(SIZE, Env::new(true, 2.0));
     assert_eq!(rt.state.control_socket(), Some(socket.as_path()));
@@ -225,7 +232,7 @@ fn the_window_serves_every_cli_command_on_a_live_core() {
     assert_eq!(shown["errors"], json!([]));
     assert_eq!(
         (&shown["zoom"], &shown["font_size"], &shown["ui_font_size"]),
-        (&json!(1.0), &json!(14.0), &json!(13.0))
+        (&json!(1.1), &json!(17.0), &json!(13.0))
     );
 
     // `space.new {focus: false}` answers the new ids once its terminal runs, and keeps the

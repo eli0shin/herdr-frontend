@@ -11,6 +11,7 @@
 
 use std::time::{Duration, Instant};
 
+use herdr_frontend::config::settings::Settings;
 use herdr_frontend::view::terminal::TerminalPane;
 use herdr_frontend::view::terminal::look::arctic;
 use rune::Env;
@@ -77,6 +78,7 @@ fn percentile(sorted: &[Duration], p: f64) -> f64 {
 fn run(n: usize, cols: u16, rows: u16, size: (f32, f32), load: Load, frames: usize) {
     let (theme, _) = arctic();
     let mut rt = herdr_frontend::app().headless_runtime(size, Env::new(true, 2.0));
+    rt.state.with_settings(Settings::fixture());
     let mut vts: Vec<Vt> = (0..n)
         .map(|_| {
             Vt::new(&Config {

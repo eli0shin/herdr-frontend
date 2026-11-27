@@ -49,9 +49,13 @@ just bindings     # regenerate the libghostty-vt bindings (`--check` fails on a 
 
 `just run` connects with `hc connect`, as Herdr app does: the core `HC_SESSION` names, or your
 default one. It reads the shared layout and never writes it except for edits it makes itself
-(adopting a labeled terminal, say). Its own files (this window's view and place) live in
-`$HERDR_FRONTEND_HOME`, else `~/.config/herdr-frontend`. `--snap`, `--tree` and `--script` never
-connect to a core. Release builds keep those three flags too (Rune's `tooling` feature).
+(adopting a labeled terminal, say). Its own files (this window's view and place, and its
+`settings.json`, themes, programs and fonts) live in `$HERDR_FRONTEND_HOME`, else
+`~/.config/herdr-frontend`. With no settings it looks like Eli's Herdr app: arctic, Operator Mono
+Book Herdr 17 pt (found in Herdr app's `fonts/`, else JetBrains Mono), zoom 1.1; edits apply
+while it runs. `docs/settings.md` lists every key. `--snap`, `--tree` and `--script` never connect
+to a core and read no settings. Release builds keep those three flags too (Rune's `tooling`
+feature).
 
 The first build downloads the pinned libghostty-vt xcframework (16 MB), checks its SHA-256 and
 caches it in `~/Library/Caches/ghostty-vt-sys` (set `GHOSTTY_VT_CACHE_DIR` to move it). It needs

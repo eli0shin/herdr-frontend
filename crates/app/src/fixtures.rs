@@ -155,9 +155,13 @@ pub fn demo_core() -> crate::link::Fake {
         "folder": "/tmp",
         "tabs": [work, logs],
     }]});
-    let terminals = ["t1", "t2", "t3", "t4"]
+    // What runs in each, for the tabs' program icons: Neovim, then shells.
+    let terminals = [("t1", "nvim"), ("t2", "zsh"), ("t3", "zsh"), ("t4", "zsh")]
         .into_iter()
-        .map(|a| terminal(a, COLS, ROWS))
+        .map(|(a, program)| herdr_proto::Terminal {
+            argv: vec![program.into()],
+            ..terminal(a, COLS, ROWS)
+        })
         .collect();
     let fake = crate::link::Fake::new(doc, terminals);
     {

@@ -7,9 +7,9 @@
 //! are ticket 025's.
 
 use model::{Action, Level, Toast};
-use rune::{El, TextStyle, col, el, row, text};
+use rune::{El, col, el, row, text};
 
-use crate::view::terminal::look::color;
+use crate::config::theme::Chrome;
 
 pub const WIDTH: f32 = 340.0;
 pub const HEIGHT: f32 = 72.0;
@@ -79,23 +79,20 @@ impl Toasts {
     }
 }
 
-/// The arctic theme's level colors (`themes/arctic.json`): error is `blocked`, warning
-/// `working`, success `done`, info `accent`.
-fn dot(level: Level) -> u32 {
+/// A level's color, from the theme: error is `blocked`, warning `working`, success `done`,
+/// info `accent`.
+fn dot(level: Level, chrome: &Chrome) -> rune::Color {
     match level {
-        Level::Error => 0xcca700,
-        Level::Warning => 0x3794ff,
-        Level::Success => 0x89d185,
-        Level::Info => 0x858585,
+        Level::Error => chrome.blocked,
+        Level::Warning => chrome.working,
+        Level::Success => chrome.done,
+        Level::Info => chrome.accent,
     }
 }
 
-fn rgb(v: u32) -> rune::Color {
-    color(terminal::Rgb::new((v >> 16) as u8, (v >> 8) as u8, v as u8))
-}
-
 /// The stack over the window's bottom right; `None` with no toasts.
-pub fn view(toasts: &Toasts, chrome: &crate::view::terminal::look::ChromeColors) -> Option<El> {
+pub fn view(s: &crate::State) -> Option<El> {
+    let (toasts, chrome) = (&s.toasts, &s.chrome);
     if toasts.shown.is_empty() {
         return None;
     }
@@ -103,8 +100,8 @@ pub fn view(toasts: &Toasts, chrome: &crate::view::terminal::look::ChromeColors)
         let body = (!t.toast.body.is_empty()).then(|| {
             text(t.toast.body.clone())
                 .key(format!("toast-{}-body", t.id))
-                .font(TextStyle::new(12.0, 400.0))
-                .color(color(chrome.muted))
+                .font(s.ui_font(12.0, 400.0))
+                .color(chrome.muted)
                 .truncate()
         });
         row()
@@ -115,12 +112,12 @@ pub fn view(toasts: &Toasts, chrome: &crate::view::terminal::look::ChromeColors)
             .gap(10.0)
             .items_center()
             .radius(8.0)
-            .fill(color(chrome.raised))
-            .border(1.0, color(chrome.border))
+            .fill(chrome.raised)
+            .border(1.0, chrome.border)
             .child(
                 el().size(8.0, 8.0)
                     .radius(4.0)
-                    .fill(rgb(dot(t.toast.level))),
+                    .fill(dot(t.toast.level, chrome)),
             )
             .child(
                 col()
@@ -130,8 +127,8 @@ pub fn view(toasts: &Toasts, chrome: &crate::view::terminal::look::ChromeColors)
                     .child(
                         text(t.toast.title.clone())
                             .key(format!("toast-{}-title", t.id))
-                            .font(TextStyle::new(13.0, 600.0))
-                            .color(color(chrome.text))
+                            .font(s.ui_font(13.0, 600.0))
+                            .color(chrome.foreground)
                             .truncate(),
                     )
                     .children(body),

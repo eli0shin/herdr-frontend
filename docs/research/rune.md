@@ -644,6 +644,13 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   physical size, maximized, full screen, display). Writes go through a saver thread, written
   whole and renamed; close and quit write at once. A saved place whose display is gone opens
   centered.
+- **Look and settings** (ticket 017, `docs/settings.md`). `config::Config` is what the home's
+  `settings.json`, theme, `programs.json` and font folders say, defaulting to Eli's look; a
+  watcher thread reloads it when they change and `State::configure` applies it live. The view
+  calls `Cx::zoom(settings.zoom)` every run, so terminals, panels and layout sizes scale as a
+  page zoom does and cells stay whole device pixels. Panels use the theme's `Chrome` colors and
+  the `ui_font`; terminals get the theme's colors with `Terminal::set_theme`. Tab pills show
+  program icons rasterized with `ImageCache::svg` and tinted with `El::pixels_tint`.
 - **Headless.** `--snap`, `--tree` and `--script` never connect: `main` runs the app with no
   core. The `shell*` scenes run on `Fake`; `State::settle` makes every pump wait on the
   terminals (`Terminal::snapshot_now`) so a frame never races a worker. While the screen is

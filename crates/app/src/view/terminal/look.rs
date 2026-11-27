@@ -21,6 +21,9 @@ pub struct Look {
     pub cursor_text: Option<Rgb>,
     /// How opaque faint (SGR 2) text is.
     pub faint_opacity: f32,
+    /// Text whose contrast ratio with its background is below this is drawn white or black,
+    /// whichever contrasts more (Ghostty's `minimum-contrast`). 1 leaves every color alone.
+    pub minimum_contrast: f32,
 }
 
 impl Default for Look {
@@ -31,13 +34,14 @@ impl Default for Look {
             cursor: None,
             cursor_text: None,
             faint_opacity: 0.5,
+            minimum_contrast: 1.0,
         }
     }
 }
 
 impl Look {
     /// What changes a built row: rows built under another look are built again.
-    pub(crate) fn key(&self) -> [u32; 5] {
+    pub(crate) fn key(&self) -> [u32; 6] {
         let rgb = |c: Option<Rgb>| {
             c.map_or(u32::MAX, |c| {
                 u32::from(c.r) << 16 | u32::from(c.g) << 8 | u32::from(c.b)
@@ -49,33 +53,16 @@ impl Look {
             rgb(self.cursor),
             rgb(self.cursor_text),
             self.faint_opacity.to_bits(),
+            self.minimum_contrast.to_bits(),
         ]
     }
 }
 
 /// Eli's arctic theme (`docs/research/feature-inventory.md` §2): the terminal colors his Ghostty
-/// and Neovim share, and Herdr app's `#04395E` selection.
+/// and Neovim share, and Herdr app's `#04395E` selection ([`crate::config::theme::Theme::arctic`]).
 pub fn arctic() -> (Theme, Look) {
-    let hex = |v: u32| Rgb::new((v >> 16) as u8, (v >> 8) as u8, v as u8);
-    let ansi = [
-        0x1e1e1e, 0xf44747, 0x6a9955, 0xd7ba7d, 0x569cd6, 0xc586c0, 0x4dc9b0, 0xdddddd, 0x808080,
-        0xf55757, 0x80ad6b, 0xe1cb9e, 0x6fabdc, 0xd6a9d2, 0x70d3bf, 0xffffff,
-    ];
-    let theme = Theme {
-        foreground: Some(hex(0xd4d4d4)),
-        background: Some(hex(0x1e1e1e)),
-        cursor: None,
-        palette: ansi
-            .iter()
-            .enumerate()
-            .map(|(i, &c)| (i as u8, hex(c)))
-            .collect(),
-    };
-    let look = Look {
-        selection_background: Some(hex(0x04395e)),
-        ..Look::default()
-    };
-    (theme, look)
+    let arctic = crate::config::theme::Theme::arctic();
+    (arctic.terminal(), arctic.look(1.0))
 }
 
 /// A terminal color as Rune's linear-light color.
@@ -86,35 +73,5 @@ pub fn color(c: Rgb) -> Color {
         g: channel(c.g),
         b: channel(c.b),
         a: 1.0,
-    }
-}
-
-/// The window's own colors around the terminals, until the theme ticket maps the whole of
-/// arctic (`~/.dotfiles/home/.config/herdr-app/themes/arctic.json` `colors`) to Rune's tokens.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ChromeColors {
-    /// The window behind everything.
-    pub canvas: Rgb,
-    /// The sidebar and the tab strip.
-    pub chrome: Rgb,
-    /// The line between split panes.
-    pub border: Rgb,
-    /// A selected tab.
-    pub raised: Rgb,
-    pub text: Rgb,
-    pub muted: Rgb,
-}
-
-impl ChromeColors {
-    pub fn arctic() -> ChromeColors {
-        let hex = |v: u32| Rgb::new((v >> 16) as u8, (v >> 8) as u8, v as u8);
-        ChromeColors {
-            canvas: hex(0x1e1e1e),
-            chrome: hex(0x1e1e1e),
-            border: hex(0x858585),
-            raised: hex(0x2a2d2e),
-            text: hex(0xd4d4d4),
-            muted: hex(0x8f8f8f),
-        }
     }
 }
