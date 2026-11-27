@@ -5,7 +5,7 @@ mod support;
 
 use herdr_proto::types::{MachineState, MachineView};
 use herdr_proto::{StatusState, Terminal};
-use herdr_shared::Displayed;
+use herdr_shared::{Displayed, Document};
 use model::mode::{Confirmed, ListPopup, PopupState, Rename};
 use model::popups::{self, PickerRow};
 use model::{Action, Effect, Event, MenuIcon, Mode, Popup, PopupAction, Request, Split};
@@ -402,6 +402,62 @@ fn the_tab_menu_renames_makes_and_closes_tabs() {
     assert_eq!(*m.mode(), Mode::Normal);
 }
 
+/// A pane's name is its block's `title`, as Herdr app's `pane.rename` writes it: trimmed, shown
+/// back in the prompt, and taken away by an empty name (`app:src/window.rs` `pane.rename`).
+#[test]
+fn the_terminal_menus_rename_names_the_pane_in_the_layout() {
+    let mut core = world();
+    let mut m = connected(&mut core);
+    let rename = |m: &mut model::Model, core: &mut Core, name: &str| {
+        drive(m, core, Action::TerminalMenu("p2".into()));
+        // Rename is the menu's first item.
+        key(m, core, "enter", false);
+        let Mode::Popup(PopupState::Prompt(prompt)) = m.mode().clone() else {
+            panic!("{:?}", m.mode())
+        };
+        drive(m, core, Action::Popup(PopupAction::Query(name.into())));
+        key(m, core, "enter", false);
+        assert_eq!(*m.mode(), Mode::Normal);
+        prompt.value
+    };
+    let title = |core: &Core| {
+        let doc = core.doc(None);
+        let node = doc.tab("tb2").unwrap().root.find("p2").unwrap();
+        node.extra.get("title").cloned()
+    };
+
+    assert_eq!(
+        rename(&mut m, &mut core, "  server  "),
+        "",
+        "unnamed: empty"
+    );
+    assert_eq!(title(&core), Some(json!("server")), "trimmed");
+    assert_eq!(
+        m.world()
+            .tab("tb2")
+            .unwrap()
+            .root
+            .find("p2")
+            .unwrap()
+            .title(),
+        Some("server")
+    );
+    // The prompt starts with the name; an empty one takes it away.
+    assert_eq!(rename(&mut m, &mut core, " "), "server");
+    assert_eq!(title(&core), None);
+    assert_eq!(
+        core.doc(None),
+        Document::from_value(world().docs[&None].0.clone()).unwrap()
+    );
+
+    // A second rename while the prompt is open closes it; a pane that's gone opens nothing.
+    drive(&mut m, &mut core, Action::RenamePaneOf("p2".into()));
+    drive(&mut m, &mut core, Action::RenamePaneOf("p2".into()));
+    assert_eq!(*m.mode(), Mode::Normal);
+    drive(&mut m, &mut core, Action::RenamePaneOf("gone".into()));
+    assert_eq!(*m.mode(), Mode::Normal);
+}
+
 #[test]
 fn the_terminal_menu_splits_zooms_routes_right_clicks_and_sends_sub_agents_back() {
     let mut core = world();
@@ -438,12 +494,14 @@ fn the_terminal_menu_splits_zooms_routes_right_clicks_and_sends_sub_agents_back(
             Action::PaneSplit(Split::Right)
         ]
     );
-    // Rename says not yet (pane names come later).
+    // Rename asks for the pane's name in the prompt.
     let fx = m.step(m.now(), Action::Popup(PopupAction::Choose));
-    assert!(
-        fx.list
-            .contains(&Effect::NotYet(Action::RenamePaneOf("pk".into())))
-    );
+    assert!(fx.list.iter().all(|e| !matches!(e, Effect::NotYet(_))));
+    let Mode::Popup(PopupState::Prompt(prompt)) = m.mode() else {
+        panic!("{:?}", m.mode())
+    };
+    assert_eq!(prompt.rename, Rename::Pane("pk".into()));
+    press(&mut m, "escape");
 
     // Right-clicks to the program, then back to the menu.
     drive(&mut m, &mut core, Action::TerminalMenu("pk".into()));

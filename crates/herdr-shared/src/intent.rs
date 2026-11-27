@@ -62,6 +62,12 @@ pub enum Intent {
         tab: String,
         name: String,
     },
+    /// Names a pane: its block's `title`, as herdr-app's `pane.rename` writes it. An empty name
+    /// takes the title away (unnamed again).
+    RenamePane {
+        pane: String,
+        name: String,
+    },
     /// To a 0-based place among the machine's spaces.
     MoveSpace {
         space: String,
@@ -248,6 +254,12 @@ impl Document {
             Intent::RenameTab { tab, name } => {
                 self.tab_mut(tab).map(|t| t.name.clone_from(name)).is_some()
             }
+            Intent::RenamePane { pane, name } => self
+                .tab_of_mut(pane)
+                .and_then(|t| t.root.find_mut(pane))
+                .filter(|n| n.is_pane())
+                .map(|n| n.set_title(name))
+                .is_some(),
             Intent::MoveSpace { space, to } => self.move_space(space, *to),
             Intent::MoveTab { tab, to } => self.move_tab(tab, *to),
             Intent::SwapPanes { pane, target, from } => {
@@ -469,6 +481,15 @@ mod tests {
                 tab: "gone".into(),
                 name: "x".into(),
             },
+            Intent::RenamePane {
+                pane: "gone".into(),
+                name: "x".into(),
+            },
+            // A tab's root is no pane.
+            Intent::RenamePane {
+                pane: "c1".into(),
+                name: "x".into(),
+            },
             Intent::MoveSpace {
                 space: "gone".into(),
                 to: 0,
@@ -504,6 +525,22 @@ mod tests {
             (d.spaces[0].name.as_str(), d.spaces[0].tabs[0].name.as_str()),
             ("api", "review")
         );
+        let unnamed = d.clone();
+        assert!(d.apply(&Intent::RenamePane {
+            pane: "x2".into(),
+            name: "server".into()
+        }));
+        let pane = |d: &Document| d.tab("c1").unwrap().root.find("x2").unwrap().clone();
+        assert_eq!(pane(&d).title(), Some("server"));
+        assert!(d.apply(&Intent::RenamePane {
+            pane: "x2".into(),
+            name: "".into()
+        }));
+        assert_eq!(d, unnamed, "an empty name leaves no title behind");
+        d.apply(&Intent::RenamePane {
+            pane: "x2".into(),
+            name: "server".into(),
+        });
         assert!(d.apply(&Intent::Resize {
             sizes: vec![
                 ("x1".into(), Size::Weight(0.7)),
@@ -518,6 +555,11 @@ mod tests {
         let swap = Intent::swap_panes(&d, "x1", "x2").unwrap();
         assert!(d.apply(&swap));
         assert_eq!(d.addresses(), ["t2", "t1"]);
+        assert_eq!(
+            pane(&d).title(),
+            Some("server"),
+            "the name moves with its pane"
+        );
         assert!(!d.apply(&swap), "a replay doesn't swap back");
         assert_eq!(d.addresses(), ["t2", "t1"]);
         assert_eq!(Intent::swap_panes(&d, "gone", "x1"), None);

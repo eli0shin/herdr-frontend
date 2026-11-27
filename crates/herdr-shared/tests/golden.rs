@@ -113,3 +113,65 @@ fn an_edit_writes_only_what_it_changed() {
         );
     }
 }
+
+#[test]
+fn a_pane_rename_writes_only_its_title_and_clearing_it_gives_the_document_back() {
+    for (name, text) in fixtures() {
+        let mut mirror = mirror_of(&text);
+        let pane = decode(&text).tabs().next().unwrap().root.panes()[0]
+            .id
+            .clone();
+        mirror
+            .edit(Intent::RenamePane {
+                pane: pane.clone(),
+                name: "server".into(),
+            })
+            .unwrap();
+        let Some(Round::Write(set)) = mirror.next_round() else {
+            panic!("{name}: expected a write");
+        };
+        let mut expected: Value = serde_json::from_str(&text).unwrap();
+        let mut named = false;
+        visit(&mut expected, &mut |node| {
+            if node["id"] == pane.as_str() && node["type"] == "block" {
+                node["title"] = "server".into();
+                named = true;
+            }
+        });
+        assert!(named, "{name}");
+        assert_eq!(
+            serde_json::to_string(&set.value).unwrap(),
+            serde_json::to_string(&expected).unwrap(),
+            "{name}"
+        );
+
+        // Unnamed again, the bytes are the core's own.
+        let mut doc = Document::from_value(set.value).unwrap();
+        assert!(doc.apply(&Intent::RenamePane {
+            pane,
+            name: String::new(),
+        }));
+        assert_eq!(
+            serde_json::to_string(&doc.to_value()).unwrap(),
+            text,
+            "{name}"
+        );
+    }
+}
+
+/// Every layout node of a raw document.
+fn visit(value: &mut Value, f: &mut impl FnMut(&mut Value)) {
+    for space in value["spaces"].as_array_mut().into_iter().flatten() {
+        for tab in space["tabs"].as_array_mut().into_iter().flatten() {
+            visit_node(&mut tab["root"], f);
+        }
+    }
+}
+
+fn visit_node(node: &mut Value, f: &mut impl FnMut(&mut Value)) {
+    f(node);
+    let children = node.get_mut("children").and_then(Value::as_array_mut);
+    for child in children.into_iter().flatten() {
+        visit_node(child, f);
+    }
+}

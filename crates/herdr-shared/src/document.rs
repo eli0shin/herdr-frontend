@@ -265,6 +265,25 @@ impl Node {
         self.extra.get("hidden").and_then(Value::as_bool) == Some(true)
     }
 
+    /// `title`: the name someone gave a pane (herdr-app's `pane.rename`, `app:src/layout.rs`
+    /// `Node::title`, `app:src/window.rs` `pane.rename`). Absent or empty: no name.
+    pub fn title(&self) -> Option<&str> {
+        self.extra
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|t| !t.is_empty())
+    }
+
+    /// Names the node as herdr-app does: an empty name takes `title` away, never writes `""`.
+    pub fn set_title(&mut self, title: &str) {
+        if title.is_empty() {
+            self.extra.remove("title");
+        } else {
+            self.extra
+                .insert("title".into(), Value::String(title.to_owned()));
+        }
+    }
+
     /// `resizable`, as herdr-app reads it (absent is true): whether a split's dividers drag.
     pub fn resizable(&self) -> bool {
         self.extra.get("resizable").and_then(Value::as_bool) != Some(false)
@@ -735,6 +754,30 @@ mod tests {
         assert_eq!(mac.localized(Some("mac")).to_value(), raw);
         assert_eq!(doc.qualified(None), doc);
         assert_eq!(doc.localized(None), doc);
+    }
+
+    #[test]
+    fn a_named_pane_round_trips_and_names_as_herdr_app_does() {
+        let named = json!({"spaces": [{"id": "s", "name": "", "folder": "", "tabs": [{"id": "t", "name": "",
+            "root": {"id": "t", "type": "row", "children": [
+                {"id": "p1", "type": "block", "title": "server", "content": {"terminal": "t1"}},
+                {"id": "p2", "type": "block", "content": {"terminal": "t2"}}]}}]}]});
+        round_trip(named.clone());
+        let doc = Document::from_value(named).unwrap();
+        let root = &doc.spaces[0].tabs[0].root;
+        assert_eq!(root.find("p1").unwrap().title(), Some("server"));
+        assert_eq!(root.find("p2").unwrap().title(), None);
+
+        let mut node = Node::pane("p", "t1");
+        node.set_title("logs");
+        assert_eq!(node.extra["title"], "logs");
+        node.set_title("");
+        assert!(
+            !node.extra.contains_key("title"),
+            "unnamed: no title at all"
+        );
+        node.extra.insert("title".into(), json!(""));
+        assert_eq!(node.title(), None, "an empty title is no name");
     }
 
     #[test]

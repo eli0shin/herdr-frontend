@@ -713,7 +713,6 @@ fn unbuilt_features_say_not_yet() {
     for action in [
         Action::Peek("a2".into()),
         Action::FoldSubagents("a2".into()),
-        Action::RenamePaneOf("p1".into()),
         Action::OpenLink {
             pane: "p1".into(),
             link: "x.rs:3".into(),

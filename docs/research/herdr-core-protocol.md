@@ -332,7 +332,8 @@ schema is herdr-app's serde types (`app:src/mirror.rs`, `app:src/layout.rs`):
 - Ids are a prefix (`sp`, `tb`, `p`, `s`) plus 128 random bits in hex. They must never be a
   per-screen counter (`app:src/model.rs` `fresh_id`, test `fresh_ids_are_not_a_per_screen_counter`).
 - Each Node has `id` and `type`. Blocks have `content`; containers have `children`. The other
-  fields are optional: `size` (`{px}` or `{weight}`), `min`, `max`, `hidden`, `title`, look
+  fields are optional: `size` (`{px}` or `{weight}`), `min`, `max`, `hidden`, `title` (a pane's
+  name, set by `pane.rename` since 0.1.17; absent when unnamed), look
   fields, `floating`, stack `active` and `header`, and so on (`app:src/layout.rs` `Node`). Block
   `content` is untagged: `{terminal}`, `{mod, props?}` (a herdr-app JS mod), `{tab, pane?}` (in
   chrome layouts), or `{agent}`. The live document used only `row`, `column`, `block` with a

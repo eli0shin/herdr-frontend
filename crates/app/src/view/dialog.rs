@@ -1,9 +1,10 @@
 //! The prompt and confirm dialogs (Herdr app's `prompt` and `confirm` mods,
 //! `feature-inventory.md` §10), 380 wide over the dimmed window.
 //!
-//! - **Prompt** (`tab.rename`, `space.rename`): its title, a "Name" field holding the current
-//!   name, selected, a hint ("empty: its number" for a tab, "empty: named after its folder" for
-//!   a space), Cancel and Save. Enter saves, Esc cancels.
+//! - **Prompt** (`tab.rename`, `space.rename`, `pane.rename`): its title, a "Name" field holding
+//!   the current name, selected, a hint ("empty: its number" for a tab, "empty: named after its
+//!   folder" for a space, "empty: unnamed" for a pane), Cancel and Save. Enter saves, Esc
+//!   cancels.
 //! - **Confirm** (`space.close`, closing a space's last tab): its title, the detail, Cancel and
 //!   Confirm. Enter confirms, Esc cancels.
 //!
@@ -27,6 +28,7 @@ pub fn words(prompt: &Prompt) -> (&'static str, &'static str) {
     match prompt.rename {
         Rename::Tab(_) => ("Rename tab", "empty: its number"),
         Rename::Space(_) => ("Rename space", "empty: named after its folder"),
+        Rename::Pane(_) => ("Rename pane", "empty: unnamed"),
     }
 }
 

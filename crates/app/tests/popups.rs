@@ -487,3 +487,26 @@ fn settings_lists_the_files_and_opens_one_in_the_editor() {
     press(&mut rt, "", Key::Enter);
     assert_eq!(rt.state.revealed, [rt.state.home_dir()]);
 }
+
+#[test]
+fn the_terminal_menus_rename_asks_for_the_panes_name() {
+    let (mut rt, fake) = runtime();
+    rt.state
+        .step(0.0, model::Action::TerminalMenu("pn-1".into()));
+    frames(&mut rt, 2);
+    assert_eq!(text_of(&rt, "menu-label-0"), "Rename");
+    press(&mut rt, "", Key::Enter);
+    frames(&mut rt, 2);
+    assert_eq!(text_of(&rt, "prompt-title"), "Rename pane");
+    assert_eq!(text_of(&rt, "prompt-hint"), "empty: unnamed");
+    assert_eq!(rt.state.popup_field.text, "", "an unnamed pane");
+    assert_eq!(focused(&rt).as_deref(), Some("popup-filter"));
+    type_text(&mut rt, "server");
+    press(&mut rt, "", Key::Enter);
+    rt.state.settle();
+    assert_eq!(*rt.state.model.mode(), Mode::Normal);
+    let doc = fake.core().docs[&None].0.clone();
+    let doc = herdr_shared::Document::from_value(doc).unwrap();
+    let pane = doc.tab_of("pn-1").unwrap().root.find("pn-1").unwrap();
+    assert_eq!(pane.title(), Some("server"));
+}

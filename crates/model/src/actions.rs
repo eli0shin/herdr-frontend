@@ -236,8 +236,8 @@ impl Model {
                 }
             }
             Action::EditFile(path) => self.edit_file(&path, fx),
+            Action::RenamePaneOf(pane) => self.rename(Rename::Pane(pane)),
             Action::Review
-            | Action::RenamePaneOf(_)
             | Action::Peek(_)
             | Action::FoldSubagents(_)
             | Action::OpenLink { .. } => fx.push(Effect::NotYet(action)),
@@ -756,8 +756,8 @@ impl Model {
         self.open_popup(state);
     }
 
-    /// A rename prompt for a tab or space, its current name selected. A second rename while one
-    /// is open closes it instead of stacking another.
+    /// A rename prompt for a tab, space or pane, its current name selected (an unnamed pane's is
+    /// empty). A second rename while one is open closes it instead of stacking another.
     fn rename(&mut self, rename: Rename) {
         if let Mode::Popup(PopupState::Prompt(_)) = self.mode {
             self.mode = Mode::Normal;
@@ -766,6 +766,12 @@ impl Model {
         let value = match &rename {
             Rename::Tab(id) => self.world.tab(id).map(|t| t.name.clone()),
             Rename::Space(id) => self.world.space(id).map(|s| s.name.clone()),
+            Rename::Pane(id) => self
+                .world
+                .tab_of(id)
+                .and_then(|t| t.root.find(id))
+                .filter(|n| n.is_pane())
+                .map(|n| n.title().unwrap_or_default().to_owned()),
         };
         if let Some(value) = value {
             self.open_popup(PopupState::Prompt(Prompt { rename, value }));
@@ -826,6 +832,7 @@ impl Model {
                 let intent = match prompt.rename.clone() {
                     Rename::Tab(tab) => Intent::RenameTab { tab, name },
                     Rename::Space(space) => Intent::RenameSpace { space, name },
+                    Rename::Pane(pane) => Intent::RenamePane { pane, name },
                 };
                 self.mode = Mode::Normal;
                 self.edit(intent, fx);
