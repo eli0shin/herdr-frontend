@@ -185,6 +185,11 @@ impl Model {
                     self.open_popup(PopupState::Menu(menu), fx);
                 }
             }
+            Action::PeekMenu => {
+                if let Some(menu) = popups::peek_menu(self) {
+                    self.open_popup(PopupState::Menu(menu), fx);
+                }
+            }
             Action::SpaceNew(machine) => self.new_space(machine, None, fx),
             Action::NewSpaceIn { machine, folder } => self.new_space(machine, folder, fx),
             Action::ShowSpace(id) => {
@@ -239,6 +244,10 @@ impl Model {
                             labelled: false,
                         }),
                     );
+                } else if self.world.terminal(&terminal).is_some() {
+                    // No pane to take away (the peek's menu): its place labels and its keep
+                    // go, as Herdr app's `terminal.park` does.
+                    self.park(&terminal, fx);
                 }
             }
             Action::EditFile(path) => self.edit_file(&path, fx),

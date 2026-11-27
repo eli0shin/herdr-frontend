@@ -576,7 +576,8 @@ Ghostty does. Install the selection with `OPT_SELECTION` so the render state rep
   selects the next hit up into history (`ghostty_search_select_next`, wrapping), Shift+Enter the
   next down; the viewport scrolls to a hit off screen. The bar is Herdr app's: top right, at most
   460 × 38, "k / n", "n matches", "No matches", "Searching…". Escape closes it and gives the
-  keyboard back to the pane; the query stays and `cmd-f` brings it back selected.
+  keyboard back to the pane; the query stays and `cmd-f` brings it back selected. A peeked
+  terminal's bar is over the peek instead (`docs/review-and-peek.md`).
 - **Links** (`terminal::links`, `terminal::Vt::link_at`). An OSC 8 hyperlink (the run of cells on
   its row with the same URI), else Ghostty's URL and path pattern over the soft-wrapped line under
   the cell, read from the rows the last snapshot showed. While Cmd is held the link under the
@@ -596,11 +597,12 @@ Ghostty does. Install the selection with `OPT_SELECTION` so the render state rep
   `nvim +42 -- path` (or `"+call cursor(42, 7)"`) in a split to the right of the clicked pane, on
   its machine, in its folder; anything else here goes to `Tx::open_path`, and nothing opens on
   another machine. A failed lookup shows a toast. Cmd-clicking a terminal address peeks it,
-  ahead of any link there (`docs/review-and-peek.md`).
+  ahead of any link there, and Cmd-hover underlines it ahead of a link the same way: the window
+  names the address word to the worker with the pointer (`docs/review-and-peek.md`).
 - **Select all** (`terminal.select_all`, palette only in Eli's keys) selects the scrollback and
   the screen; **copy on select** follows `copy_on_select`. The terminal right-click menu is ticket
   026's: a right-click steps `Action::TerminalMenu` unless the terminal sends right-clicks to its
-  program.
+  program; in the peek it steps `Action::PeekMenu`, the menu without the pane items.
 
 ### Kitty graphics
 

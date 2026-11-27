@@ -4,6 +4,9 @@
 //! The pattern finds scheme URLs (`https://`, `mailto:`, `file:`, ...), rooted paths (`/`,
 //! `./`, `../`, `~/`, `$VAR/`, `.dir/`) and bare relative paths with a slash (`src/main.rs`,
 //! `lib/x.zig:42:10`). Whether a path exists is for whoever opens it to find out.
+//!
+//! [`word`] is the run of text around a column that could name a terminal (`app:src/links.rs`
+//! `word`): whoever knows which terminals are live decides whether it does.
 
 use std::ops::Range;
 use std::sync::LazyLock;
@@ -45,6 +48,29 @@ pub fn find(text: &str, at: usize) -> Option<Range<usize>> {
         }
     }
     None
+}
+
+/// The word around byte `at` of `text` that could be a terminal address: letters, digits, `-`,
+/// `_`, `/` and `.`, without dots at its ends. `None` when `at` isn't in one
+/// (`app:src/links.rs` `word`).
+pub fn word(text: &str, at: usize) -> Option<Range<usize>> {
+    let allowed = |c: char| c.is_alphanumeric() || matches!(c, '-' | '_' | '/' | '.');
+    if !text.get(at..)?.chars().next().is_some_and(allowed) {
+        return None;
+    }
+    let start = text[..at]
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !allowed(*c))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    let end = text[at..]
+        .char_indices()
+        .find(|(_, c)| !allowed(*c))
+        .map_or(text.len(), |(i, _)| at + i);
+    let found = &text[start..end];
+    let start = start + found.len() - found.trim_start_matches('.').len();
+    let end = start + found.trim_matches('.').len();
+    (start <= at && at < end).then_some(start..end)
 }
 
 #[cfg(test)]
@@ -150,6 +176,26 @@ mod tests {
         ] {
             assert_eq!(first(input), None, "{input:?}");
         }
+    }
+
+    fn at(text: &str, i: usize) -> Option<&str> {
+        word(text, i).map(|r| &text[r])
+    }
+
+    #[test]
+    fn a_word_is_letters_digits_dashes_slashes_and_inner_dots() {
+        let text = "see t12, or devbox/t3. (x.y)";
+        assert_eq!(at(text, 4), Some("t12"));
+        assert_eq!(at(text, 6), Some("t12"));
+        assert_eq!(at(text, 7), None, "the comma");
+        assert_eq!(at(text, 12), Some("devbox/t3"));
+        assert_eq!(at(text, 21), None, "a trailing dot isn't in it");
+        assert_eq!(at(text, 24), Some("x.y"));
+        assert_eq!(at(text, 3), None, "a space");
+        assert_eq!(at(text, 99), None);
+        assert_eq!(at("..t4..", 0), None);
+        assert_eq!(at("..t4..", 2), Some("t4"));
+        assert_eq!(at("é-t5", 3), Some("é-t5"), "not ASCII only");
     }
 
     #[test]

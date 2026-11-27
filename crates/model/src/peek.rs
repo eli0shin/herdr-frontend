@@ -3,8 +3,8 @@
 //! `app:src/window.rs` `peek_terminal`, `keep_terminal`).
 //!
 //! - It opens from a sub-agent's row, a jump to an agent with no pane, `agent.focus` and
-//!   `terminal.peek`, and Cmd-click on a live terminal's address in terminal text ([`word`],
-//!   [`terminal_address`]).
+//!   `terminal.peek`, and Cmd-click on a live terminal's address in terminal text (the word
+//!   under the pointer, `terminal::links::word`, that [`terminal_address`] finds live).
 //! - While it is open the peeked terminal has the keyboard (Esc too: agents use it), unless a
 //!   popup opens over it. The focused pane stays focused behind it. Closing a tab or pane by key
 //!   closes the peek instead. It closes on its ✕, a click outside it, or when its terminal ends.
@@ -15,7 +15,6 @@
 //!   only then puts its tab in the layout.
 
 use std::collections::BTreeSet;
-use std::ops::Range;
 
 use herdr_proto::methods::{TerminalKeep, TerminalLabel};
 use herdr_proto::{RpcError, Terminal};
@@ -256,7 +255,7 @@ impl Model {
 
     /// Takes a terminal's place labels off and stops keeping it (`app:src/window.rs`
     /// `TerminalChange::Park`).
-    fn park(&mut self, address: &str, fx: &mut Effects) {
+    pub(crate) fn park(&mut self, address: &str, fx: &mut Effects) {
         self.call(
             fx,
             Request::Label(TerminalLabel {
@@ -278,29 +277,6 @@ impl Model {
     }
 }
 
-/// The word around byte `at` of `text` that could be a terminal address: letters, digits, `-`,
-/// `_`, `/` and `.`, without dots at its ends. `None` when `at` isn't in one
-/// (`app:src/links.rs` `word`).
-pub fn word(text: &str, at: usize) -> Option<Range<usize>> {
-    let allowed = |c: char| c.is_alphanumeric() || matches!(c, '-' | '_' | '/' | '.');
-    if !text.get(at..)?.chars().next().is_some_and(allowed) {
-        return None;
-    }
-    let start = text[..at]
-        .char_indices()
-        .rev()
-        .find(|(_, c)| !allowed(*c))
-        .map_or(0, |(i, c)| i + c.len_utf8());
-    let end = text[at..]
-        .char_indices()
-        .find(|(_, c)| !allowed(*c))
-        .map_or(text.len(), |(i, _)| at + i);
-    let found = &text[start..end];
-    let start = start + found.len() - found.trim_start_matches('.').len();
-    let end = start + found.trim_matches('.').len();
-    (start <= at && at < end).then_some(start..end)
-}
-
 /// The live terminal a word names. A bare address means the machine of `source`, the terminal
 /// showing it; `machine/address` names another. Names aren't addresses (`app:src/links.rs`
 /// `terminal_address`).
@@ -320,26 +296,6 @@ pub fn terminal_address<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn at(text: &str, i: usize) -> Option<&str> {
-        word(text, i).map(|r| &text[r])
-    }
-
-    #[test]
-    fn a_word_is_letters_digits_dashes_slashes_and_inner_dots() {
-        let text = "see t12, or devbox/t3. (x.y)";
-        assert_eq!(at(text, 4), Some("t12"));
-        assert_eq!(at(text, 6), Some("t12"));
-        assert_eq!(at(text, 7), None, "the comma");
-        assert_eq!(at(text, 12), Some("devbox/t3"));
-        assert_eq!(at(text, 21), None, "a trailing dot isn't in it");
-        assert_eq!(at(text, 24), Some("x.y"));
-        assert_eq!(at(text, 3), None, "a space");
-        assert_eq!(at(text, 99), None);
-        assert_eq!(at("..t4..", 0), None);
-        assert_eq!(at("..t4..", 2), Some("t4"));
-        assert_eq!(at("é-t5", 3), Some("é-t5"), "not ASCII only");
-    }
 
     #[test]
     fn bare_addresses_are_the_showing_terminals_machine_and_only_live_ones_count() {

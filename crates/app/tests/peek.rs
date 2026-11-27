@@ -1,6 +1,8 @@
 //! The peek (`feature-inventory.md` §15) in the window: a sub-agent's row or a Cmd-click on a
 //! terminal address opens it over the window; its terminal takes the keyboard (Esc too) and
-//! the size; ✕, a click outside and `cmd-w` close it; "↗ keep" gives it a tab.
+//! the size; ✕, a click outside and `cmd-w` close it; "↗ keep" gives it a tab. In it, `cmd-f`
+//! opens the find bar, a right-click the terminal menu without pane items, and Cmd-hover
+//! underlines terminal addresses as it does in a pane.
 
 use herdr_frontend::config::settings::Settings;
 use herdr_frontend::fixtures::agents_core;
@@ -145,33 +147,191 @@ fn keys_go_to_the_peeked_terminal_and_esc_too() {
     assert_eq!(rt.state.in_use(), Some("t1"));
 }
 
-/// The peek has no find bar: `cmd-f` there says "not yet" and starts no search.
+/// `cmd-f` in the peek opens the peeked terminal's find bar over the peek, with the keyboard in
+/// its field; Escape closes it and gives the keyboard back to the peek, which stays open.
 #[test]
-fn cmd_f_in_the_peek_says_not_yet() {
-    let (mut rt, _) = runtime();
+fn cmd_f_in_the_peek_opens_its_find_bar() {
+    let (mut rt, fake) = runtime();
     click(&mut rt, "sub-t20");
+    fake.output("t20", b"\x1bcone match here");
+    rt.state.settle();
+    frames(&mut rt, 3);
     key(&mut rt, Key::Command('f'), CMD);
     assert_eq!(rt.state.model.peeked(), Some("t20"), "the peek stays");
+    assert_eq!(focused(&rt).as_deref(), Some("find-@peek"));
+    let bar = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("find-bar-@peek") && !e.exiting)
+        .expect("the bar");
     assert!(
-        rt.state
-            .toasts
-            .shown
-            .iter()
-            .any(|t| t.toast.title == "Not yet" && t.toast.body.contains("terminal.search")),
-        "{:?}",
-        rt.state
-            .toasts
-            .shown
-            .iter()
-            .map(|t| &t.toast)
-            .collect::<Vec<_>>()
+        bar.path.contains("peek-area/"),
+        "over the peek's terminal: {}",
+        bar.path
     );
-    assert!(rt.state.viewers["t20"].find.is_none(), "no search started");
+    let area = element(&rt, "peek-area").unwrap().rect;
+    assert!(
+        (bar.rect[0] + bar.rect[2] - (area[0] + area[2] - 8.0)).abs() < 1.0,
+        "at its top right: {:?} in {area:?}",
+        bar.rect
+    );
+    assert!(rt.state.toasts.shown.is_empty(), "no \"not yet\"");
+    for c in "match".chars() {
+        key(&mut rt, Key::Text(c.to_string()), Mods::default());
+    }
+    rt.state.settle();
+    frames(&mut rt, 3);
+    let t20 = &rt.state.viewers["t20"];
+    assert_eq!(t20.find.as_ref().unwrap().edit.text, "match");
+    let found = t20.pane.as_ref().unwrap().snapshot.find.expect("searched");
+    assert_eq!(found.total, 1);
+    assert_eq!(text_of(&rt, "find-count"), "1 matches");
+    assert!(typed(&fake, "t20").is_empty(), "the field took the typing");
+    key(&mut rt, Key::Escape, Mods::default());
+    assert!(element(&rt, "find-bar-@peek").is_none());
+    assert_eq!(rt.state.model.peeked(), Some("t20"), "Escape left the peek");
+    assert_eq!(focused(&rt).as_deref(), Some(PEEK_KEY));
+}
+
+/// A peeked terminal with a pane on screen behind the peek shows its find bar over the peek
+/// only.
+#[test]
+fn a_peeked_terminals_find_bar_is_over_the_peek_not_its_pane() {
+    let (mut rt, _) = runtime();
+    let now = rt.state.model.now();
+    rt.state.step(now, model::Action::Peek("t1".into()));
+    rt.state.settle();
+    frames(&mut rt, 2);
+    key(&mut rt, Key::Command('f'), CMD);
+    assert_eq!(focused(&rt).as_deref(), Some("find-@peek"));
+    assert!(element(&rt, "find-bar-@peek").is_some());
+    assert!(element(&rt, "find-bar-pn-1").is_none(), "not behind it too");
+}
+
+/// A right-click in the peek opens the terminal menu for the peeked terminal, without the pane
+/// items (it has no pane to split, zoom or close); closing it gives the keyboard back to the
+/// peek.
+#[test]
+fn a_right_click_in_the_peek_opens_the_terminal_menu_without_pane_items() {
+    let (mut rt, fake) = runtime();
+    click(&mut rt, "sub-t20");
+    let area = element(&rt, "peek-area").unwrap().rect;
+    let (x, y) = (area[0] + area[2] / 2.0, area[1] + area[3] / 2.0);
+    rt.secondary_down(x, y);
+    rt.secondary_up(x, y);
+    rt.state.settle();
+    frames(&mut rt, 2);
+    let model::Mode::Popup(model::PopupState::Menu(menu)) = rt.state.model.mode() else {
+        panic!("{:?}", rt.state.model.mode());
+    };
+    assert_eq!(menu.target, model::MenuTarget::Terminal("t20".into()));
+    let labels: Vec<&str> = menu.items.iter().map(|i| i.label.as_str()).collect();
+    assert_eq!(labels, ["Send right-clicks to pane", "Send back to t10"]);
+    assert_eq!(rt.state.model.peeked(), Some("t20"), "over the peek");
+    let at = element(&rt, "menu-item-0").expect("drawn").rect;
+    assert!(
+        (at[0] - x).abs() < 12.0 && (at[1] - y).abs() < 12.0,
+        "at the pointer: {at:?}"
+    );
+    key(&mut rt, Key::Escape, Mods::default());
+    assert_eq!(*rt.state.model.mode(), model::Mode::Normal);
+    assert_eq!(rt.state.model.peeked(), Some("t20"));
+    assert_eq!(focused(&rt).as_deref(), Some(PEEK_KEY));
+    assert!(
+        typed(&fake, "t20").is_empty(),
+        "Escape closed the menu only"
+    );
+    // Its first item sends the peeked terminal's right-clicks to its program.
+    rt.secondary_down(x, y);
+    rt.secondary_up(x, y);
+    rt.state.settle();
+    frames(&mut rt, 2);
+    click(&mut rt, "menu-item-0");
+    let t20 = &fake.core().terminals["t20"];
     assert_eq!(
-        focused(&rt).as_deref(),
-        Some(PEEK_KEY),
-        "the keyboard stays"
+        t20.labels.get("herdr.right-click").map(String::as_str),
+        Some("program")
     );
+    assert_eq!(rt.state.model.peeked(), Some("t20"));
+}
+
+/// The columns of row 0 of `address`'s snapshot underlined as the hovered link.
+fn underlined(rt: &Runtime<State>, address: &str) -> Option<(u16, u16)> {
+    rt.state.viewers[address]
+        .pane
+        .as_ref()
+        .unwrap()
+        .snapshot
+        .screen[0]
+        .link
+}
+
+fn hold(rt: &mut Runtime<State>, mods: Mods) {
+    rt.physical_input(PhysicalInput::Modifiers(mods));
+    rt.state.settle();
+    frames(rt, 2);
+}
+
+/// Cmd-hover underlines a live terminal's address, as it does a URL or path, in a pane and in
+/// the peek; a name that isn't a live terminal's address isn't underlined.
+#[test]
+fn cmd_hover_underlines_a_live_terminals_address() {
+    let (mut rt, fake) = runtime();
+    let grid = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("screen") && e.path.contains("pane-pn-1/"))
+        .expect("t1's grid");
+    let (w, h) = rt.state.face(2.0).cell_pt();
+    let at = |col: f32| (grid.rect[0] + (col + 0.5) * w, grid.rect[1] + h / 2.0);
+    // `see t22 now`: t22 is live.
+    let (x, y) = at(5.0);
+    rt.pointer_move(x, y);
+    frames(&mut rt, 2);
+    assert_eq!(underlined(&rt, "t1"), None, "not without Cmd");
+    hold(&mut rt, CMD);
+    assert_eq!(underlined(&rt, "t1"), Some((4, 6)));
+    hold(&mut rt, Mods::default());
+    assert_eq!(underlined(&rt, "t1"), None, "gone with Cmd");
+    // Moving onto it with Cmd held underlines it too; "see" isn't a terminal.
+    hold(&mut rt, CMD);
+    let (x, y) = at(1.0);
+    rt.pointer_move(x, y);
+    rt.state.settle();
+    frames(&mut rt, 2);
+    assert_eq!(underlined(&rt, "t1"), None);
+    let (x, y) = at(5.0);
+    rt.pointer_move(x, y);
+    rt.state.settle();
+    frames(&mut rt, 2);
+    assert_eq!(underlined(&rt, "t1"), Some((4, 6)));
+    // A name is no address once its terminal is gone.
+    fake.output("t1", b"\x1bcsee t99 now");
+    rt.state.settle();
+    frames(&mut rt, 2);
+    rt.pointer_move(x + 1.0, y);
+    rt.state.settle();
+    frames(&mut rt, 2);
+    assert_eq!(underlined(&rt, "t1"), None, "t99 isn't live");
+    hold(&mut rt, Mods::default());
+
+    // In the peek, the same.
+    click(&mut rt, "sub-t20");
+    fake.output("t20", b"\x1bcfrom t10 ok");
+    rt.state.settle();
+    frames(&mut rt, 3);
+    let grid = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("screen") && e.path.contains("peek-terminal/"))
+        .expect("the peek's grid");
+    let (x, y) = (grid.rect[0] + 6.5 * w, grid.rect[1] + h / 2.0);
+    rt.pointer_move(x, y);
+    hold(&mut rt, CMD);
+    assert_eq!(underlined(&rt, "t20"), Some((5, 7)));
+    // Cmd-click there still peeks it.
+    click_at(&mut rt, x, y);
+    assert_eq!(rt.state.model.peeked(), Some("t10"));
 }
 
 #[test]
