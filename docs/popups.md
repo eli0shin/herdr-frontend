@@ -69,7 +69,7 @@ herdr-frontend reads no branches yet.
 | Popup | Keys | Size | Rows | Enter |
 | --- | --- | --- | --- | --- |
 | Command palette | `cmd-shift-p` | 620 wide, 60 from the top, ≤ 0.85 | Empty: up to 5 recent commands, then every group (Tab, Pane, Space, Layout, Terminal, Agent, Window, App), each with its first key. Typed: matches, best first, recent first among equals, each with its group. 10 show; ↑/↓ stop at the ends; Page Up/Down move 10. | Runs it (`Action::FromPalette`), remembered among the recent commands in the saved view. A command that needs a name asks in the prompt. |
-| Tab and agent picker | `cmd-p` | 640 wide, 40 from the top, ≤ 0.8 | Spaces with an agent first (one that needs you first), each under its avatar (first emoji or letter, in the picker's space color) and its tabs: status glyph, name (semibold when shown), "needs you" / "finished", the agents' programs and "+N" sub-agents. Then "earlier: N quiet spaces ▾", then "new tab", "new space" and "new space on <machine>" per connected machine. 10 show. | Shows the tab; makes a tab or space. "earlier" unfolds and stays open. Ctrl+D closes the selected tab. |
+| Tab and agent picker | `cmd-p` | 640 wide, 40 from the top, ≤ 0.8 | Spaces with an agent first (one that needs you first), each under its avatar (first emoji or letter, in the space's color, as the sidebar keeps it) and its tabs: status glyph, name (semibold when shown), "needs you" / "finished", the agents' programs and "+N" sub-agents. Then "earlier: N quiet spaces ▾", then "new tab", "new space" and "new space on <machine>" per connected machine. 10 show. | Shows the tab; makes a tab or space. "earlier" unfolds and stays open. Ctrl+D closes the selected tab. |
 | Space picker | `ctrl-g s` | 520 wide, 40 from the top, ≤ 0.6 | Number (1-9), status glyph, name (semibold when shown), machine when remote, "N tabs". Opens on the shown space, and goes back to it when the field empties. 12 show, with "↑ N more" / "↓ N more". | Shows the space, on its first terminal tab when its selected tab is an agent's or the review's. |
 | Prompt | `f2`, `ctrl-g r`, `shift-f2` | 380 wide dialog | "Rename tab" / "Rename space", a "Name" field holding the name, selected, and a hint ("empty: its number" / "empty: named after its folder"), Cancel and Save. A second rename closes it. | Saves the trimmed name; empty goes back to the automatic one. |
 | Confirm | `ctrl-g x`, closing a space's last tab | 380 wide dialog | "Close space?", "<name> — N tabs, M terminals", Cancel and Confirm. | Closes the space and ends its terminals. |
@@ -95,9 +95,6 @@ shown space when it is this computer's, else the first of this computer's spaces
 - The terminal menu's "Rename" says "not yet": pane names need a field in the shared layout
   document that herdr-shared doesn't model yet.
 - The picker's working spinner is a static ◐ glyph, as the space picker draws it.
-- The picker's space colors are assigned in space order each time, the way a new space's color is
-  picked. Keeping each space's color once chosen, so adding a space moves nothing, comes with the
-  sidebar's space colors (ticket 023), kept in herdr-frontend's home.
 
 ## Scenes
 

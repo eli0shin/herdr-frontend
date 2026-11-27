@@ -40,12 +40,17 @@ pub fn rows(s: &State, list: &ListPopup) -> Vec<PickerRow> {
     })
 }
 
-/// Each space's avatar color: the color fewest spaces before it have, in space order, and none
-/// for the home space (`spaceColors`). Keeping each choice, so adding a space moves nothing, comes
-/// with the sidebar's space colors (ticket 023), kept in herdr-frontend's home.
+/// Each space's avatar color: the one the sidebar keeps for it in herdr-frontend's home, so both
+/// agree. A space not given one yet gets the color fewest spaces before it have, in space order
+/// (`spaceColors`); the home space none.
 fn space_color(s: &State, space: &str, name: &str) -> Color {
     if name == "~" {
         return s.chrome.dim;
+    }
+    if let Some(kept) = s.shared.space_colors().get(space)
+        && let Some(hex) = model::agents::space_mark(kept)
+    {
+        return Rgba::parse(hex).map_or(s.chrome.accent, Rgba::color);
     }
     let mut uses = [0usize; COLORS.len()];
     for sp in s.model.world().spaces() {

@@ -349,9 +349,10 @@ pub fn assign_space_colors(
     changed.then_some(kept)
 }
 
-/// A space color as text: its mark lifted 28% toward `#e8e8e8`. `None` when it has none.
-pub fn space_text_color(value: &str) -> Option<String> {
-    let hex = MARKS
+/// A stored space color as `#rrggbb`: a color name's fixed mark, or a picked color as is. `None`
+/// when it is neither (home's empty one).
+pub fn space_mark(value: &str) -> Option<&str> {
+    MARKS
         .iter()
         .find(|(name, _)| *name == value)
         .map(|(_, hex)| *hex)
@@ -360,7 +361,12 @@ pub fn space_text_color(value: &str) -> Option<String> {
                 && value.starts_with('#')
                 && value[1..].chars().all(|c| c.is_ascii_hexdigit()))
             .then_some(value)
-        })?;
+        })
+}
+
+/// A space color as text: its mark lifted 28% toward `#e8e8e8`. `None` when it has none.
+pub fn space_text_color(value: &str) -> Option<String> {
+    let hex = space_mark(value)?;
     let channel = |i: usize| {
         let v = u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0);
         (f64::from(v) * 0.72 + f64::from(0xe8u8) * 0.28).round() as u8
@@ -1215,6 +1221,14 @@ fn tab_names<'a>(tabs: &'a [TabInfo], panes: &[PaneInfo]) -> BTreeMap<&'a str, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stored_space_colors_read_as_their_marks() {
+        assert_eq!(space_mark("ansi6"), Some("#22a99a"));
+        assert_eq!(space_mark("#123456"), Some("#123456"));
+        assert_eq!(space_mark(""), None);
+        assert_eq!(space_mark("teal"), None);
+    }
 
     #[test]
     fn durations_read_as_the_list_writes_them() {
