@@ -204,6 +204,7 @@ pub fn is_emoji_presentation(c: char) -> bool {
 }
 
 /// The one character a cell holds, with a variation selector read as its presentation.
+#[cfg(any(target_os = "macos", test))]
 fn single(text: &str) -> Option<(char, Presentation)> {
     let mut chars = text.chars();
     let c = chars.next()?;
