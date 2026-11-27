@@ -167,6 +167,7 @@ notices.
 
 ## Not third-party
 
-Files described as ports of `cfg/mods/...` (`crates/model/src/filter.rs`, `folders.rs`, `prs.rs`)
-port Eli Oshinsky's own Herdr app mods from his dotfiles, as do `assets/programs/eli.json` and
-`assets/themes/arctic.json`. They are his work and fall under the MIT License above.
+`cfg/mods/...` and `dot/tests/...` are Eli Oshinsky's own Herdr app mods and their checks, in his
+dotfiles. Files that port or follow them (`crates/model/src/filter.rs`, `folders.rs`, `prs.rs`,
+`dead_spaces.rs` and others) are his work, as are `assets/programs/eli.json` and
+`assets/themes/arctic.json`, and fall under the MIT License above.
