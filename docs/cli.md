@@ -154,7 +154,8 @@ Success is `{"ok": true}` unless a command below says otherwise.
 | `space.close` | `id?` (default: shown), `confirmed` | Without `confirmed: true` it fails: `space.close ends its terminals: pass confirmed: true`. With it, removes the space and ends its terminals. |
 | `tab.rename` | `id?` (default: shown), `name` | Writes the trimmed name. `""` goes back to the tab's number. |
 | `pane.close` | `pane?` (default: focused) | Removes the pane and ends its terminal. A tab's last pane closes the tab. A space's last pane fails as `space.close` without `confirmed` does, which matches herdr-app. A non-pane id fails: `no pane "<id>"`. |
-| `agent.focus` | `terminal` | Focuses the terminal's pane, showing its tab and space. A terminal that isn't running fails: `no running terminal "<id>"`. A sub-agent without a pane gets the peek once peek lands (ticket 029). |
+| `agent.focus` | `terminal` | Focuses the terminal's pane, showing its tab and space. A terminal that isn't running fails: `no running terminal "<id>"`. A sub-agent without a pane is peeked instead (`docs/review-and-peek.md`). |
+| `terminal.peek` | `terminal` | Peeks at a running terminal: shows it over the window without moving focus. A terminal that isn't running fails: `no running terminal "<id>"`. While the peek is open, `status`'s `overlays` starts with `terminal-peek`, Herdr app's id for it. |
 | `layout.switch` | `name?` | `"eli"` or no name succeeds and changes nothing. Any other name fails: `no layout "<name>": herdr-frontend has only the "eli" layout`. herdr-app ignores unknown names; herdr-frontend reports them. |
 
 `space.new`'s answer arrives once `terminal.run` returns, within the 5 s answer window. If the
@@ -163,7 +164,7 @@ is `the connection to herdr-core dropped`.
 
 ## Not served
 
-These are herdr-app commands Eli's tools don't use: `tab.new`, `pane.split`, `terminal.*`,
+These are herdr-app commands Eli's tools don't use: `tab.new`, `pane.split`, `terminal.*` (except `terminal.peek`),
 `agent.next`/`prev`/`select`, the rest of `layout.*`, `mod.*`, `shot`, `feedback` and the mods'
 own `<mod>.<command>`. Each one gets the unknown-command error.
 

@@ -129,6 +129,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         view::shell::view(s, cx)
     };
     let popup = view::popup::view(s);
+    let peek = view::peek::view(s, cx);
     let toasts = toast::view(s);
     let zoom = s.zoom();
     el().key("window")
@@ -137,7 +138,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .on_key_preview(State::preview_key)
         .on_paste_content(|s: &mut State, content, tx| s.pasted(content, tx))
         .on_key_up(|s: &mut State, ev, tx| {
-            let pane = s.model.focused_pane();
+            let pane = s.keyboard_surface();
             tx.focused().is_none() && pane.is_some_and(|pane| s.released(&pane, ev, tx))
         })
         // Where a right-click was: a menu it opens opens there.
@@ -147,6 +148,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
             }
         })
         .child(content)
+        .children(peek)
         .children(popup)
         .children(toasts)
 }

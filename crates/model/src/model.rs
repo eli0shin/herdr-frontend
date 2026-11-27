@@ -31,8 +31,8 @@ use crate::mode::{self, Mode, PREFIX_TIMEOUT};
 use crate::view::{Before, SeenRecord, View};
 use crate::world::{SpaceExt, World, tab_name};
 
-/// Eli's label on the review terminal (`feature-inventory.md` §13): its tab stays out of the
-/// tab bar and tab keys.
+/// Eli's label on the review terminal (`feature-inventory.md` §13, [`crate::review`]): its tab
+/// stays out of the tab bar and tab keys.
 pub const REVIEW_LABEL: &str = "dotfiles.review";
 /// Eli's Neovim bridge label (§5): Ctrl+H/J/K/L go through Neovim first where it is set. Its
 /// value is the Neovim's RPC server (`v:servername`).
@@ -204,6 +204,8 @@ pub(crate) enum Launch {
     Tab {
         space: String,
         tab: String,
+        /// Its name; empty: called by its number.
+        name: String,
         pane: String,
         after: Option<String>,
     },
@@ -229,6 +231,9 @@ pub(crate) enum Pending {
         pane: String,
         address: String,
     },
+    /// The peek's "↗ keep" giving `address` a pane: its labels, then `keep`, then the tab
+    /// `tab` with pane `pane` in `space` (`app:src/window.rs` `keep_terminal`).
+    Keep(crate::peek::Keep),
     /// Ctrl+H/J/K/L handed to the Neovim in `address`, focused in `pane` of `tab` then.
     Navigate {
         address: String,
@@ -273,6 +278,13 @@ pub struct Model {
     pub(crate) published_order: Option<Vec<String>>,
     /// Focused panes, most recent last, for `pane.go`.
     pub(crate) pane_history: Vec<String>,
+    /// The terminal the peek overlay shows (`feature-inventory.md` §15). It has the keyboard
+    /// while no popup does; the focused pane stays focused behind it.
+    pub(crate) peek: Option<String>,
+    /// The terminal `cmd-r` came to the review from, to go back to (§13).
+    pub(crate) review_back: Option<String>,
+    /// This computer's login shell (`$SHELL`), which a tab's program runs in ([`crate::shell`]).
+    pub(crate) shell: String,
     /// Each live terminal's last [`NAVIGATOR_LABEL`], so a request is acted on once.
     pub(crate) navigator: BTreeMap<String, Option<String>>,
     next_token: u64,
@@ -321,6 +333,9 @@ impl Model {
             published_rows: None,
             published_order: None,
             pane_history: Vec::new(),
+            peek: None,
+            review_back: None,
+            shell: "/bin/sh".into(),
             navigator: BTreeMap::new(),
             next_token: 0,
             pending: BTreeMap::new(),
@@ -332,6 +347,11 @@ impl Model {
             last_focus: None,
             last_saved,
         }
+    }
+
+    /// This computer's login shell (`$SHELL`; `/bin/sh` until set).
+    pub fn set_shell(&mut self, shell: impl Into<String>) {
+        self.shell = shell.into();
     }
 
     pub fn set_keymap(&mut self, keymap: Keymap) {
@@ -401,22 +421,31 @@ impl Model {
             .unwrap_or_default()
     }
 
-    /// Terminals drawn on screen now.
+    /// The terminal the keyboard types into: the peeked one while the peek is open, else the
+    /// focused pane's. Terminal commands (copy, paste, `send:`) and copy mode go to it.
+    pub fn keyboard_terminal(&self) -> Option<&str> {
+        self.peek.as_deref().or_else(|| self.focused_terminal())
+    }
+
+    /// Terminals drawn on screen now: the shown tab's, and the peeked one.
     pub fn visible_terminals(&self) -> Vec<String> {
-        self.shown_tab()
+        let mut shown = self
+            .shown_tab()
             .map(|tab| self.view.shown_root(tab).addresses())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if let Some(peek) = &self.peek
+            && !shown.contains(peek)
+        {
+            shown.push(peek.clone());
+        }
+        shown
     }
 
     /// A tab the tab bar and tab keys leave out: one with an agent's terminal, or the review's
     /// (`cfg/mods/eli-tabs/main.js:55-60`, `navigator-status/tab-order.js`).
     pub fn is_hidden_tab(&self, tab: &Tab) -> bool {
         tab.root.addresses().iter().any(|a| {
-            self.world.is_agent(a)
-                || self
-                    .world
-                    .terminal(a)
-                    .is_some_and(|t| t.label(REVIEW_LABEL).is_some())
+            self.world.is_agent(a) || self.world.terminal(a).is_some_and(crate::review::is_review)
         })
     }
 
@@ -581,7 +610,7 @@ impl Model {
     /// Whether a machine's layout can take an edit now; when not, says so. A terminal started
     /// for a layout that can't take its pane would be left kept and pane-less, so a launch asks
     /// first (`app:src/window.rs` `require_document`).
-    fn layout_ready(&self, machine: Option<&str>, fx: &mut Effects) -> bool {
+    pub(crate) fn layout_ready(&self, machine: Option<&str>, fx: &mut Effects) -> bool {
         if self.world.machine(machine).is_none() {
             return false;
         }
@@ -1020,6 +1049,7 @@ impl Model {
                     }
                 }
             }
+            Pending::Keep(keep) => self.kept(keep, result, fx),
             // Exec calls answer with `Event::Executed`.
             Pending::Navigate { .. } => {}
         }
@@ -1184,13 +1214,14 @@ impl Model {
             Launch::Tab {
                 space,
                 tab,
+                name,
                 pane,
                 after,
             } => {
                 let intent = Intent::NewTab {
                     space,
                     tab: tab.clone(),
-                    name: String::new(),
+                    name,
                     pane: pane.clone(),
                     content,
                     after,
@@ -1242,7 +1273,7 @@ impl Model {
             Mode::Normal => match self.keymap.lookup_in(Context::normal(terminal), &[press]) {
                 Lookup::Action(action) => {
                     let action = action.clone();
-                    self.run(action, fx);
+                    self.run_key(action, fx);
                 }
                 Lookup::Pending => self.wait_for_more(vec![press], fx),
                 Lookup::Program | Lookup::None => fx.handled = false,
@@ -1252,7 +1283,7 @@ impl Model {
                 match self.keymap.lookup_in(Context::normal(terminal), &keys) {
                     Lookup::Action(action) => {
                         let action = action.clone();
-                        self.run(action, fx);
+                        self.run_key(action, fx);
                     }
                     Lookup::Pending => self.wait_for_more(keys, fx),
                     // An unbound sequence is dropped whole; none of it reaches the terminal (a
@@ -1289,6 +1320,16 @@ impl Model {
                 }
             }
         }
+    }
+
+    /// Runs a key's action. With the peek open, closing a tab or pane closes the peek instead,
+    /// not the terminal behind it (`app:src/window.rs` `run_key`).
+    fn run_key(&mut self, action: Action, fx: &mut Effects) {
+        let action = match action {
+            Action::TabClose | Action::PaneClose if self.peek.is_some() => Action::ClosePeek,
+            action => action,
+        };
+        self.run(action, fx);
     }
 
     /// The action a single key runs in one context of the key file.
@@ -1332,10 +1373,14 @@ impl Model {
     fn settle(&mut self, before: &Before, fx: &mut Effects) {
         self.view.reconcile(&self.world, before);
         self.close_focus(before);
+        // The peek closes when its terminal ends.
+        if self.peek.as_ref().is_some_and(|a| !self.world.is_live(a)) {
+            self.peek = None;
+        }
         // Copy mode ends when its terminal goes or loses the keyboard.
         if let Mode::Copy(copy) = &self.mode
             && (!self.world.is_live(&copy.address)
-                || self.focused_terminal() != Some(copy.address.as_str()))
+                || self.keyboard_terminal() != Some(copy.address.as_str()))
         {
             self.close_mode(fx);
         }
@@ -1354,6 +1399,8 @@ impl Model {
         }
         let focus = if self.mode.holds_keyboard() {
             Focus::Popup
+        } else if self.peek.is_some() {
+            Focus::Peek
         } else {
             self.focused_pane().map_or(Focus::None, Focus::Pane)
         };
@@ -1504,6 +1551,8 @@ impl Model {
                     launch: Launch::Split { target, .. },
                     ..
                 } => world.tab_of(target).map(|t| t.id.clone()),
+                // Nor is one the peek is keeping: its tab comes with the keep.
+                Pending::Keep(keep) => Some(keep.tab.clone()),
                 _ => None,
             })
             .collect();

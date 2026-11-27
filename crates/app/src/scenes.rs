@@ -32,6 +32,7 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-agents-grouped", shell_agents_grouped),
     ("shell-sort-menu", shell_sort_menu),
     ("shell-agent-jump", shell_agent_jump),
+    ("shell-peek", shell_peek),
     ("shell-agents-empty", shell_agents_empty),
     ("shell-alerts", shell_alerts),
     ("shell-palette", shell_palette),
@@ -111,7 +112,7 @@ fn shell_prefix(s: &mut State) {
 /// The demo core after a key whose feature isn't built: its "not yet" toast.
 fn shell_not_yet(s: &mut State) {
     shell(s);
-    s.step(0.0, model::Action::Review);
+    s.step(0.0, model::Action::App(model::AppCommand::Hide));
 }
 
 /// The tab strip's pills ([`fixtures::tab_strip_core`]): `work` selected with Neovim zoomed, a
@@ -187,6 +188,13 @@ fn shell_alerts(s: &mut State) {
 fn shell_agent_jump(s: &mut State) {
     shell_agents(s);
     s.step(0.0, model::Action::Open(model::Popup::AgentJump));
+    s.settle();
+}
+
+/// [`shell_agents`] peeking the `explore` sub-agent, which has no pane.
+fn shell_peek(s: &mut State) {
+    shell_agents(s);
+    s.step(0.0, model::Action::Peek("t20".into()));
     s.settle();
 }
 

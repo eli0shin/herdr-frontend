@@ -252,8 +252,9 @@ fn grip(s: &State, pane: &str, rect: model::Rect) -> Option<El> {
     Some(grip)
 }
 
-/// A pane's body with the handlers that give its terminal the keyboard and the mouse.
-fn pane_input(body: El, pane: &str) -> El {
+/// A pane's body with the handlers that give its terminal the keyboard and the mouse. `pane`
+/// is [`crate::state::PEEK`] for the peek's terminal.
+pub fn pane_input(body: El, pane: &str) -> El {
     let p = || pane.to_owned();
     let (focus, typing, releasing, dragging, hovering, wheeling, menu, dropping) =
         (p(), p(), p(), p(), p(), p(), p(), p());

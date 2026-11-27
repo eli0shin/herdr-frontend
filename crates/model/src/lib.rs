@@ -14,6 +14,9 @@
 //! - [`popups`]: what the pickers, the palette and the menus list, and what picking runs.
 //! - [`filter`]: Eli's filter matching, which every typed filter uses.
 //! - [`geometry`]: where panes sit, and which pane lies in a direction.
+//! - [`peek`]: a terminal in an overlay, its bar, and keeping it in a pane.
+//! - [`review`]: the review view, `cmd-r`.
+//! - [`shell`]: a tab's program run in the login shell, as Herdr app's `tab.new` runs it.
 //! - [`effect`]: what a step asks the app to do.
 //! - [`control`]: the `ls | do | status` surface Eli's tools drive (`docs/cli.md`).
 //!
@@ -32,7 +35,10 @@ pub mod keys;
 pub mod mode;
 mod model;
 pub mod names;
+pub mod peek;
 pub mod popups;
+pub mod review;
+pub mod shell;
 pub mod view;
 pub mod world;
 

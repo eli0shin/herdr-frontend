@@ -53,6 +53,8 @@ pub enum Focus {
     Pane(String),
     /// The open popup or dialog.
     Popup,
+    /// The peeked terminal's grid, in the peek overlay.
+    Peek,
     /// Nothing in particular (no pane to focus).
     None,
 }
