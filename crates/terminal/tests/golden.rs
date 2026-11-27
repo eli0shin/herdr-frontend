@@ -5,10 +5,8 @@
 //! rest of each row (baseline, lines, box and cursor) follows from the font tables the same way;
 //! `tests/coretext.rs` checks the inputs against CoreText, which is where Ghostty gets them.
 //!
-//! The numbers are Ghostty's on macOS, at its 72 DPI, so these run there only, as that check does.
-//! Other platforms' 96 DPI gives other cells.
-
-#![cfg(target_os = "macos")]
+//! The numbers are Ghostty's on macOS, so every size here is built at its 72 DPI
+//! ([`macos_size`]), and they hold on any platform.
 
 mod common;
 
@@ -40,8 +38,19 @@ fn cell(m: &Metrics) -> Cell {
     }
 }
 
+/// The size Ghostty loads a face at on macOS, whose default DPI is 72: `round(scale × 72)`.
+/// [`DesiredSize::new`] uses the platform's, 96 off macOS.
+fn macos_size(points: f32, scale: f32) -> DesiredSize {
+    let dpi = (scale * 72.0).round() as u16;
+    DesiredSize {
+        points,
+        xdpi: dpi,
+        ydpi: dpi,
+    }
+}
+
 fn metrics(data: &[u8], points: f32, scale: f32) -> Metrics {
-    Metrics::calc(&FaceMetrics::from_data(data, 0, DesiredSize::new(points, scale)).unwrap())
+    Metrics::calc(&FaceMetrics::from_data(data, 0, macos_size(points, scale)).unwrap())
 }
 
 #[track_caller]
@@ -310,7 +319,7 @@ fn menlo() {
 fn modifiers_on_the_parity_font() {
     let font = common::operator_mono("Book");
     let Some(data) = font.load() else { return };
-    let face = FaceMetrics::from_data(&data, 0, DesiredSize::new(ELI_POINTS, 2.0)).unwrap();
+    let face = FaceMetrics::from_data(&data, 0, macos_size(ELI_POINTS, 2.0)).unwrap();
 
     // adjust-cell-height = 20%: 45 → 54, 9 px more, split around the face. face_y is 0.024 and
     // centered would be (45 − 44.88) / 2 = 0.06, so the face sits low and the odd pixel goes below.
