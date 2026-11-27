@@ -595,9 +595,10 @@ impl Model {
         );
     }
 
-    pub(crate) fn close_space(&mut self, id: &str, fx: &mut Effects) {
+    /// Closes a space and ends its panes' terminals. False when it didn't apply.
+    pub(crate) fn close_space(&mut self, id: &str, fx: &mut Effects) -> bool {
         let Some(space) = self.world.space(id) else {
-            return;
+            return false;
         };
         let addresses: Vec<String> = space.tabs.iter().flat_map(|t| t.root.addresses()).collect();
         let (name, folder) = (space.name.clone(), space.folder.clone());
@@ -609,7 +610,9 @@ impl Model {
         ) {
             self.view.remember_closed(&name, &folder);
             self.kill(addresses, fx);
+            return true;
         }
+        false
     }
 
     /// Next or previous shown, unsettled tab, wrapping; on an agent's tab, the next or previous
@@ -1052,7 +1055,9 @@ impl Model {
                 let then = confirm.then.clone();
                 self.mode = Mode::Normal;
                 match then {
-                    Confirmed::CloseSpace(space) => self.close_space(&space, fx),
+                    Confirmed::CloseSpace(space) => {
+                        self.close_space(&space, fx);
+                    }
                     Confirmed::RemoveMachine(machine) => {
                         fx.push(Effect::Machine(MachineCall::Remove(machine)))
                     }

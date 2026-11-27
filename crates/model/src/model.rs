@@ -26,6 +26,7 @@ use herdr_shared::{
 use crate::action::{Action, AppCommand, Direction};
 use crate::checkouts::{self, Check, Front};
 use crate::control::{Call, CallId, answer_call};
+use crate::dead_spaces::{self, Candidate, DeadSpaces};
 use crate::effect::{Effect, Effects, Focus, Level, Request, TerminalCommand, Toast, Token};
 use crate::folders::{self, NewSpace};
 use crate::geometry::{self, Geometry, Rect};
@@ -284,6 +285,12 @@ pub(crate) enum Pending {
         cwd: String,
         terminals: Vec<String>,
     },
+    /// A dead-space sweep checking `paths`, the folders of the spaces `before` that qualified
+    /// when it started ([`crate::dead_spaces`]).
+    DeadSpaces {
+        before: BTreeMap<String, Candidate>,
+        paths: Vec<String>,
+    },
 }
 
 /// herdr-frontend's state.
@@ -343,6 +350,8 @@ pub struct Model {
     pub(crate) front: Front,
     /// The fallback lookup the model last asked to be woken for.
     checks_due: Option<f64>,
+    /// The dead-space sweep's suspects and schedule.
+    pub(crate) dead_spaces: DeadSpaces,
     last_focus: Option<Focus>,
     last_saved: View,
 }
@@ -393,6 +402,7 @@ impl Model {
             checks: BTreeMap::new(),
             front: Front::default(),
             checks_due: None,
+            dead_spaces: DeadSpaces::default(),
             last_focus: None,
             last_saved,
         }
@@ -816,8 +826,27 @@ impl Model {
     fn event(&mut self, event: Event, fx: &mut Effects) {
         match event {
             // The clock already moved, and an overdue prefix was dropped. The app keeps only the
-            // earliest wake, so a later one (a repo's fallback lookup) is asked for again.
-            Event::Tick => self.checks_due = None,
+            // earliest wake-up and forgets it once it fires, so the next deadline still ahead is
+            // asked for again: a repo's fallback lookup (when the model settles), the sweep, a
+            // layout retry, a prefix timeout.
+            Event::Tick => {
+                self.checks_due = None;
+                let prefix = match self.mode {
+                    Mode::Prefix { due, .. } => Some(due),
+                    _ => None,
+                };
+                let next = self
+                    .retry_at
+                    .values()
+                    .copied()
+                    .chain(self.dead_spaces.due)
+                    .chain(prefix)
+                    .filter(|&due| due > self.now)
+                    .reduce(f64::min);
+                if let Some(due) = next {
+                    fx.push(Effect::WakeAt(due));
+                }
+            }
             Event::Key { press, terminal } => self.key(press, terminal, fx),
             Event::Connected => {
                 self.connected = true;
@@ -1167,7 +1196,8 @@ impl Model {
             | Pending::Folders { .. }
             | Pending::Link { .. }
             | Pending::LaunchFailed { .. }
-            | Pending::Checkout { .. } => {}
+            | Pending::Checkout { .. }
+            | Pending::DeadSpaces { .. } => {}
         }
     }
 
@@ -1203,6 +1233,7 @@ impl Model {
                 let (checkout, repo) = checkouts::read(&result);
                 self.checked(&cwd, &terminals, checkout, repo);
             }
+            Pending::DeadSpaces { before, paths } => self.swept(before, &paths, &result, fx),
             Pending::Launch { .. }
             | Pending::Adopt(_)
             | Pending::CheckClosed { .. }
@@ -1242,6 +1273,72 @@ impl Model {
             Request::Read(read),
             Some(Pending::LaunchFailed { code }),
         );
+    }
+
+    /// Every [`dead_spaces::SWEEP_EVERY`] seconds once listed, checks the folders of the spaces
+    /// that qualify, one sweep at a time (`cfg/mods/navigator-status/dead-spaces.js` `sweep`).
+    /// The first sweep is one interval after the first listing.
+    fn sweep_dead_spaces(&mut self, fx: &mut Effects) {
+        let sweep = match self.dead_spaces.due {
+            Some(due) if self.now < due => return,
+            Some(_) => true,
+            None => false,
+        };
+        let next = self.now + dead_spaces::SWEEP_EVERY;
+        self.dead_spaces.due = Some(next);
+        fx.push(Effect::WakeAt(next));
+        let sweeping = self
+            .pending
+            .values()
+            .any(|p| matches!(p, Pending::DeadSpaces { .. }));
+        // A layout that can't take the close would only say so on every sweep.
+        if !sweep || sweeping || self.refused_on(None).is_some() {
+            return;
+        }
+        let shown = self.active_space().map(|s| s.id.clone());
+        let before = dead_spaces::candidates(&self.world, shown.as_deref(), &self.home);
+        if before.is_empty() {
+            self.dead_spaces.none();
+            return;
+        }
+        let paths = dead_spaces::paths(&before);
+        self.call(
+            fx,
+            Request::Exec(dead_spaces::check(&paths)),
+            Some(Pending::DeadSpaces { before, paths }),
+        );
+    }
+
+    /// A sweep's folder check came back: the spaces dead on this sweep and the last one close,
+    /// each with an info toast. A failed check closes nothing and suspects no one new.
+    fn swept(
+        &mut self,
+        before: BTreeMap<String, Candidate>,
+        paths: &[String],
+        result: &Result<ExecResult, RpcError>,
+        fx: &mut Effects,
+    ) {
+        let Some(exists) = dead_spaces::existing(paths, result) else {
+            return;
+        };
+        let shown = self.active_space().map(|s| s.id.clone());
+        let after = dead_spaces::candidates(&self.world, shown.as_deref(), &self.home);
+        for (id, candidate) in self.dead_spaces.judge(before, &exists, &after) {
+            let Some(name) = self
+                .world
+                .space(&id)
+                .map(|s| self.world.space_name(s, &self.home))
+            else {
+                continue;
+            };
+            if self.close_space(&id, fx) {
+                fx.push(Effect::Toast(Toast::new(
+                    Level::Info,
+                    format!("Closed space {name}"),
+                    format!("Its folder no longer exists: {}", candidate.folders[0]),
+                )));
+            }
+        }
     }
 
     /// Shares what the person is looking at as `herdr.seen` (`app:src/window.rs` `share_seen`):
@@ -1708,6 +1805,9 @@ impl Model {
             self.pump(fx);
             if self.listed && std::mem::take(&mut self.scan) {
                 self.adopt_and_check(fx);
+            }
+            if self.listed {
+                self.sweep_dead_spaces(fx);
             }
         }
         let saved = self.saved_view();
