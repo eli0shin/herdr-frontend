@@ -669,8 +669,9 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   turns with `LoopSpec::rotation(0.9)`.
 - **Overlays.** The key file reloads live from the home. The tab strip shows the prefix
   indicator. Toasts sit at the bottom right (the model's toasts, and "not yet" for unbuilt
-  actions and for popups the window doesn't draw yet). The keys help (`cmd-/`) is the one popup
-  the window draws so far.
+  actions and for popups the window doesn't draw yet). The window draws two popups so far: the
+  keys help (`cmd-/`), a dialog in the middle, and the Agents sort menu, anchored under the
+  sidebar's sort button (`ag-sort`, `El::anchored`).
 - **Home** (`$HERDR_FRONTEND_HOME`, else `$XDG_CONFIG_HOME/herdr-frontend`, else
   `~/.config/herdr-frontend`): `keys.json` (the key file), `view.json` (the model's saved view), `window.json` (position,
   physical size, maximized, full screen, display), and `shared.json` and `agents.json` (the

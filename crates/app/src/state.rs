@@ -650,24 +650,6 @@ impl State {
         Some(image)
     }
 
-    /// A panel glyph (`assets/ui/<name>.svg`) rasterized for `size` points at `scale`. `None`
-    /// before setup, or for a name there is none of.
-    pub fn ui_icon(&self, name: &str, size: f32, scale: f32) -> Option<rune::Image> {
-        let images = self.images.as_ref()?;
-        let bytes = crate::view::sidebar::glyph(name)?;
-        let px = (size * scale).ceil() as u32;
-        let image = self
-            .icons
-            .borrow_mut()
-            .entry((format!("ui:{name}"), px))
-            .or_insert_with(|| images.svg(bytes, size, scale))
-            .clone();
-        if self.synchronous {
-            let _ = image.wait();
-        }
-        Some(image)
-    }
-
     /// The window's size, in window points, before its first layout: the panes' first frame is
     /// laid out for the tab area it leaves (Rune reports where elements are only after a frame).
     pub fn window_sized(&mut self, w: f32, h: f32) {

@@ -127,7 +127,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         model::Mode::Popup(model::PopupState::List(list))
             if list.popup == model::Popup::SortMenu && s.sidebar.shown().is_some() =>
         {
-            Some(view::sidebar::sort_menu(s, list, cx))
+            Some(view::sidebar::sort_menu(s, list))
         }
         _ => None,
     };

@@ -14,44 +14,15 @@
 use model::agents::{AgentRow, Branch, Fold, Header, List, Row, Sort, SubRow, Tree};
 use model::mode::{ListPopup, PopupState};
 use model::{Action, Mode, Popup, PopupAction};
-use rune::{Align, Color, Cursor, Cx, El, LoopSpec, Side, col, el, row, text};
+use rune::{Align, Color, Cursor, Cx, El, Icon, LoopSpec, Side, col, el, icon, row, text};
 
 use crate::State;
 use crate::config::theme::{Chrome, Rgba};
+use crate::view::icons::{
+    CHECK, CHEVRON_DOWN, CHEVRON_RIGHT, CLOCK, GIT_PULL_REQUEST, LAYERS, MONITOR, SPINNER,
+};
 use crate::view::shell::{BAR, program_icon};
 use herdr_shared::Displayed;
-
-/// The panel glyphs, by name (`assets/ui/`).
-const GLYPHS: &[(&str, &[u8])] = &[
-    ("check", include_bytes!("../../../../assets/ui/check.svg")),
-    (
-        "chevron-down",
-        include_bytes!("../../../../assets/ui/chevron-down.svg"),
-    ),
-    (
-        "chevron-right",
-        include_bytes!("../../../../assets/ui/chevron-right.svg"),
-    ),
-    ("clock", include_bytes!("../../../../assets/ui/clock.svg")),
-    (
-        "git-pull-request",
-        include_bytes!("../../../../assets/ui/git-pull-request.svg"),
-    ),
-    ("layers", include_bytes!("../../../../assets/ui/layers.svg")),
-    (
-        "monitor",
-        include_bytes!("../../../../assets/ui/monitor.svg"),
-    ),
-    (
-        "spinner",
-        include_bytes!("../../../../assets/ui/spinner.svg"),
-    ),
-];
-
-/// A panel glyph's SVG.
-pub fn glyph(name: &str) -> Option<&'static [u8]> {
-    GLYPHS.iter().find(|(n, _)| *n == name).map(|(_, b)| *b)
-}
 
 /// The list's live titles: a touch under white (`LIVE_TITLE`).
 const LIVE_TITLE: &str = "#F2F2F2";
@@ -101,18 +72,17 @@ pub fn view(s: &State, width: f32, cx: &Cx<State>) -> El {
         .w(width)
         .h_full()
         .fill(c.chrome)
-        .child(brand(s, cx))
+        .child(brand(s))
         .child(agents(s, list, cx))
         .child(edge())
 }
 
 /// The top row: "Agents", the machine filter and the sort button (`eli-chrome`). Same 6 pt over
 /// and 3 pt under as the tab strip, so the label lines up with the tabs.
-fn brand(s: &State, cx: &Cx<State>) -> El {
+fn brand(s: &State) -> El {
     let c = &s.chrome;
     let hidden = s.shared.hidden_machines().len();
     let sort = s.shared.sort();
-    let glyph = |name: &str, color: Color| glyph_el(s, name, 14.0, color, cx);
     let machines = row()
         .key("ag-machines")
         .gap(4.0)
@@ -126,7 +96,11 @@ fn brand(s: &State, cx: &Cx<State>) -> El {
             "Filter agents by machine (Ctrl+G, /)".into()
         })
         .on_press_tx(|s: &mut State, tx| s.act(Action::Open(Popup::AgentMachines), tx))
-        .children(glyph("monitor", if hidden > 0 { c.working } else { c.dim }))
+        .child(glyph(
+            &MONITOR,
+            14.0,
+            if hidden > 0 { c.working } else { c.dim },
+        ))
         .children((hidden > 0).then(|| {
             text(format!("{hidden} hidden"))
                 .key("ag-machines-hidden")
@@ -139,7 +113,7 @@ fn brand(s: &State, cx: &Cx<State>) -> El {
         .items_center()
         .help(format!("Sort agents: {}", sort.label()))
         .on_press_tx(|s: &mut State, tx| s.act(Action::Open(Popup::SortMenu), tx))
-        .children(glyph(sort_icon(sort), c.dim));
+        .child(glyph(sort_icon(sort), 14.0, c.dim));
     row()
         .key("brand")
         .w_full()
@@ -162,22 +136,16 @@ fn brand(s: &State, cx: &Cx<State>) -> El {
         .child(sorter)
 }
 
-fn sort_icon(sort: Sort) -> &'static str {
+fn sort_icon(sort: Sort) -> &'static Icon {
     match sort {
-        Sort::Priority => "clock",
-        Sort::Grouped => "layers",
+        Sort::Priority => &CLOCK,
+        Sort::Grouped => &LAYERS,
     }
 }
 
-/// A tinted glyph, `size` points square. `None` before the images can be made.
-fn glyph_el(s: &State, name: &str, size: f32, color: Color, cx: &Cx<State>) -> Option<El> {
-    let image = s.ui_icon(name, size, cx.env().scale)?;
-    Some(
-        el().size(size, size)
-            .pixels(image.pixels())
-            .pixels_tint(color)
-            .a11y_hidden(),
-    )
+/// A one-color glyph, `size` points square, in `color` (`view::icons`).
+fn glyph(glyph: &'static Icon, size: f32, color: Color) -> El {
+    icon(glyph, size).color(color)
 }
 
 /// The list, or why it's empty.
@@ -246,16 +214,13 @@ fn header(s: &State, h: &Header) -> El {
 }
 
 /// A status mark: a spinner, "Needs you" (or a compact "!"), a done dot, an idle ring.
-fn mark(s: &State, status: Option<Displayed>, compact: bool, cx: &Cx<State>) -> El {
+fn mark(s: &State, status: Option<Displayed>, compact: bool) -> El {
     let c = &s.chrome;
     match status {
-        Some(Displayed::Working) => match glyph_el(s, "spinner", 12.0, c.working, cx) {
-            Some(spinner) => spinner
-                .key("spinner")
-                .mx(1.0)
-                .looping(LoopSpec::rotation(0.9)),
-            None => el().key("spinner").size(12.0, 12.0).mx(1.0),
-        },
+        Some(Displayed::Working) => glyph(&SPINNER, 12.0, c.working)
+            .key("spinner")
+            .mx(1.0)
+            .looping(LoopSpec::rotation(0.9)),
         Some(Displayed::Blocked) if compact => el()
             .key("needs-you")
             .size(14.0, 14.0)
@@ -292,7 +257,7 @@ fn mark(s: &State, status: Option<Displayed>, compact: bool, cx: &Cx<State>) -> 
 }
 
 /// An agent's program icon, `size` points, in its color or the foreground.
-fn icon(s: &State, address: &str, size: f32, cx: &Cx<State>) -> Option<El> {
+fn program_pic(s: &State, address: &str, size: f32, cx: &Cx<State>) -> Option<El> {
     let record = s.model.world().terminal(address)?;
     let program = s.config.programs.of_terminal(record);
     program_icon(s, &program, size, s.chrome.foreground, cx)
@@ -323,7 +288,7 @@ fn tree_line(c: &Chrome, branch: Branch) -> El {
 }
 
 /// The fold chevron; folded, the count too, in its most urgent sub-agent's color.
-fn fold_control(s: &State, address: &str, fold: &Fold, cx: &Cx<State>) -> El {
+fn fold_control(s: &State, address: &str, fold: &Fold) -> El {
     let c = &s.chrome;
     let color = if fold.open {
         c.dim
@@ -341,16 +306,14 @@ fn fold_control(s: &State, address: &str, fold: &Fold, cx: &Cx<State>) -> El {
         .cursor(Cursor::Pointer)
         .hover_fill(c.hover)
         .on_press_tx(move |s: &mut State, tx| s.fold(&target, tx))
-        .children(glyph_el(
-            s,
+        .child(glyph(
             if fold.open {
-                "chevron-down"
+                &CHEVRON_DOWN
             } else {
-                "chevron-right"
+                &CHEVRON_RIGHT
             },
             11.0,
             color,
-            cx,
         ))
         .children((!fold.open).then(|| {
             text(fold.count.to_string())
@@ -379,7 +342,7 @@ fn agent(s: &State, list: &List, r: &AgentRow, jumping: bool, cx: &Cx<State>) ->
     let edge = live.then(|| tone(c, r.status));
     let quiet = a(c.dim, 0xD9);
     let small = |size: f32| s.ui_font(size, 400.0);
-    let pic = icon(s, &r.address, 16.0, cx).map(|pic| {
+    let pic = program_pic(s, &r.address, 16.0, cx).map(|pic| {
         let wrap = el().key("icon").child(pic);
         if r.fold.is_some() {
             let target = r.address.clone();
@@ -414,8 +377,8 @@ fn agent(s: &State, list: &List, r: &AgentRow, jumping: bool, cx: &Cx<State>) ->
                 .min_w(0.0)
                 .truncate(),
         )
-        .children(r.fold.as_ref().map(|f| fold_control(s, &r.address, f, cx)))
-        .child(mark(s, Some(r.status), r.compact, cx))
+        .children(r.fold.as_ref().map(|f| fold_control(s, &r.address, f)))
+        .child(mark(s, Some(r.status), r.compact))
         .child(label);
     let space = r.space.as_ref().map(|name| {
         let color = r
@@ -457,13 +420,7 @@ fn agent(s: &State, list: &List, r: &AgentRow, jumping: bool, cx: &Cx<State>) ->
         chip("prs")
             .max_w(150.0)
             .help(p.tooltip.clone())
-            .children(glyph_el(
-                s,
-                "git-pull-request",
-                11.0,
-                a(c.foreground, 0xB3),
-                cx,
-            ))
+            .child(glyph(&GIT_PULL_REQUEST, 11.0, a(c.foreground, 0xB3)))
             .child(
                 text(p.first.clone())
                     .font(font)
@@ -568,7 +525,7 @@ fn sub(s: &State, r: &SubRow, cx: &Cx<State>) -> El {
                 .corners([0.0, 0.0, 0.0, 6.0]),
         }
     });
-    let pic = icon(s, &r.address, 14.0, cx).map(|p| el().mr(8.0).child(p));
+    let pic = program_pic(s, &r.address, 14.0, cx).map(|p| el().mr(8.0).child(p));
     let target = r.address.clone();
     row()
         .key(key("sub", &r.address))
@@ -594,7 +551,7 @@ fn sub(s: &State, r: &SubRow, cx: &Cx<State>) -> El {
                 .min_w(0.0)
                 .truncate(),
         )
-        .child(mark(s, r.status, r.compact, cx))
+        .child(mark(s, r.status, r.compact))
 }
 
 /// The sidebar's right edge: dragging it sets the width, 200 to 600 pt.
@@ -608,7 +565,7 @@ fn edge() -> El {
 
 /// The sort menu, under the sort button: "Priority" and "Grouped by space", a check on the
 /// current one. A click picks; ↑/↓, Enter and Esc work too.
-pub fn sort_menu(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
+pub fn sort_menu(s: &State, list: &ListPopup) -> El {
     let c = &s.chrome;
     let on = s.shared.sort();
     let rows = Sort::ALL.iter().enumerate().map(|(i, sort)| {
@@ -631,18 +588,14 @@ pub fn sort_menu(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
                 s.set_sort(sort);
                 s.act(Action::Popup(PopupAction::Close), tx);
             })
-            .children(glyph_el(s, sort_icon(sort), 14.0, c.muted, cx))
+            .child(glyph(sort_icon(sort), 14.0, c.muted))
             .child(
                 text(sort.label())
                     .font(s.ui_font(12.8, 400.0))
                     .color(c.foreground)
                     .grow(1.0),
             )
-            .children(
-                (sort == on)
-                    .then(|| glyph_el(s, "check", 14.0, c.foreground, cx))
-                    .flatten(),
-            )
+            .children((sort == on).then(|| glyph(&CHECK, 14.0, c.foreground)))
     });
     let menu = col()
         .key("sort-menu")
