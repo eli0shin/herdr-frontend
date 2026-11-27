@@ -1,3 +1,8 @@
+// Portions of this file are ported from Herdr app (https://github.com/herdrdev/herdr-app at
+// v0.1.18, 9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c), licensed under the Apache License 2.0
+// (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend. See
+// THIRD-PARTY-NOTICES.md.
+
 //! Adoption: placing live terminals labeled `herdr.space` that no pane shows
 //! (`herdr-core-protocol.md` §3 "How herdr-app reconciles the layout"; `app:src/window.rs`
 //! `reconcile`, `start_adoption`, `adopt`, `adoptable`; `feature-inventory.md` §0).

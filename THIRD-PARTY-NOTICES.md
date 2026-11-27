@@ -27,16 +27,48 @@ MPL-2.0 too, and a binary that contains it must come with a way to get its sourc
   [assets/programs/LICENSE-herdr-app.txt](assets/programs/LICENSE-herdr-app.txt). Herdr app has
   no `NOTICE` file.
 
-| File | Ported from | Changed? |
+Source files: ported from Herdr app at tag
+[v0.1.18](https://github.com/herdrdev/herdr-app/tree/9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c)
+(`9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c`; Herdr app paths below are at that revision) and
+modified for herdr-frontend: rewritten onto its own types and crates, split differently, and
+changed where its design differs. Each carries a notice saying so.
+
+| File | Ported from (Herdr app path, functions) |
+| ---- | --------------------------------------- |
+| `crates/herdr-client/src/transport.rs` | `src/core_bin.rs` (finding herdr-core, `login_path_answer`) |
+| `crates/herdr-shared/src/document.rs` | `src/mirror.rs` `Document`, `qualify`, `local`; `src/layout.rs` `Node`; `src/model.rs` `fresh_id` |
+| `crates/herdr-shared/src/tree.rs` | `src/layout.rs` `Node`, `src/model.rs` `Model` (`move_pane`, `swap_panes`), `src/window/pane_drag.rs` `inherited_movable` |
+| `crates/herdr-shared/src/intent.rs` | `src/window.rs` `adopt`; `src/model.rs` edits |
+| `crates/herdr-shared/src/mirror.rs` | `src/mirror.rs`, `src/mirror_sync.rs` (reading and writing the layout document) |
+| `crates/herdr-shared/src/adoption.rs` | `src/window.rs` `reconcile`, `start_adoption`, `adopt`, `adoptable` |
+| `crates/herdr-shared/src/closed.rs` | `src/window.rs` `terminal_ended`, `check_closed`, `checked_closed`, `just_born`, `close_terminals`, `kill_targets`, `launch_failure` |
+| `crates/herdr-shared/src/attention.rs` | `src/model.rs` `status`, `alert`, `alert_for`, `priority` |
+| `crates/herdr-shared/src/labels.rs` | `src/window.rs` `share_seen`; `docs/labels.md` |
+| `crates/terminal/src/links.rs` | `src/links.rs` `word` and its link pattern (itself Ghostty's, below) |
+| `crates/model/src/geometry.rs` | `src/window/pane_size.rs` `shares`, `block_bounds`; `src/window.rs` `nearest`, `drag_to`, `resize_pane`; `src/window/pane_drag.rs` |
+| `crates/model/src/actions.rs` | `src/window.rs` `resize_pane`; `src/model.rs` `move_pane` |
+| `crates/model/src/checkouts.rs` | `src/window.rs` `track_folders`, `folder_info`, `recheck` |
+| `crates/model/src/control.rs` | `src/commands.rs` (the commands, `validate_args`, `shorthand`); `src/window.rs` `world`, `control`, `shown_agent`, `new_space`, `pane.close` |
+| `crates/model/src/model.rs` | `src/window.rs` `keep_terminal`, `require_document`, `alert`, `notify_launch_failure`, `share_seen`, `track_folders`, `run_key`; `src/mirror.rs` `View::apply_machine` |
+| `crates/model/src/peek.rs` | `src/window.rs` `peek_terminal`, `keep_terminal`; `src/links.rs` |
+| `crates/model/src/shell.rs` | `src/window.rs` `agent_argv`, `unix_agent_argv`; `src/remote_shell.rs` `launch` |
+| `crates/model/src/view.rs` | `src/mirror.rs` `View`; `src/model.rs` `Tab::focus` |
+| `crates/model/src/world.rs` | `src/model.rs` (tab titles, folder names) |
+| `crates/app/src/control.rs` | `src/control.rs` (the control socket, `parse_args`) |
+| `crates/app/src/config/programs.rs` | `src/programs.rs` (the program table and how a terminal's program is resolved) |
+| `crates/app/src/config/theme.rs` | `src/settings.rs` (the theme format and the colors derived from it) |
+| `crates/app/src/view/terminal/scrollbar.rs` | `src/terminal.rs` `scrollbar_thumb` |
+
+Other files cite Herdr app's source (`app:` paths) only for behavior, file formats or constants
+they match so both apps work on one layout, such as `docs/labels.md`'s labels, `settings.json`'s
+key names, the find bar's size or a divider's handle width. They hold no code from it.
+
+Assets, copied as they are:
+
+| File | Copied from | Changed? |
 | ---- | ----------- | -------- |
-| `crates/herdr-shared/src/tree.rs` | [`src/layout.rs`](https://github.com/herdrdev/herdr-app/blob/9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c/src/layout.rs) `Node`, [`src/model.rs`](https://github.com/herdrdev/herdr-app/blob/9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c/src/model.rs) `Model` at [v0.1.18](https://github.com/herdrdev/herdr-app/tree/9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c) | Modified |
-| `crates/model/src/geometry.rs` | [`src/window/pane_size.rs`](https://github.com/herdrdev/herdr-app/blob/9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c/src/window/pane_size.rs) `shares`/`block_bounds`, [`src/window.rs`](https://github.com/herdrdev/herdr-app/blob/9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c/src/window.rs) `nearest` at v0.1.18 | Modified: no frames, borders or padding |
 | `assets/programs/herdr.json` | [`defaults/programs.json`](https://github.com/herdrdev/herdr-app/blob/1180a5cec3b8bd4dfebf4a9b217ab8cb59a96ffa/defaults/programs.json) at [`1180a5c`](https://github.com/herdrdev/herdr-app/tree/1180a5cec3b8bd4dfebf4a9b217ab8cb59a96ffa) | Unchanged |
 | `assets/icons/` | [`defaults/icons/`](https://github.com/herdrdev/herdr-app/tree/1180a5cec3b8bd4dfebf4a9b217ab8cb59a96ffa/defaults/icons) at `1180a5c` | Unchanged, except the last line of `LICENSES.md`, which now points here. The icons' own licenses are under "Icons" below. |
-
-The two ported source files carry a notice saying they were modified. Many other files cite Herdr
-app's source (`app:` paths, Herdr app at v0.1.18) to say which of its behavior they match so both
-apps share one layout; the files above are the ones ported from its code.
 
 ## Ghostty (MIT)
 
