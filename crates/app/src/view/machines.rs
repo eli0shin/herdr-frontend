@@ -23,7 +23,7 @@ use rune::{Color, El, col, el, row, text};
 
 use crate::State;
 use crate::view::icons::{CHECK, MONITOR, PLUS, SERVER};
-use crate::view::list::{self, Item};
+use crate::view::list::{self, Item, More};
 use crate::view::overlay::{self, Place};
 
 pub const FILTER_PLACE: Place = Place::Top {
@@ -121,7 +121,7 @@ pub fn filter_view(s: &State, list: &ListPopup) -> El {
             "Agents from",
             Some(overlay::note(s, "↑/↓ · Space · Enter only · Esc")),
         ))
-        .child(list::view(s, "am-rows", items, n, false))
+        .child(list::view(s, "am-rows", items, n, More::None))
 }
 
 // ---- Machines -----------------------------------------------------------------------------------
@@ -300,7 +300,7 @@ pub fn machines_view(s: &State, list: &ListPopup) -> El {
             .w_full()
             .wrap(),
         )
-        .child(list::view(s, "machines-rows", items, SHOWN, true))
+        .child(list::view(s, "machines-rows", items, SHOWN, More::Both))
         .children((others == 0).then(|| {
             overlay::note(s, "No other machines yet.")
                 .key("machines-empty")
@@ -412,5 +412,5 @@ pub fn add_view(s: &State, list: &ListPopup) -> El {
             None,
         ))
         .child(overlay::note(s, heading).key("add-heading"))
-        .child(list::view(s, "add-rows", items, SHOWN, true))
+        .child(list::view(s, "add-rows", items, SHOWN, More::Both))
 }
