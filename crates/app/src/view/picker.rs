@@ -10,10 +10,11 @@
 use herdr_shared::Displayed;
 use model::mode::ListPopup;
 use model::popups::{self, PickerRow};
-use rune::{Color, Cx, El, col, el, row, text};
+use rune::{Color, El, col, el, row, text};
 
 use crate::State;
 use crate::config::theme::Rgba;
+use crate::view::icons::SEARCH;
 use crate::view::list::{self, Item};
 use crate::view::overlay::{self, Place};
 
@@ -60,7 +61,7 @@ fn space_color(s: &State, space: &str, name: &str) -> Color {
     s.chrome.accent
 }
 
-pub fn view(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
+pub fn view(s: &State, list: &ListPopup) -> El {
     let c = &s.chrome;
     let rows = rows(s, list);
     let small = |t: String, color: Color| text(t).font(s.ui_font(11.0, 400.0)).color(color);
@@ -194,9 +195,8 @@ pub fn view(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
         .child(overlay::field(
             s,
             "Go to a tab, space or agent…",
-            Some("ui/search.svg"),
+            Some(&SEARCH),
             None,
-            cx,
         ))
         .child(list::view(s, "picker-rows", items, SHOWN, false).mb(6.0))
 }

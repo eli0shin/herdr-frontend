@@ -13,9 +13,11 @@ finder, the machine filter) are a row builder and a body, not a new overlay.
   cursor starts, and what picking a row runs (`PickerRow::action`, `PaletteRow::action`,
   `MenuItem::actions`). The window passes only what it alone knows: the programs' names from
   `programs.json`, for the picker.
-- **The window draws** (`crates/app/src/view/popup.rs`). On every change of an open list it tells
-  the model how many rows there are (`Event::PopupRows`) and, when the list opens or its query
-  changes, where the cursor starts (`Event::PopupCursor`). Enter closes a list and sends
+- **The window draws** (`crates/app/src/view/popup.rs`). After every step (a key, core news, a
+  control call) and before a click picks a row, it counts an open list's rows again and tells
+  the model (`Event::PopupRows`), so a tab or space made or closed elsewhere is reachable at once
+  and a click picks the row drawn. When the list opens or its query changes it also says where
+  the cursor starts (`Event::PopupCursor`). Enter closes a list and sends
   `Effect::Pick`; the window runs the picked row's action as a step of its own, after the step's
   other effects, so a pick that opens a prompt keeps the prompt's focus.
 - **Every `Prompt`, `Confirm` and `Menu` draws the same way**, whichever feature opened it. A

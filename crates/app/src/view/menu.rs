@@ -6,9 +6,10 @@
 //! Every [`model::mode::PopupState::Menu`] draws here, whichever feature opened it.
 
 use model::Menu;
-use rune::{Cx, El, col, el, row, text};
+use rune::{El, col, el, row, text};
 
 use crate::State;
+use crate::view::icons::menu_icon;
 use crate::view::overlay::{self, Place};
 
 /// Where a menu opens: the last right-click, else the window's middle third.
@@ -24,7 +25,7 @@ pub fn place(s: &State, menu: &Menu) -> Place {
     }
 }
 
-pub fn view(s: &State, menu: &Menu, cx: &Cx<State>) -> El {
+pub fn view(s: &State, menu: &Menu) -> El {
     let c = &s.chrome;
     let items = menu.items.iter().enumerate().map(|(i, item)| {
         let on = i == menu.cursor;
@@ -44,7 +45,7 @@ pub fn view(s: &State, menu: &Menu, cx: &Cx<State>) -> El {
             .cursor(rune::Cursor::Pointer)
             .hover(rune::Color::WHITE.alpha(0.04))
             .on_press_tx(move |s: &mut State, tx| s.pick_row(i, tx))
-            .children(overlay::glyph(s, item.icon.file(), 14.0, c.muted, cx))
+            .child(rune::icon(menu_icon(item.icon), 14.0).color(c.muted))
             .child(
                 text(item.label.clone())
                     .key(format!("menu-label-{i}"))

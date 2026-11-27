@@ -147,7 +147,8 @@ pub enum MenuTarget {
     Pane(String),
 }
 
-/// The icon a menu item shows (`cfg/mods/menu/main.js` `menuIcon`): Lucide glyphs.
+/// The icon a menu item shows (`cfg/mods/menu/main.js` `menuIcon`): Lucide glyphs, drawn by the
+/// window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MenuIcon {
     /// `x`: closing.
@@ -164,21 +165,6 @@ pub enum MenuIcon {
     Zoom,
     /// `terminal`: anything else.
     Terminal,
-}
-
-impl MenuIcon {
-    /// The icon's file, as the app bundles it (`assets/ui/`).
-    pub fn file(self) -> &'static str {
-        match self {
-            MenuIcon::Close => "ui/x.svg",
-            MenuIcon::Rename => "ui/square-pen.svg",
-            MenuIcon::New => "ui/plus.svg",
-            MenuIcon::SplitRight => "ui/panel-right.svg",
-            MenuIcon::SplitDown => "ui/panel-bottom.svg",
-            MenuIcon::Zoom => "ui/square.svg",
-            MenuIcon::Terminal => "ui/terminal.svg",
-        }
-    }
 }
 
 /// One row of a context menu: what it says, its icon, what it runs (in order), and the named

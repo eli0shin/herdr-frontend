@@ -800,6 +800,9 @@ impl State {
         for pick in picks {
             self.carry_out(pick);
         }
+        // The world may have changed under an open list (a tab made or closed elsewhere): its
+        // rows are counted again, so the cursor and clicks reach exactly what it shows.
+        self.relist(false);
         handled
     }
 
@@ -872,6 +875,7 @@ impl State {
 
     /// Tells the model what the open list shows now, and moves the window to its cursor.
     /// `start`: the query is new (or the list just opened), so the cursor goes where it starts.
+    /// With no drawn list open, nothing.
     fn relist(&mut self, start: bool) {
         let model::Mode::Popup(PopupState::List(list)) = self.model.mode().clone() else {
             return;
@@ -977,6 +981,8 @@ impl State {
 
     /// A press on row `i` of the open list or menu: the cursor goes there, then it is chosen.
     pub fn pick_row(&mut self, i: usize, tx: &mut Tx) {
+        // The row drawn is the row picked, even if the rows changed since the model last heard.
+        self.relist(false);
         self.step(tx.clock(), Event::PopupCursor(i));
         self.act(Action::Popup(PopupAction::Choose), tx);
     }
@@ -1376,10 +1382,11 @@ impl State {
         for effect in fx.list {
             self.carry_out(effect);
         }
-        // A `do` can open a popup or copy mode as a key does.
+        // A `do` can open a popup or copy mode as a key does, and change what a list shows.
         if *self.model.mode() != before {
             self.mode_changed(&before);
         }
+        self.relist(false);
         for probe in probes {
             self.probe(probe);
         }

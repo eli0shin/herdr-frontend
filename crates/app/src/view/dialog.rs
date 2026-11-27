@@ -12,7 +12,7 @@
 
 use model::PopupAction;
 use model::mode::{Confirm, Prompt, Rename};
-use rune::{Cx, El, col, row, text};
+use rune::{El, col, row, text};
 
 use crate::State;
 use crate::view::overlay::{self, Place};
@@ -52,7 +52,7 @@ fn buttons(s: &State, yes: &str) -> El {
         ))
 }
 
-pub fn prompt(s: &State, prompt: &Prompt, cx: &Cx<State>) -> El {
+pub fn prompt(s: &State, prompt: &Prompt) -> El {
     let (title, hint) = words(prompt);
     col()
         .w_full()
@@ -70,7 +70,7 @@ pub fn prompt(s: &State, prompt: &Prompt, cx: &Cx<State>) -> El {
                 .pt(16.0)
                 .pb(7.0),
         )
-        .child(overlay::field(s, "Name", None, None, cx))
+        .child(overlay::field(s, "Name", None, None))
         .child(
             overlay::note(s, hint)
                 .key("prompt-hint")

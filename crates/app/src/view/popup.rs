@@ -17,7 +17,7 @@
 
 use model::mode::{ListPopup, PopupState};
 use model::{Mode, Popup};
-use rune::{Cx, El};
+use rune::El;
 
 use crate::State;
 use crate::view::overlay;
@@ -133,7 +133,7 @@ fn box_key(state: &PopupState) -> &'static str {
 }
 
 /// The open popup in its frame, when the window draws it.
-pub fn view(s: &State, cx: &mut Cx<State>) -> Option<El> {
+pub fn view(s: &State) -> Option<El> {
     let Mode::Popup(state) = s.model.mode() else {
         return None;
     };
@@ -150,16 +150,16 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> Option<El> {
     let key = box_key(state);
     let (place, body) = match state {
         PopupState::List(list) => match list.popup {
-            Popup::Help => (help::PLACE, help::view(s, list, cx)),
-            Popup::Palette => (palette::PLACE, palette::view(s, list, cx)),
-            Popup::Picker => (picker::PLACE, picker::view(s, list, cx)),
-            Popup::SpacePicker => (space_picker::PLACE, space_picker::view(s, list, cx)),
-            Popup::Settings => (settings::PLACE, settings::view(s, list, cx)),
+            Popup::Help => (help::PLACE, help::view(s, list)),
+            Popup::Palette => (palette::PLACE, palette::view(s, list)),
+            Popup::Picker => (picker::PLACE, picker::view(s, list)),
+            Popup::SpacePicker => (space_picker::PLACE, space_picker::view(s, list)),
+            Popup::Settings => (settings::PLACE, settings::view(s, list)),
             _ => return None,
         },
-        PopupState::Prompt(prompt) => (dialog::PLACE, dialog::prompt(s, prompt, cx)),
+        PopupState::Prompt(prompt) => (dialog::PLACE, dialog::prompt(s, prompt)),
         PopupState::Confirm(confirm) => (dialog::PLACE, dialog::confirm(s, confirm)),
-        PopupState::Menu(m) => (menu::place(s, m), menu::view(s, m, cx)),
+        PopupState::Menu(m) => (menu::place(s, m), menu::view(s, m)),
         PopupState::Jump(_) => return None,
     };
     Some(overlay::frame(s, key, place, body))

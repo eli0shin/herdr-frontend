@@ -7,10 +7,11 @@
 use std::path::PathBuf;
 
 use model::mode::ListPopup;
-use rune::{Cx, El, col, row, text};
+use rune::{El, col, row, text};
 
 use crate::State;
 use crate::config::{PROGRAMS, SETTINGS, THEMES};
+use crate::view::icons::{FILE, FOLDER};
 use crate::view::list::{self, Item};
 use crate::view::overlay::{self, Place};
 
@@ -58,7 +59,7 @@ pub fn rows(s: &State) -> Vec<Row> {
     out
 }
 
-pub fn view(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
+pub fn view(s: &State, list: &ListPopup) -> El {
     let c = &s.chrome;
     let rows = rows(s);
     let shown =
@@ -69,16 +70,10 @@ pub fn view(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
         .map(|(i, r)| {
             let on = i == list.cursor;
             let (title, about, icon) = match r {
-                Row::File { path, name, about } => (
-                    name.clone(),
-                    format!("{about} · {}", shown(path)),
-                    "ui/file-text.svg",
-                ),
-                Row::Reveal(home) => (
-                    "Show the home folder".to_owned(),
-                    shown(home),
-                    "ui/folder.svg",
-                ),
+                Row::File { path, name, about } => {
+                    (name.clone(), format!("{about} · {}", shown(path)), &FILE)
+                }
+                Row::Reveal(home) => ("Show the home folder".to_owned(), shown(home), &FOLDER),
             };
             Item::row(
                 row()
@@ -90,7 +85,7 @@ pub fn view(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
                     .items_center()
                     .radius(7.0)
                     .fill(if on { c.selected } else { c.popover })
-                    .children(overlay::glyph(s, icon, 15.0, c.muted, cx))
+                    .child(rune::icon(icon, 15.0).color(c.muted))
                     .child(
                         col()
                             .grow(1.0)

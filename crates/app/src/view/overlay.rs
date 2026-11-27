@@ -13,7 +13,7 @@
 //! the popup's text field ([`FIELD`]), or the box itself when it has none.
 
 use model::{Action, PopupAction};
-use rune::{Color, Cx, El, col, el, row, text, text_input};
+use rune::{Color, El, Icon, col, el, icon, row, text, text_input};
 
 use crate::State;
 
@@ -101,13 +101,7 @@ pub fn frame(s: &State, key: &str, place: Place, body: El) -> El {
 /// The popup's text field (`popup-filter`) in Herdr app's input box: 36 tall, an accent
 /// border, the terminal background, an optional icon before it and a hint after it. Its edits
 /// become the popup's query ([`PopupAction::Query`]).
-pub fn field(
-    s: &State,
-    placeholder: &str,
-    icon: Option<&str>,
-    after: Option<El>,
-    cx: &Cx<State>,
-) -> El {
+pub fn field(s: &State, placeholder: &str, glyph: Option<&'static Icon>, after: Option<El>) -> El {
     let c = &s.chrome;
     let input = text_input(&s.popup_field, s.ui_font(12.8, 400.0))
         .single_line()
@@ -132,7 +126,7 @@ pub fn field(
         .radius(9.0)
         .border(1.0, c.accent)
         .fill(s.background())
-        .children(icon.and_then(|i| glyph(s, i, 15.0, c.dim, cx)))
+        .children(glyph.map(|g| icon(g, 15.0).color(c.dim)))
         .child(input)
         .children(after)
 }
@@ -221,17 +215,6 @@ pub fn keycaps(s: &State, keys: &str) -> El {
         }));
     }
     row().gap(3.0).items_center().children(caps)
-}
-
-/// One of the window's glyphs (`assets/ui/`) at `size` points in `ink`. `None` before setup.
-pub fn glyph(s: &State, file: &str, size: f32, ink: Color, cx: &Cx<State>) -> Option<El> {
-    let image = s.icon_image(file, size, cx.env().scale)?;
-    Some(
-        el().size(size, size)
-            .pixels(image.pixels())
-            .pixels_tint(ink)
-            .a11y_hidden(),
-    )
 }
 
 /// A status's color, as the theme names it.

@@ -10,9 +10,10 @@
 
 use model::mode::ListPopup;
 use model::popups::{self, PaletteRow};
-use rune::{Cx, El, col, row, text};
+use rune::{El, col, row, text};
 
 use crate::State;
+use crate::view::icons::COMMAND;
 use crate::view::list::{self, Item};
 use crate::view::overlay::{self, Place};
 
@@ -42,7 +43,7 @@ pub fn picks(rows: &[PaletteRow], typed: bool) -> Vec<Option<usize>> {
     out
 }
 
-pub fn view(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
+pub fn view(s: &State, list: &ListPopup) -> El {
     let c = &s.chrome;
     let rows = rows(s, list);
     let typed = !list.query.trim().is_empty();
@@ -105,9 +106,8 @@ pub fn view(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
         .child(overlay::field(
             s,
             "Type a command…",
-            Some("ui/command.svg"),
+            Some(&COMMAND),
             Some(overlay::esc(s)),
-            cx,
         ))
         .child(body)
 }

@@ -11,7 +11,7 @@
 
 use model::help::{self, HelpRow};
 use model::mode::ListPopup;
-use rune::{Cx, El, ScrollSpec, col, row, text};
+use rune::{El, ScrollSpec, col, row, text};
 
 use crate::State;
 use crate::view::overlay::{self, Place};
@@ -33,7 +33,7 @@ pub fn shown(s: &State, list: &ListPopup) -> Vec<HelpRow> {
         .collect()
 }
 
-pub fn view(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
+pub fn view(s: &State, list: &ListPopup) -> El {
     let c = &s.chrome;
     let rows = shown(s, list);
     let label = |t: String| text(t).font(s.ui_font(13.0, 400.0));
@@ -110,13 +110,11 @@ pub fn view(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
                         .font(s.ui_font(14.0, 600.0))
                         .color(c.foreground),
                 )
-                .child(rune::el().grow(1.0).child(overlay::field(
-                    s,
-                    "Filter keys",
-                    None,
-                    None,
-                    cx,
-                ))),
+                .child(
+                    rune::el()
+                        .grow(1.0)
+                        .child(overlay::field(s, "Filter keys", None, None)),
+                ),
         )
         .child(
             col()

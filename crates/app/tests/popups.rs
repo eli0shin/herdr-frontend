@@ -312,6 +312,43 @@ fn the_picker_goes_to_tabs_closes_them_and_unfolds_quiet_spaces() {
 }
 
 #[test]
+fn an_open_picker_follows_a_tab_made_elsewhere_and_a_click_picks_the_row_drawn() {
+    let (mut rt, fake) = runtime();
+    ch(&mut rt, "⌘", 'p');
+    frames(&mut rt, 2);
+    assert_eq!(list(&rt).rows, 7);
+    // Another client adds a tab to `repos` while the picker is open.
+    let mut doc = fake.core().docs[&None].0.clone();
+    doc["spaces"][2]["tabs"]
+        .as_array_mut()
+        .unwrap()
+        .push(herdr_frontend::fixtures::tab(
+            "tb-late",
+            "late",
+            herdr_frontend::fixtures::split(
+                "tb-late",
+                "row",
+                vec![herdr_frontend::fixtures::pane("pn-late", "t9")],
+            ),
+        ));
+    fake.write_elsewhere(doc, vec![herdr_frontend::fixtures::terminal("t9", 80, 30)]);
+    rt.state.settle();
+    frames(&mut rt, 2);
+    assert_eq!(list(&rt).rows, 8, "the new tab is a row");
+    assert!(element(&rt, "picker-row-7").is_some());
+    // The last row, "new space", is the one a click picks: its terminal is for a new space,
+    // not a tab of the shown one ("new tab", the row before, which a stale count would pick).
+    click(&mut rt, "picker-row-7");
+    assert_eq!(*rt.state.model.mode(), Mode::Normal);
+    let run = runs(&fake).pop().expect("terminal.run");
+    let space = run.labels.get("herdr.space").cloned().unwrap_or_default();
+    assert!(
+        space.starts_with("sp") && !space.starts_with("sp-"),
+        "{space}"
+    );
+}
+
+#[test]
 fn a_click_on_a_picker_row_picks_it_and_a_click_outside_closes() {
     let (mut rt, _) = runtime();
     ch(&mut rt, "⌘", 'p');

@@ -108,6 +108,27 @@ impl Fake {
         self.core().set_size(address, cols, rows);
     }
 
+    /// Another client writes this machine's document, and starts `terminals` for it: the core
+    /// announces both, as its events do.
+    pub fn write_elsewhere(&self, doc: Value, terminals: Vec<Terminal>) {
+        let mut core = self.core();
+        let version = {
+            let entry = core.docs.entry(None).or_insert((Value::Null, 0));
+            entry.0 = doc;
+            entry.1 += 1;
+            entry.1
+        };
+        for t in &terminals {
+            core.terminals.insert(t.address.clone(), t.clone());
+        }
+        core.news
+            .push_back(News::Event(Event::Terminals(TerminalUpdate {
+                terminals,
+                docs: vec![(None, version)],
+                ..Default::default()
+            })));
+    }
+
     /// The connection drops; the next poll reconnects with a fresh snapshot.
     pub fn drop_connection(&self) {
         let mut core = self.core();

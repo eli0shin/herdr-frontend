@@ -8,7 +8,7 @@
 
 use model::mode::ListPopup;
 use model::popups::{self, SpaceRow};
-use rune::{Cx, El, col, el, row, text};
+use rune::{El, col, el, row, text};
 
 use crate::State;
 use crate::view::list::{self, Item};
@@ -27,7 +27,7 @@ pub fn rows(s: &State, list: &ListPopup) -> Vec<SpaceRow> {
     popups::space_rows(&s.model, &list.query)
 }
 
-pub fn view(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
+pub fn view(s: &State, list: &ListPopup) -> El {
     let c = &s.chrome;
     let rows = rows(s, list);
     let label = |t: String| text(t).font(s.ui_font(13.0, 400.0));
@@ -86,7 +86,7 @@ pub fn view(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
             "Spaces",
             Some(overlay::note(s, "↑/↓ · Enter · Esc")),
         ))
-        .child(overlay::field(s, "Go to space…", None, None, cx))
+        .child(overlay::field(s, "Go to space…", None, None))
         .child(list::view(s, "space-rows", items, SHOWN, true))
         .children(empty)
 }

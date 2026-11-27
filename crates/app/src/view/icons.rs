@@ -89,3 +89,100 @@ pub static GIT_PULL_REQUEST: Icon = Icon {
         r#"<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M6 9v12"/>"#
     ),
 };
+
+/// Renaming (`workspace-chrome/square-pen.svg`).
+pub static RENAME: Icon = Icon {
+    name: "herdr-square-pen",
+    view: 24.0,
+    body: lucide!(
+        r#"<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>"#
+    ),
+};
+
+/// Something new (`workspace-chrome/plus.svg`).
+pub static PLUS: Icon = Icon {
+    name: "herdr-plus",
+    view: 24.0,
+    body: lucide!(r#"<path d="M5 12h14"/><path d="M12 5v14"/>"#),
+};
+
+/// A split to the right (`workspace-chrome/panel-right.svg`).
+pub static PANEL_RIGHT: Icon = Icon {
+    name: "herdr-panel-right",
+    view: 24.0,
+    body: lucide!(r#"<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>"#),
+};
+
+/// A split below (`workspace-chrome/panel-bottom.svg`).
+pub static PANEL_BOTTOM: Icon = Icon {
+    name: "herdr-panel-bottom",
+    view: 24.0,
+    body: lucide!(r#"<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 15h18"/>"#),
+};
+
+/// Zoom (`workspace-chrome/square.svg`).
+pub static SQUARE: Icon = Icon {
+    name: "herdr-square",
+    view: 24.0,
+    body: lucide!(r#"<rect width="18" height="18" x="3" y="3" rx="2"/>"#),
+};
+
+/// A terminal (`workspace-chrome/terminal.svg`).
+pub static TERMINAL: Icon = Icon {
+    name: "herdr-terminal",
+    view: 24.0,
+    body: lucide!(r#"<path d="M12 19h8"/><path d="m4 17 6-6-6-6"/>"#),
+};
+
+/// Closing, in menus (`workspace-chrome/x.svg`).
+pub static MENU_CLOSE: Icon = Icon {
+    name: "herdr-menu-x",
+    view: 24.0,
+    body: lucide!(r#"<path d="M18 6 6 18"/><path d="m6 6 12 12"/>"#),
+};
+
+/// A search field (`workspace-chrome/search.svg`).
+pub static SEARCH: Icon = Icon {
+    name: "herdr-search",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4-4"/></g>"#,
+};
+
+/// The palette's field (`frame/palette/command.svg`).
+pub static COMMAND: Icon = Icon {
+    name: "herdr-command",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/></g>"#,
+};
+
+/// A file (`workspace-chrome/file-text.svg`).
+pub static FILE: Icon = Icon {
+    name: "herdr-file-text",
+    view: 24.0,
+    body: lucide!(
+        r#"<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>"#
+    ),
+};
+
+/// A folder (`workspace-chrome/folder.svg`).
+pub static FOLDER: Icon = Icon {
+    name: "herdr-folder",
+    view: 24.0,
+    body: lucide!(
+        r#"<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>"#
+    ),
+};
+
+/// A menu item's icon (`cfg/mods/menu/main.js` `menuIcon`).
+pub fn menu_icon(icon: model::MenuIcon) -> &'static Icon {
+    use model::MenuIcon as M;
+    match icon {
+        M::Close => &MENU_CLOSE,
+        M::Rename => &RENAME,
+        M::New => &PLUS,
+        M::SplitRight => &PANEL_RIGHT,
+        M::SplitDown => &PANEL_BOTTOM,
+        M::Zoom => &SQUARE,
+        M::Terminal => &TERMINAL,
+    }
+}
