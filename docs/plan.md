@@ -85,5 +85,5 @@ The tracker holds the dependency graph. These are the stages:
   his display. It runs the full app and Herdr app on isolated cores and homes. It sends keys to
   herdr-frontend through its control socket, never OS-level input. Feature tickets add their
   steps to `crates/app/tests/e2e/scenarios/`.
-- `cargo fmt`, `cargo clippy --all-targets -- -D warnings` and `cargo test` pass in CI on the
-  `xcode-27` (macOS 27) runner.
+- `just test` (pin check, fmt, clippy, tests and the bindings check) passes in CI on the
+  `xcode-27` (macOS 27) runner, which runs that recipe rather than repeating its commands.
