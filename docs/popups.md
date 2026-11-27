@@ -95,9 +95,9 @@ shown space when it is this computer's, else the first of this computer's spaces
 - The terminal menu's "Rename" says "not yet": pane names need a field in the shared layout
   document that herdr-shared doesn't model yet.
 - The picker's working spinner is a static ◐ glyph, as the space picker draws it.
-- The picker's space colors are assigned in space order, the way Herdr app picks a new space's
-  color. Herdr app stores them in shared `space.colors`; the sidebar (ticket 023) will read the
-  stored ones.
+- The picker's space colors are assigned in space order each time, the way a new space's color is
+  picked. Keeping each space's color once chosen, so adding a space moves nothing, comes with the
+  sidebar's space colors (ticket 023), kept in herdr-frontend's home.
 
 ## Scenes
 

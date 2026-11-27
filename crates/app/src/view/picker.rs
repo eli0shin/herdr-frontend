@@ -41,8 +41,8 @@ pub fn rows(s: &State, list: &ListPopup) -> Vec<PickerRow> {
 }
 
 /// Each space's avatar color: the color fewest spaces before it have, in space order, and none
-/// for the home space (`spaceColors`). Herdr app keeps the choice in shared `space.colors` so
-/// adding a space moves nothing; the sidebar's colors (ticket 023) will be the stored ones.
+/// for the home space (`spaceColors`). Keeping each choice, so adding a space moves nothing, comes
+/// with the sidebar's space colors (ticket 023), kept in herdr-frontend's home.
 fn space_color(s: &State, space: &str, name: &str) -> Color {
     if name == "~" {
         return s.chrome.dim;
