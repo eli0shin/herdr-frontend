@@ -1,9 +1,10 @@
 //! libghostty-vt bindings and the link of the pinned, checksummed release.
 //!
 //! `build.rs` fetches the pinned release, checks its SHA-256 and statically links it: the
-//! xcframework's macOS library, or on Linux the library it builds from the release's source. The raw bindings are bindgen's output for `ghostty/vt.h`, committed in
-//! `src/bindings.rs` and regenerated with `just bindings`. Everything here is `unsafe` C API
-//! except [`check_version`], which a program calls once when it starts.
+//! xcframework's macOS library, or on Linux the library it builds from the release's source.
+//! The raw bindings are bindgen's output for `ghostty/vt.h`, committed in `src/bindings.rs` and
+//! regenerated with `just bindings`. Everything here is `unsafe` C API except
+//! [`check_version`], which a program calls once when it starts.
 
 use std::ffi::CStr;
 use std::fmt;

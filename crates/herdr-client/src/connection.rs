@@ -1303,6 +1303,12 @@ mod tests {
         let request = core.message();
         core.reply(&request["id"], json!({"address": "t1"}));
         assert!(call.wait_timeout(WAIT).unwrap().is_ok());
+        // The reader completes the call before it wakes, so a woken UI finds the reply: the wake
+        // can land just after the wait returns.
+        let deadline = std::time::Instant::now() + WAIT;
+        while wakes.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
         assert!(wakes.load(Ordering::SeqCst) >= 1);
     }
 
