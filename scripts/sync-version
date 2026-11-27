@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Copy package.json's version into Cargo.toml and Cargo.lock.
+
+Changesets keeps the release version in the root package.json (docs/release.md). `bun run
+version-packages` runs `changeset version` and then this, so the version PR also sets
+`[workspace.package] version` in Cargo.toml, which every crate inherits, and the workspace crates'
+versions in Cargo.lock. The app's `--version`, `CARGO_PKG_VERSION` and the bundle's Info.plist
+(scripts/bundle-macos) all read that one value.
+
+Cargo.lock is edited as text rather than with `cargo update`, which would need the toolchain and
+every git dependency fetched. The workspace crates are the lock's packages with no `source`; all of
+them inherit the workspace version. `--check` changes nothing and fails when the files disagree.
+"""
+
+import json
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SEMVER = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
+
+
+def fail(message):
+    sys.exit(f"sync-version: {message}")
+
+
+def package_version():
+    version = json.loads((ROOT / "package.json").read_text())["version"]
+    if not SEMVER.fullmatch(version):
+        fail(f"package.json version {version!r} isn't a semver version")
+    return version
+
+
+def workspace_crates():
+    """The lock's workspace crates (no `source`), checked against Cargo.toml's members."""
+    lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
+    crates = {p["name"] for p in lock["package"] if "source" not in p}
+    manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
+    for member in manifest["workspace"]["members"]:
+        crate = tomllib.loads((ROOT / member / "Cargo.toml").read_text())["package"]
+        if crate["name"] not in crates:
+            fail(f"{member} ({crate['name']}) isn't in Cargo.lock; run cargo once")
+        if crate.get("version") != {"workspace": True}:
+            fail(f"{member}/Cargo.toml must inherit the version (version.workspace = true)")
+    if len(crates) != len(manifest["workspace"]["members"]):
+        fail("Cargo.lock has path packages that aren't workspace members")
+    return crates
+
+
+def set_manifest(text, version):
+    """Set `version` in the `[workspace.package]` table, keeping the rest of the file as it is."""
+    section = re.search(r"(?ms)^\[workspace\.package\]\n(.*?)(?=^\[|\Z)", text)
+    if section is None:
+        fail("Cargo.toml has no [workspace.package] table")
+    body, count = re.subn(r'(?m)^version = "[^"]*"$', f'version = "{version}"', section[1])
+    if count != 1:
+        fail('[workspace.package] needs exactly one `version = "..."` line')
+    return text[: section.start(1)] + body + text[section.end(1) :]
+
+
+def set_lock(text, version, crates):
+    """Set the version of each workspace crate's `[[package]]` block, and any `name version`
+    dependency entry naming one (cargo writes those only when a name is ambiguous)."""
+    old = {}
+
+    def package(block):
+        name = re.search(r'(?m)^name = "([^"]*)"$', block[0])
+        if name is None or name[1] not in crates or re.search(r"(?m)^source = ", block[0]):
+            return block[0]
+        current = re.search(r'(?m)^version = "([^"]*)"$', block[0])
+        old[name[1]] = current[1]
+        return block[0].replace(current[0], f'version = "{version}"', 1)
+
+    text = re.sub(r"(?ms)^\[\[package\]\]\n.*?(?=^\[\[package\]\]|\Z)", package, text)
+    if set(old) != crates:
+        fail(f"Cargo.lock is missing {sorted(crates - set(old))}")
+    for name, previous in old.items():
+        text = text.replace(f' "{name} {previous}",', f' "{name} {version}",')
+    return text
+
+
+def main():
+    check = sys.argv[1:] == ["--check"]
+    if sys.argv[1:] and not check:
+        sys.exit("usage: scripts/sync-version [--check]")
+    version = package_version()
+    crates = workspace_crates()
+    files = {
+        "Cargo.toml": lambda text: set_manifest(text, version),
+        "Cargo.lock": lambda text: set_lock(text, version, crates),
+    }
+    stale = []
+    for name, update in files.items():
+        path = ROOT / name
+        text = path.read_text()
+        synced = update(text)
+        if synced != text:
+            stale.append(name)
+            if not check:
+                path.write_text(synced)
+    if check and stale:
+        fail(f"{' and '.join(stale)} aren't at package.json's {version}; run scripts/sync-version")
+    # Read back what cargo will see.
+    manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
+    lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
+    if manifest["workspace"]["package"]["version"] != version or any(
+        p["version"] != version for p in lock["package"] if "source" not in p
+    ):
+        fail("the edit didn't take; Cargo.toml or Cargo.lock has an unexpected layout")
+    print(f"sync-version: {version}" + (" (in sync)" if check else ""))
+
+
+if __name__ == "__main__":
+    main()

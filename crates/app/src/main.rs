@@ -5,6 +5,11 @@ use herdr_frontend::link::Live;
 fn main() {
     // `ls`, `do`, `status` and `commands` talk to the running window (`docs/cli.md`).
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // The released version: changesets sets it in the workspace Cargo.toml (`docs/release.md`).
+    if args == ["--version"] {
+        println!("herdr-frontend {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     if herdr_frontend::control::is_subcommand(&args) {
         std::process::exit(herdr_frontend::control::client(&args));
     }

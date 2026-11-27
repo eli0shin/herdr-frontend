@@ -1,0 +1,26 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@4.1.0/schema.json",
+  "changelog": ["@changesets/changelog-github", { "repo": "eli0shin/herdr-frontend" }],
+  "commit": false,
+  "fixed": [],
+  "linked": [],
+  "access": "restricted",
+  "baseBranch": "main",
+  "changedFilePatterns": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "crates/*/Cargo.toml",
+    "crates/*/build.rs",
+    "crates/*/src/**",
+    "assets/**",
+    "scripts/bundle-macos",
+    "scripts/install-macos"
+  ],
+  "updateInternalDependencies": "patch",
+  "ignore": [],
+  "privatePackages": {
+    "version": true,
+    "tag": true
+  }
+}

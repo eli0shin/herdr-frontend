@@ -52,6 +52,10 @@ and runs `tickets lint`. Only the orchestrator runs `tickets done`.
   recipes your change touches (`just run`, `just snap`, `just e2e`, `just bundle`, …). Never report
   a recipe as passing unless you ran that recipe and it passed; if a tool is missing, say so and
   stop instead of substituting other commands. A recipe you add or change must be run in the PR.
+- Every user-visible PR adds a changeset (`bunx changeset`, or a `.changeset/*.md` by hand), as in
+  Eli's other repos. The `changeset check` workflow fails a PR that changes the app's sources
+  without one; a change there that Eli wouldn't see adds `bunx changeset --empty`. Never edit the
+  version by hand: the "chore: version packages" PR sets it (`docs/release.md`).
 - Research and design docs go in `docs/`; keep them current with the code they describe.
 
 ## Safety

@@ -92,6 +92,7 @@ herdr-frontend status                        # what the window shows, and layout
 herdr-frontend commands                      # the served commands and their arguments
 herdr-frontend do <command> --arg value ...  # or: herdr-frontend do <command> '<json object>'
 herdr-frontend                               # bring the window forward, or open one
+herdr-frontend --version                     # the released version (docs/release.md)
 ```
 
 - `herdr-frontend` with no arguments, while a window serves its home, brings that window forward
@@ -103,6 +104,7 @@ herdr-frontend                               # bring the window forward, or open
   `--argv '["pi"]'` the array. Other values are strings. This is herdr-app's `parse_args`.
 - The reply is printed to stdout as pretty JSON. Object key order isn't part of the contract.
 - `commands` prints the list without a window.
+- `--version` prints `herdr-frontend <version>` and exits 0, without a window or a core.
 
 ### Exit codes and errors
 

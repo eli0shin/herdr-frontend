@@ -1,0 +1,14 @@
+{
+  "name": "herdr-frontend",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Versioning only: changesets keeps this version, and scripts/sync-version copies it into Cargo.toml and Cargo.lock (docs/release.md).",
+  "license": "MIT",
+  "scripts": {
+    "version-packages": "changeset version && scripts/sync-version"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^2.0.0",
+    "@changesets/cli": "^3.1.0"
+  }
+}
