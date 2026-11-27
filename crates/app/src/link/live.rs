@@ -10,19 +10,23 @@ use std::task::{Context, Poll, Wake};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use base64::Engine;
 use herdr_client::{
     AttachStream, Connection, Error, MachineUpdate, MachineWatcher, POLL_EVERY, Pending,
     StreamControl, StreamItem, Supervisor, SupervisorOptions, Transport, Update,
 };
-use herdr_proto::methods::{DocGetResult, DocSetResult, RunResult, TerminalAttach};
+use herdr_proto::methods::{DocGetResult, DocSetResult, RunResult, TerminalAttach, TerminalPut};
 use herdr_proto::{CloseReason, RpcError, Terminal};
 use herdr_shared::Round;
 use model::{Event, Request, TerminalUpdate, Token};
 
-use super::{Link, News, Out, unavailable};
+use super::{Link, News, Out, Upload, unavailable};
 
 /// How much of one stream's output the reader moves before it looks at the others.
 const TURN_BYTES: usize = 1 << 20;
+
+/// The largest file `terminal.put` takes (`herdr-core-protocol.md` §3).
+const PUT_MAX_BYTES: u64 = 8 << 20;
 
 /// herdr-core through herdr-client. Nothing connects until [`Link::start`].
 pub struct Live {
@@ -37,6 +41,9 @@ pub struct Live {
     controls: HashMap<String, StreamControl>,
     /// Answers known at once (no connection), for the next poll.
     ready: Vec<News>,
+    /// Files copied beside terminals, from the threads that send them.
+    puts: (Sender<News>, Receiver<News>),
+    wake: Option<rune::Waker>,
 }
 
 enum CallAnswer {
@@ -66,6 +73,8 @@ impl Live {
             docs: Vec::new(),
             controls: HashMap::new(),
             ready: Vec::new(),
+            puts: mpsc::channel(),
+            wake: None,
         }
     }
 
@@ -88,6 +97,7 @@ impl Link for Live {
         if self.supervisor.is_some() {
             return;
         }
+        self.wake = Some(wake.clone());
         let supervisor = Supervisor::start(self.options.clone(), wake.clone());
         self.machines = Some(MachineWatcher::start(
             supervisor.handle(),
@@ -100,6 +110,7 @@ impl Link for Live {
 
     fn poll(&mut self, news: &mut Vec<News>) {
         news.append(&mut self.ready);
+        news.extend(self.puts.1.try_iter());
         let Some(supervisor) = &self.supervisor else {
             return;
         };
@@ -276,6 +287,48 @@ impl Link for Live {
             streams.command(Command::Detach(address.to_owned()));
         }
     }
+
+    fn put(&mut self, address: &str, uploads: Vec<Upload>) {
+        let Some(connection) = self.connection() else {
+            return;
+        };
+        let (news, wake, address) = (self.puts.0.clone(), self.wake.clone(), address.to_owned());
+        // Reading and sending the files is I/O: never on the UI thread.
+        let _ = std::thread::Builder::new()
+            .name("hc-put".into())
+            .spawn(move || {
+                let paths = uploads
+                    .iter()
+                    .filter_map(|upload| put(&connection, &address, upload))
+                    .collect();
+                let _ = news.send(News::Put { address, paths });
+                if let Some(wake) = wake {
+                    wake();
+                }
+            });
+    }
+}
+
+/// Sends one file beside a terminal; where it landed, or `None` when it couldn't be read, is
+/// too big, or the core refused it.
+fn put(connection: &Connection, address: &str, upload: &Upload) -> Option<String> {
+    let data = match upload {
+        Upload::File(file) => {
+            if std::fs::metadata(file).ok()?.len() > PUT_MAX_BYTES {
+                return None;
+            }
+            std::fs::read(file).ok()?.into()
+        }
+        Upload::Bytes { data, .. } if data.len() as u64 > PUT_MAX_BYTES => return None,
+        Upload::Bytes { data, .. } => data.clone(),
+    };
+    let put = TerminalPut {
+        terminal: address.to_owned(),
+        name: upload.name()?,
+        data: base64::engine::general_purpose::STANDARD.encode(data),
+        ..Default::default()
+    };
+    connection.call(put).wait().ok().map(|r| r.path)
 }
 
 /// Wakes the stream reader: its streams have something, or an attach was answered.

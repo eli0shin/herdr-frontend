@@ -40,6 +40,7 @@ pub fn app() -> App<State> {
     App::new(spec())
         .font_smoothing(FontSmoothing::Off)
         .on_focus(State::on_focus)
+        .on_ime(State::on_ime)
 }
 
 /// The app on a live core, with its home: the window opens where it was, borderless (Eli's
@@ -107,7 +108,8 @@ pub fn spec() -> AppSpec<State> {
 
 /// The whole window, at the settings' zoom: the shell around the shown tab's terminals
 /// ([`view::shell`]), or, in the renderer's fixture scenes, their panes alone; the open popup
-/// and the toasts over it. Its root previews every key for the keymap ([`State::preview_key`]).
+/// and the toasts over it. Its root previews every key for the keymap ([`State::preview_key`]),
+/// and takes pastes Rune delivers and key releases with nothing focused, for the focused pane.
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     cx.zoom(s.zoom());
     let content = if !s.panes.is_empty() {
@@ -128,6 +130,11 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .w_full()
         .h_full()
         .on_key_preview(State::preview_key)
+        .on_paste_content(|s: &mut State, content, tx| s.pasted(content, tx))
+        .on_key_up(|s: &mut State, ev, tx| {
+            let pane = s.model.focused_pane();
+            tx.focused().is_none() && pane.is_some_and(|pane| s.released(&pane, ev, tx))
+        })
         .child(content)
         .children(popup)
         .children(toasts)

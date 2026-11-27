@@ -8,8 +8,8 @@ use ghostty_vt_sys::{
 };
 use terminal::{
     ClipboardLocation, ColorScheme, Config, Dirty, Event, Focus, KeyEvent, Mods, MouseAction,
-    MouseButton, MouseEvent, PasteRejected, Progress, Rgb, Scroll, Scrollback, Theme, Vt,
-    encode_focus,
+    MouseButton, MouseEvent, PasteRejected, Progress, Rgb, Scroll, Scrollback, SelectAction,
+    SelectEvent, Theme, Vt, encode_focus,
 };
 
 fn config() -> Config {
@@ -451,4 +451,112 @@ fn pastes_follow_bracketed_paste_and_refuse_unsafe_text() {
 fn focus_encodes_as_csi_i_and_o() {
     assert_eq!(encode_focus(Focus::Gained), b"\x1b[I");
     assert_eq!(encode_focus(Focus::Lost), b"\x1b[O");
+}
+
+/// A pixel in the left half of a cell in `config()`'s 10x22 cells. Ghostty takes a cell into a
+/// selection when the pointer crosses its middle, so presses go here...
+fn at(col: u16, row: u16) -> (f32, f32) {
+    (f32::from(col) * 10.0 + 2.0, f32::from(row) * 22.0 + 11.0)
+}
+
+/// ...and drags that end on a cell go past its middle.
+fn past(col: u16, row: u16) -> (f32, f32) {
+    (f32::from(col) * 10.0 + 8.0, f32::from(row) * 22.0 + 11.0)
+}
+
+fn select(vt: &mut Vt, action: SelectAction, (x, y): (f32, f32), clicks: u32) {
+    let event = SelectEvent {
+        clicks,
+        ..SelectEvent::new(action, x, y)
+    };
+    vt.select(&event, Instant::now());
+}
+
+#[test]
+fn dragging_selects_cells_and_a_click_clears_them() {
+    let mut vt = Vt::new(&config());
+    vt.write(b"hello world\r\nsecond line");
+    select(&mut vt, SelectAction::Press, at(0, 0), 1);
+    assert!(!vt.has_selection(), "a press alone selects nothing");
+    select(&mut vt, SelectAction::Drag, past(4, 0), 1);
+    select(&mut vt, SelectAction::Release, past(4, 0), 1);
+    assert_eq!(vt.selection_text().as_deref(), Some("hello"));
+    let s = vt.snapshot();
+    assert_eq!(s.screen[0].selection, Some((0, 4)), "the frame shows it");
+
+    // Across rows, the way text flows.
+    select(&mut vt, SelectAction::Press, at(6, 0), 1);
+    select(&mut vt, SelectAction::Drag, past(5, 1), 1);
+    select(&mut vt, SelectAction::Release, past(5, 1), 1);
+    assert_eq!(vt.selection_text().as_deref(), Some("world\nsecond"));
+
+    select(&mut vt, SelectAction::Press, at(2, 1), 1);
+    select(&mut vt, SelectAction::Release, at(2, 1), 1);
+    assert_eq!(vt.selection_text(), None, "a plain click clears it");
+}
+
+#[test]
+fn double_and_triple_clicks_select_words_and_lines() {
+    let mut vt = Vt::new(&config());
+    vt.write(b"cargo test --all\r\nnext");
+    select(&mut vt, SelectAction::Press, at(7, 0), 2);
+    assert_eq!(vt.selection_text().as_deref(), Some("test"));
+    select(&mut vt, SelectAction::Release, at(7, 0), 2);
+    select(&mut vt, SelectAction::Press, at(7, 0), 3);
+    assert_eq!(vt.selection_text().as_deref(), Some("cargo test --all"));
+}
+
+#[test]
+fn shift_click_moves_the_end_of_the_selection() {
+    let mut vt = Vt::new(&config());
+    vt.write(b"one two three");
+    select(&mut vt, SelectAction::Press, at(0, 0), 1);
+    select(&mut vt, SelectAction::Drag, past(2, 0), 1);
+    select(&mut vt, SelectAction::Release, past(2, 0), 1);
+    let (x, y) = past(6, 0);
+    let extend = SelectEvent {
+        extend: true,
+        ..SelectEvent::new(SelectAction::Press, x, y)
+    };
+    vt.select(&extend, Instant::now());
+    assert_eq!(vt.selection_text().as_deref(), Some("one two"));
+    let (x, y) = past(12, 0);
+    vt.select(
+        &SelectEvent {
+            extend: true,
+            ..SelectEvent::new(SelectAction::Drag, x, y)
+        },
+        Instant::now(),
+    );
+    assert_eq!(vt.selection_text().as_deref(), Some("one two three"));
+}
+
+#[test]
+fn a_drag_held_past_the_top_scrolls_back_and_keeps_selecting() {
+    let mut vt = Vt::new(&Config {
+        rows: 5,
+        ..config()
+    });
+    vt.write(&lines(20));
+    let top = vt.snapshot().scrollbar.offset;
+    select(&mut vt, SelectAction::Press, at(3, 2), 1);
+    select(&mut vt, SelectAction::Drag, (5.0, -30.0), 1);
+    let due = vt
+        .autoscroll_deadline()
+        .expect("autoscroll while past the edge");
+    assert!(
+        !vt.autoscroll(due - Duration::from_millis(1)),
+        "not before it's due"
+    );
+    assert!(vt.autoscroll(due));
+    assert!(vt.autoscroll(due + terminal::AUTOSCROLL_EVERY));
+    assert_eq!(vt.snapshot().scrollbar.offset, top - 2, "a row a tick");
+    let text = vt.selection_text().expect("still selecting");
+    assert!(text.starts_with("line 15\nline 16"), "{text:?}");
+
+    // Back inside, the ticks stop; letting go keeps the selection.
+    select(&mut vt, SelectAction::Drag, past(3, 1), 1);
+    assert_eq!(vt.autoscroll_deadline(), None);
+    select(&mut vt, SelectAction::Release, at(3, 1), 1);
+    assert!(vt.has_selection());
 }

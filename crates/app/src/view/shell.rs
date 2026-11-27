@@ -15,8 +15,13 @@
 //!
 //! Colors are the theme's ([`crate::config::theme::Chrome`]), labels are in the settings'
 //! `ui_font`, and every size here is at zoom 1: Rune's zoom scales the whole view.
+//!
+//! A pane takes the terminal's input: keys and their releases, the mouse (buttons, drags, hover,
+//! the wheel, right-clicks) and dropped files ([`State`]'s pane handlers). The window's root
+//! (`crate::view`) takes pastes Rune delivers and releases with nothing focused, for the focused
+//! pane.
 
-use rune::{Cx, El, TextStyle, col, el, row, text};
+use rune::{Cx, El, PointerButton, TextStyle, col, el, row, text};
 
 use crate::State;
 use crate::config::programs::Program;
@@ -228,12 +233,26 @@ fn main(s: &State, cx: &mut Cx<State>) -> El {
             Some(terminal) => terminal.view(&face, &s.look),
             None => el().key(pane_key(&pane)).w_full().h_full().fill(background),
         };
-        let (focus, typing) = (pane.clone(), pane.clone());
-        el().absolute(rect.x, rect.y).size(rect.w, rect.h).child(
-            body.focusable(true)
-                .on_key(move |s: &mut State, ev, tx| s.typed(&typing, ev, tx))
-                .on_focus_change(move |s: &mut State, gained, tx| s.pane_focus(&focus, gained, tx)),
-        )
+        el().absolute(rect.x, rect.y)
+            .size(rect.w, rect.h)
+            .child(pane_input(body, &pane))
     });
     area.fill(c.border).children(panes)
+}
+
+/// A pane's body with the handlers that give its terminal the keyboard and the mouse.
+fn pane_input(body: El, pane: &str) -> El {
+    let p = || pane.to_owned();
+    let (focus, typing, releasing, dragging, hovering, wheeling, menu, dropping) =
+        (p(), p(), p(), p(), p(), p(), p(), p());
+    body.focusable(true)
+        .pointer_buttons([PointerButton::Middle])
+        .on_key(move |s: &mut State, ev, tx| s.typed(&typing, ev, tx))
+        .on_key_up(move |s: &mut State, ev, tx| s.released(&releasing, ev, tx))
+        .on_focus_change(move |s: &mut State, gained, tx| s.pane_focus(&focus, gained, tx))
+        .on_drag(move |s: &mut State, d, tx| s.pane_drag(&dragging, d, tx))
+        .on_pointer_move_local(move |s: &mut State, p, tx| s.pane_hover(&hovering, p, tx))
+        .on_wheel(move |s: &mut State, ev, tx| s.pane_wheel(&wheeling, &ev, tx))
+        .on_secondary_press_local(move |s: &mut State, p, tx| s.pane_right_click(&menu, p, tx))
+        .on_drop_files(move |s: &mut State, paths, tx| s.pane_dropped(&dropping, paths, tx))
 }

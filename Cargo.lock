@@ -1225,6 +1225,7 @@ dependencies = [
 name = "herdr-frontend"
 version = "0.0.1"
 dependencies = [
+ "base64",
  "ghostty-vt-sys",
  "herdr-client",
  "herdr-proto",

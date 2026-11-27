@@ -6,6 +6,11 @@
 //! left after its padding, as Ghostty does with `window-padding-balance = false`; that's what Eli
 //! wants (`docs/research/feature-inventory.md` §1 "Terminal grid centering"). A caller that wants
 //! Ghostty's balanced padding computes it with `terminal::Size` and passes it in.
+//!
+//! While the pane has the keyboard, the cursor's cell is the input method's caret
+//! (`El::ime_cursor`), even when the program hides the cursor, so the candidate window opens
+//! there. What the input method composes draws over that cell, underlined, until it commits:
+//! libghostty-vt keeps no preedit (`docs/research/terminal-rendering.md` §3, "IME").
 
 pub mod cursor;
 pub mod font;
@@ -16,7 +21,7 @@ pub mod sprite;
 
 use std::cell::RefCell;
 
-use rune::{El, el, grid};
+use rune::{El, OptionAsAlt, Transition, el, grid, text};
 use terminal::{Padding, Snapshot};
 
 use self::font::Face;
@@ -32,6 +37,10 @@ pub struct TerminalPane {
     pub focused: bool,
     /// Space between the pane's edges and the grid, in device pixels.
     pub padding: Padding,
+    /// What the input method is composing, drawn at the cursor until it commits.
+    pub preedit: Option<String>,
+    /// Which Option keys act as Alt while the pane has the keyboard.
+    pub option_as_alt: OptionAsAlt,
     rows: RefCell<RowCache>,
 }
 
@@ -42,6 +51,8 @@ impl TerminalPane {
             snapshot,
             focused: false,
             padding: Padding::default(),
+            preedit: None,
+            option_as_alt: OptionAsAlt::Both,
             rows: RefCell::new(RowCache::default()),
         }
     }
@@ -92,7 +103,60 @@ impl TerminalPane {
                     .size(grid_w, grid_h)
                     .child(screen)
                     .children(atlas.iter().map(|(row, cell)| cell.view(*row, face)))
-                    .children(cursor::overlay(snapshot, self.focused, face, look)),
+                    .children(cursor::overlay(snapshot, self.focused, face, look))
+                    .children(self.ime(face)),
             )
+    }
+
+    /// The input method's caret at the cursor's cell while the pane has the keyboard, with what
+    /// it's composing drawn over the cell.
+    fn ime(&self, face: &Face) -> Option<El> {
+        if !self.focused {
+            return None;
+        }
+        let snapshot = &self.snapshot;
+        let (col, row) = snapshot.cursor.position?;
+        let (cell_w, cell_h) = face.cell_pt();
+        let (x, y) = (f32::from(col) * cell_w, f32::from(row) * cell_h);
+        let caret = el()
+            .key("ime")
+            .absolute(0.0, 0.0)
+            .size(cell_w, cell_h)
+            .a11y_hidden()
+            .ime_cursor()
+            .ime_option_as_alt_mode(self.option_as_alt);
+        // It comes and goes with the composition at once, as the cursor does.
+        let mut at = el()
+            .key("ime-at")
+            .absolute(x, y)
+            .inert()
+            .instant_changes()
+            .transition(Transition::none())
+            .child(caret);
+        if let Some(composing) = self.preedit.as_deref().filter(|t| !t.is_empty()) {
+            // On the terminal's background, so the cells under it don't show through, and as
+            // wide as its text (a CJK character takes two cells).
+            let colors = &snapshot.colors;
+            let line = 1.0 / face.scale;
+            at = at.child(
+                el().key("preedit")
+                    .absolute(0.0, 0.0)
+                    .h(cell_h)
+                    .fill(color(colors.background))
+                    .child(
+                        text(composing.to_owned())
+                            .key("preedit-text")
+                            .font(face.style())
+                            .color(color(colors.foreground)),
+                    )
+                    .child(
+                        el().absolute(0.0, cell_h - line)
+                            .w_full()
+                            .h(line)
+                            .fill(color(colors.foreground)),
+                    ),
+            );
+        }
+        Some(at)
     }
 }

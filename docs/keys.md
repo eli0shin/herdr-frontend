@@ -79,8 +79,8 @@ half-saved file. At start, a home without a key file gets the defaults written t
 Every action goes through `model::step`. An action whose feature isn't built yet shows a
 "Not yet" toast that names the command. A popup or copy mode the window doesn't draw yet closes
 at once with that toast, so it can't hold the keyboard unseen. Today the window draws only the
-keys help. The terminal's own commands (sends, paste, copy, search) also say "not yet" until
-tickets 015 and 019 carry them out.
+keys help. The terminal's sends, paste, copy and paste-image run in the focused terminal
+(`docs/research/terminal-rendering.md` §3); find and select all say "not yet" until ticket 019.
 
 ## Keys help
 

@@ -45,6 +45,9 @@ pub enum News {
         address: String,
         reason: Option<CloseReason>,
     },
+    /// Files from [`Link::put`] landed beside a terminal: where, on its machine. Files that
+    /// couldn't be sent are left out.
+    Put { address: String, paths: Vec<String> },
 }
 
 /// A frame for one terminal's attach stream (`herdr-core-protocol.md` §4 and rule 9).
@@ -88,6 +91,34 @@ pub trait Link {
 
     /// Detaches a terminal.
     fn detach(&mut self, address: &str);
+
+    /// Sends files beside a terminal on its machine (`terminal.put`), off the UI thread; the
+    /// answer is [`News::Put`].
+    fn put(&mut self, address: &str, uploads: Vec<Upload>);
+}
+
+/// A file for [`Link::put`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Upload {
+    /// A local file, read off the UI thread.
+    File(std::path::PathBuf),
+    /// Bytes already in hand (a clipboard image), under this file name.
+    Bytes {
+        name: String,
+        data: std::sync::Arc<[u8]>,
+    },
+}
+
+impl Upload {
+    /// The file name it lands under.
+    pub fn name(&self) -> Option<String> {
+        match self {
+            Upload::File(path) => path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned()),
+            Upload::Bytes { name, .. } => Some(name.clone()),
+        }
+    }
 }
 
 /// A link that never connects: what scenes and tests start with until they put a core in.
@@ -102,6 +133,7 @@ impl Link for Offline {
     fn attach(&mut self, _params: TerminalAttach, _writer: terminal::Writer, _fresh: bool) {}
     fn send(&mut self, _address: &str, _out: Out) {}
     fn detach(&mut self, _address: &str) {}
+    fn put(&mut self, _address: &str, _uploads: Vec<Upload>) {}
 }
 
 /// An error that isn't the core's own, in the shape the model reads: the layout or call is

@@ -598,6 +598,64 @@ is needed.
   PTY size, so send RESIZE with the pane's current grid before or with it
   (`docs/research/herdr-core-protocol.md` §4, "Recommended viewer policy").
 
+
+### What herdr-frontend does (ticket 015)
+
+- **Keys** (`app/src/keys.rs`, `terminal::Vt::encode_key`). A pane's `on_key` and `on_key_up`
+  build the event from Rune's `tx.physical_key()` (W3C codes, the same names as
+  libghostty-vt's keys), `tx.key_base()` (the unshifted character) and `tx.key_repeat()`.
+  - Shift is consumed whenever it's held with text, and Option only when it typed the
+    layout's character. With `macos-option-as-alt` (Eli's, and the default) Rune hands an Option
+    chord over as the key it's on, and the encoder sends `ESC` and the key.
+  - The text Ghostty passes is the key's own ("c" for Ctrl+C), so a program with
+    modifyOtherKeys (Neovim) gets `CSI 27;5;99~`, and a plain shell gets `^C`.
+  - libghostty-vt leaves Ctrl with `[`, `-`, `I` and `M` to fixterms (`CSI 91;5u`) in the
+    legacy encoding. `encode_key` sends xterm's `ESC`, `^_`, Tab and Return instead, as Herdr app
+    does, unless modifyOtherKeys asked for the chord (`CSI 27;…`) or the kitty protocol is on.
+  - A release goes out only for a key whose press reached that terminal, and the encoder
+    reports it only under kitty flag 2. Chords with Cmd stay the app's. A key that types sends
+    the viewport back to the bottom and drops the selection, as in Ghostty.
+- **`terminal` key sends.** `send:` bindings (`alt-left` is `ESC b`, `cmd-backspace` is `^U`, …)
+  arrive as `Effect::Terminal`. Their text goes to the worker as raw input, in order with the
+  keys around it. The keymap (`docs/keys.md`) takes these keys before the pane hears them.
+- **IME.** The focused pane marks the cursor's cell `.ime_cursor()` (with
+  `.ime_option_as_alt_mode`), even while the program hides the cursor. `App::on_ime` keeps the
+  preedit on the viewer and draws it over the cell: underlined, on the terminal background.
+  A commit goes to the program as its bytes (Herdr app does the same). Keys pressed during a
+  composition are sent as `composing`, so they send nothing. A pane that loses focus, or a
+  window that goes to the background, drops its composition. Rune commits a composition that
+  was open as the window went to the background; that text is dropped, since only the
+  terminal in use may send DATA.
+- **Mouse** (`State::pane_drag`, `pane_hover`, `pane_wheel`, `pane_right_click`).
+  - While the program tracks the mouse and Shift isn't held, it gets presses, drags, releases
+    and motion (any-event mode only), all in device pixels from the grid's corner.
+  - Otherwise the primary button selects through the selection gestures
+    (`terminal/src/vt/select.rs`): Rune's click count picks cell, word or line, Shift extends,
+    and Alt makes a block. A drag held past the top or bottom edge scrolls a row every 15 ms on
+    the worker (`AUTOSCROLL_EVERY`). Releasing copies the selection (`copy_on_select`), and the
+    middle button pastes.
+  - Wheel: a notch is three lines (Ghostty's multiplier) and a trackpad scrolls a line per cell
+    height. The wheel goes to a tracking program as wheel buttons; on the alternate screen it
+    becomes arrow keys; otherwise it scrolls the scrollback.
+  - Right-clicks go to the program only when the terminal is labelled
+    `herdr.right-click=program`; otherwise they open the terminal menu (ticket 026).
+  - Only the terminal in use (the focused pane, in the window in front) sends its program
+    pointer DATA: DATA would apply a viewer's last reported size (§4 of the protocol doc). A
+    press takes its pane first, as typing does. The wheel over another pane only moves that
+    pane's scrollback, and hovering over it sends nothing.
+- **Paste and files.** `terminal.paste`, the root's `on_paste_content` and a middle click all
+  paste the same way.
+  - Copied files paste like a drop: their paths, quoted for the shell. A remote terminal gets
+    each file sent beside it first with `terminal.put`, on a thread, and its path there.
+  - Text pastes through `ghostty_terminal_paste`, bracketed when mode 2004 is on. An image alone
+    (and `terminal.paste_image`) becomes Ctrl+V for a local program, which reads the clipboard
+    itself. A remote terminal gets the image sent beside it as a PNG, and its path pasted.
+  - Parity with Herdr app, which never asks: text that could run commands is pasted with
+    `allow_unsafe`, with unsafe control bytes still replaced. A confirmation would come with the
+    dialogs (ticket 026).
+- **Focus.** Only the FOCUS frames of the viewer policy (`app/src/state.rs` `fit`) are sent.
+  Nothing writes `CSI I` or `CSI O`, even when the program turned on mode 1004.
+
 ## 4. Sizing
 
 ### Rules

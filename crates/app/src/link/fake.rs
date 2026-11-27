@@ -11,7 +11,7 @@ use herdr_shared::Round;
 use model::{Event, Request, TerminalUpdate, Token};
 use serde_json::Value;
 
-use super::{Link, News, Out};
+use super::{Link, News, Out, Upload};
 
 /// The fake core's state, open to the test that made it.
 #[derive(Default)]
@@ -31,6 +31,8 @@ pub struct FakeCore {
     pub sent: Vec<(String, Out)>,
     pub detached: Vec<String>,
     pub calls: Vec<Request>,
+    /// Every [`Link::put`]: the terminal and the files. Each lands at `/there/<file name>`.
+    pub puts: Vec<(String, Vec<Upload>)>,
     /// Documents written (`doc.set` that took).
     pub writes: usize,
     connected: bool,
@@ -342,5 +344,19 @@ impl Link for Fake {
         if core.writers.remove(address).is_some() {
             core.detached.push(address.to_owned());
         }
+    }
+
+    fn put(&mut self, address: &str, uploads: Vec<Upload>) {
+        let mut core = self.core();
+        let paths = uploads
+            .iter()
+            .filter_map(Upload::name)
+            .map(|name| format!("/there/{name}"))
+            .collect();
+        core.puts.push((address.to_owned(), uploads));
+        core.news.push_back(News::Put {
+            address: address.to_owned(),
+            paths,
+        });
     }
 }
