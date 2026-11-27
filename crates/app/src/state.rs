@@ -1023,11 +1023,41 @@ impl State {
         true
     }
 
-    /// Shows a toast.
+    /// Shows a toast. One about an agent on a machine the Agents list hides closes at once, so
+    /// that agent stays out of view (`cfg/mods/eli-toast/filter.js`).
     pub fn toast(&mut self, toast: Toast) {
+        if toast::about_hidden_machine(&toast, &self.shared.hidden_machines()) {
+            return;
+        }
         let due = self.toasts.push(toast, self.now);
         self.wake_at(due);
         self.redraw = true;
+    }
+
+    /// A click on a toast: it goes, then its action runs.
+    pub fn click_toast(&mut self, id: u64, tx: &mut Tx) {
+        let Some(toast) = self.toasts.dismiss(id) else {
+            return;
+        };
+        self.redraw = true;
+        match toast.action {
+            Some(action) => self.act(action, tx),
+            None => {
+                self.pump(tx.clock());
+                self.apply_ui(tx);
+            }
+        }
+    }
+
+    /// An agent's alert: its toast, unless the person is looking at it.
+    fn alert(&mut self, raise: &herdr_shared::Raise) {
+        let programs = &self.config.programs;
+        let toast = self
+            .model
+            .alert_toast(raise, |app| programs.of(Some(app), &[]).name);
+        if let Some(toast) = toast {
+            self.toast(toast);
+        }
     }
 
     fn not_yet(&mut self, action: &Action) {
@@ -1075,8 +1105,7 @@ impl State {
                 cursor,
                 query,
             } => self.picked(popup, how, cursor, query),
-            // Alerts are ticket 025's.
-            Effect::Alert(_) => {}
+            Effect::Alert(raise) => self.alert(&raise),
         }
     }
 

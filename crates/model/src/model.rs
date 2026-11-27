@@ -3,8 +3,9 @@
 //!
 //! After every step the model settles: it re-reads the machines' shown layouts, reconciles the
 //! view with them ([`View::reconcile`]), applies Eli's focus-after-close rule, feeds the jump
-//! list, marks what the person is looking at as seen, asks for the next document rounds, starts
-//! adoption and closed-pane lookups, and says when focus moved or the view needs saving.
+//! list, marks what the person is looking at as seen (and shares it as `herdr.seen`), asks for
+//! the next document rounds, starts adoption and closed-pane lookups, and says when focus moved
+//! or the view needs saving.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -15,9 +16,10 @@ use herdr_proto::methods::{
 use herdr_proto::types::MachineView;
 use herdr_proto::{Changes, CloseReason, RpcError, Terminal, TerminalSet};
 use herdr_shared::attention::Seen;
+use herdr_shared::{Alert, Raise};
 use herdr_shared::{
-    Attention, Axis, Content, DOCUMENT, EditError, Intent, Layout, Orphan, Report, Space, Tab,
-    adoption, closed, labels, local, machine_of, qualify,
+    Attention, Axis, Content, DOCUMENT, EditError, Intent, Layout, Orphan, Report, SeenTracker,
+    SeenWrite, Space, Tab, adoption, closed, labels, local, machine_of, qualify,
 };
 
 use crate::action::{Action, AppCommand, Direction};
@@ -27,7 +29,7 @@ use crate::geometry::{self, Geometry, Rect};
 use crate::keys::{Chord, Context, Key, Keymap, Lookup, Mods, Press};
 use crate::mode::{self, Mode, PREFIX_TIMEOUT};
 use crate::view::{Before, SeenRecord, View};
-use crate::world::{SpaceExt, World};
+use crate::world::{SpaceExt, World, tab_name};
 
 /// Eli's label on the review terminal (`feature-inventory.md` §13): its tab stays out of the
 /// tab bar and tab keys.
@@ -84,6 +86,9 @@ pub struct TerminalUpdate {
     pub removed: Vec<String>,
     /// `herdr-app` document versions announced, per machine.
     pub docs: Vec<(Option<String>, u64)>,
+    /// The highest `herdr.seen` that went by per terminal ([`Changes::seen`]), so this screen
+    /// knows which of its seen writes landed.
+    pub seen: BTreeMap<String, u64>,
 }
 
 impl TerminalUpdate {
@@ -109,6 +114,7 @@ impl TerminalUpdate {
                 .filter(|(key, _)| key.name == DOCUMENT)
                 .map(|(key, version)| (key.machine.clone(), *version))
                 .collect(),
+            seen: changes.seen.clone(),
         }
     }
 }
@@ -237,6 +243,8 @@ pub(crate) enum Pending {
         terminal: String,
         labelled: bool,
     },
+    /// A `herdr.seen` write; one that fails is tried again after the core's next news.
+    Seen(SeenWrite),
 }
 
 /// herdr-frontend's state.
@@ -247,6 +255,11 @@ pub struct Model {
     pub(crate) mode: Mode,
     pub(crate) keymap: Keymap,
     pub(crate) attention: Attention,
+    /// What this screen shares as `herdr.seen`.
+    pub(crate) seen: SeenTracker,
+    /// Terminals whose seen write failed: tried again after the core's next news, not in the
+    /// failure's own step, so a write that keeps failing can't loop.
+    pub(crate) seen_failed: BTreeSet<String>,
     /// Saved attention not yet matched to a listed agent.
     pub(crate) seen_restore: BTreeMap<String, SeenRecord>,
     pub(crate) home: String,
@@ -296,6 +309,8 @@ impl Model {
             mode: Mode::Normal,
             keymap: Keymap::eli(),
             attention: Attention::default(),
+            seen: SeenTracker::default(),
+            seen_failed: BTreeSet::new(),
             seen_restore,
             home: home.into(),
             now: 0.0,
@@ -681,6 +696,10 @@ impl Model {
                 self.drop_answers(fx);
                 self.pending.clear();
                 self.busy.clear();
+                // Seen writes under way may never be answered: the new listing decides, and
+                // what is on screen is looked at again.
+                self.seen = SeenTracker::default();
+                self.seen_failed.clear();
                 for (_, m) in self.world.machines_mut() {
                     m.mirror.reconnected();
                     m.refresh();
@@ -794,6 +813,9 @@ impl Model {
         }
         let live: BTreeSet<&str> = self.world.live().map(|t| t.address.as_str()).collect();
         self.not_closed.retain(|a| !live.contains(a.as_str()));
+        self.seen.echoed(&update.seen, update.resynced);
+        self.seen.retain(|a| live.contains(a));
+        self.seen_failed.clear();
         self.scan = true;
         self.navigator_requests(update.resynced);
 
@@ -803,12 +825,12 @@ impl Model {
         } else {
             BTreeSet::new()
         };
-        let world = &self.world;
+        let (world, tracker) = (&self.world, &self.seen);
         let seen = world.live().map(|t| Seen {
             terminal: t,
             in_pane: world.pane_of(&t.address).is_some(),
             looking: visible.contains(&t.address),
-            seen_turn: labels::seen(&t.labels),
+            seen_turn: tracker.seen_turn(t),
         });
         let raises = self.attention.update(seen);
         // Saved attention applies once its agent is listed with the same word.
@@ -834,6 +856,50 @@ impl Model {
             }
             fx.push(Effect::Alert(raise));
         }
+    }
+
+    /// The toast an alert shows (`app:src/window.rs` `alert`), or `None` when the person is
+    /// looking at that agent. Titled "<name> needs you" (an error) or "<name> finished", with
+    /// "<space> / <tab>" below, and a click goes to the agent. The name is the terminal's own,
+    /// else `program_name` of its status's `app`, else "An agent".
+    pub fn alert_toast(
+        &self,
+        raise: &Raise,
+        program_name: impl Fn(&str) -> String,
+    ) -> Option<Toast> {
+        if !raise.toast {
+            return None;
+        }
+        let record = self.world.terminal(&raise.terminal);
+        let name = record
+            .and_then(|t| t.name.clone())
+            .filter(|n| !n.is_empty())
+            .or_else(|| {
+                record
+                    .and_then(|t| t.status.as_ref())
+                    .map(|s| s.app.as_str())
+                    .filter(|a| !a.is_empty())
+                    .map(program_name)
+            })
+            .unwrap_or_else(|| "An agent".to_owned());
+        // Only an agent in a pane alerts (never a sub-agent), so its pane says where it is.
+        let world = &self.world;
+        let place = world.pane_of(&raise.terminal).and_then(|pane| {
+            let (space, tab) = (world.space_of(&pane)?, world.tab_of(&pane)?);
+            Some(format!(
+                "{} / {}",
+                world.space_name(space, &self.home),
+                tab_name(space, tab)
+            ))
+        });
+        let (title, level) = match raise.alert {
+            Alert::Blocked => (format!("{name} needs you"), Level::Error),
+            Alert::Done => (format!("{name} finished"), Level::Info),
+        };
+        Some(
+            Toast::new(level, title, place.unwrap_or_default())
+                .on_click(Action::FocusAgent(raise.terminal.clone())),
+        )
     }
 
     /// Whether the machine an id belongs to is reachable now.
@@ -923,8 +989,53 @@ impl Model {
                     self.not_closed.insert(address);
                 }
             }
+            Pending::Seen(write) => {
+                if result.is_err() {
+                    self.seen.failed(&write);
+                    self.seen_failed.insert(write.terminal.clone());
+                    if let Some(t) = self.world.terminal(&write.terminal) {
+                        let seen_turn = self.seen.seen_turn(t);
+                        if let Some(agent) = self.attention.get_mut(&write.terminal) {
+                            agent.set_turn(t.turn, seen_turn);
+                        }
+                    }
+                }
+            }
             // Exec calls answer with `Event::Executed`.
             Pending::Navigate { .. } => {}
+        }
+    }
+
+    /// Shares what the person is looking at as `herdr.seen` (`app:src/window.rs` `share_seen`):
+    /// the agents on screen while the window is in the foreground, once per turn while they stay
+    /// there, and only to raise the label. Each shows as seen at once, not after the core's echo.
+    /// One whose write just failed waits for the core's next news.
+    fn share_seen(&mut self, fx: &mut Effects) {
+        let looking: Vec<String> = if self.window_active {
+            self.visible_terminals()
+        } else {
+            Vec::new()
+        };
+        let (world, failed) = (&self.world, &self.seen_failed);
+        let writes = self.seen.look(
+            looking
+                .iter()
+                .filter(|a| !failed.contains(*a))
+                .filter_map(|a| world.terminal(a)),
+        );
+        for write in writes {
+            if let Some(agent) = self.attention.get_mut(&write.terminal) {
+                agent.set_turn(write.turn, Some(write.turn));
+            }
+            self.call(
+                fx,
+                Request::Label(TerminalLabel {
+                    terminal: write.terminal.clone(),
+                    labels: labels::for_seen(write.turn),
+                    ..Default::default()
+                }),
+                Some(Pending::Seen(write)),
+            );
         }
     }
 
@@ -1232,6 +1343,9 @@ impl Model {
             fx.push(Effect::Focus(focus));
         }
         if self.connected {
+            if self.listed {
+                self.share_seen(fx);
+            }
             self.pump(fx);
             if self.listed && std::mem::take(&mut self.scan) {
                 self.adopt_and_check(fx);

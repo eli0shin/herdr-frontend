@@ -131,6 +131,21 @@ impl Core {
         })
     }
 
+    /// A terminal's program reports a new status word at `turn`; the event the core posts. Its
+    /// labels stay.
+    pub fn report(&mut self, address: &str, state: StatusState, turn: u64) -> Event {
+        let t = self.terminals.get_mut(address).expect("a terminal");
+        t.status = Some(Status {
+            state,
+            ..t.status.clone().unwrap_or_default()
+        });
+        t.turn = turn;
+        Event::Terminals(TerminalUpdate {
+            terminals: vec![t.clone()],
+            ..Default::default()
+        })
+    }
+
     fn update(t: Terminal) -> Input {
         Event::Terminals(TerminalUpdate {
             terminals: vec![t],
@@ -190,7 +205,16 @@ impl Core {
                         }
                     }
                     let t = t.clone();
-                    (Ok(Box::new(t.clone())), Some(Core::update(t)))
+                    let seen = herdr_shared::labels::seen(&label.labels)
+                        .map(|turn| (t.address.clone(), turn))
+                        .into_iter()
+                        .collect();
+                    let event = Event::Terminals(TerminalUpdate {
+                        terminals: vec![t.clone()],
+                        seen,
+                        ..Default::default()
+                    });
+                    (Ok(Box::new(t)), Some(event.into()))
                 }
                 None => (Err(error(ErrorKind::NotFound, "no such terminal")), None),
             },

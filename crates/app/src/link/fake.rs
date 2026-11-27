@@ -161,9 +161,15 @@ impl FakeCore {
     }
 
     fn changed(&mut self, t: Terminal) {
+        // As a real core's batch says: the `herdr.seen` that went by.
+        let seen = herdr_shared::labels::seen(&t.labels)
+            .map(|turn| (t.address.clone(), turn))
+            .into_iter()
+            .collect();
         self.news
             .push_back(News::Event(Event::Terminals(TerminalUpdate {
                 terminals: vec![t],
+                seen,
                 ..Default::default()
             })));
     }
