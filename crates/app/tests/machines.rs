@@ -143,20 +143,22 @@ fn agents(rt: &Runtime<State>) -> Vec<String> {
         .collect()
 }
 
-fn hidden_in(dir: &Path) -> Value {
+/// Waits for the saver thread to write `want` as the hidden machines in the home's
+/// `shared.json` (it writes off the UI thread, so an older value may be there first).
+fn assert_hidden(dir: &Path, want: Value) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let file = dir.join("home").join(SHARED);
     loop {
-        if let Some(v) = std::fs::read_to_string(&file)
+        let hidden = std::fs::read_to_string(&file)
             .ok()
             .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-            && let Some(hidden) = v.get(model::agents::HIDDEN_MACHINES_KEY)
-        {
-            return hidden.clone();
+            .and_then(|v| v.get(model::agents::HIDDEN_MACHINES_KEY).cloned());
+        if hidden.as_ref() == Some(&want) {
+            return;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "shared.json never written"
+            "shared.json has {hidden:?}, not {want}"
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
@@ -244,7 +246,7 @@ fn the_machine_filter_lists_machines_and_space_hides_one_in_the_shared_state() {
     assert!(has(&rt, "am-only"));
     key(&mut rt, Key::Text(" ".into()));
     assert_eq!(list(&rt).popup, Popup::AgentMachines);
-    assert_eq!(hidden_in(&dir), serde_json::json!(["devbox"]));
+    assert_hidden(&dir, serde_json::json!(["devbox"]));
     assert!(!agents(&rt).contains(&"devbox/t1".to_owned()));
     // Its agents are still tracked: a remote agent keeps its time while hidden.
     assert!(rt.state.agents.changed.contains_key("devbox/t1"));
@@ -255,12 +257,12 @@ fn the_machine_filter_lists_machines_and_space_hides_one_in_the_shared_state() {
     letter(&mut rt, 'k');
     key(&mut rt, Key::Enter);
     assert_eq!(*rt.state.model.mode(), Mode::Normal);
-    assert_eq!(hidden_in(&dir), serde_json::json!(["devbox", "omarchy"]));
+    assert_hidden(&dir, serde_json::json!(["devbox", "omarchy"]));
 
     // "All machines" shows every one again: the key is null, as the mod stores it.
     prefixed(&mut rt, '/');
     key(&mut rt, Key::Enter);
-    assert_eq!(hidden_in(&dir), Value::Null);
+    assert_hidden(&dir, Value::Null);
     assert!(agents(&rt).contains(&"devbox/t1".to_owned()));
 
     // q closes.
@@ -281,11 +283,11 @@ fn the_header_button_opens_the_filter_and_a_click_toggles_a_row() {
         "a click keeps it open"
     );
     assert_eq!(list(&rt).cursor, 1);
-    assert_eq!(hidden_in(&dir), serde_json::json!([""]));
+    assert_hidden(&dir, serde_json::json!([""]));
     let every_local_agent_hidden = agents(&rt).iter().all(|a| a.starts_with("devbox/"));
     assert!(every_local_agent_hidden, "{:?}", agents(&rt));
     click(&mut rt, "am-1");
-    assert_eq!(hidden_in(&dir), Value::Null);
+    assert_hidden(&dir, Value::Null);
     key(&mut rt, Key::Escape);
     assert_eq!(*rt.state.model.mode(), Mode::Normal);
 }

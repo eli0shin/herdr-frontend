@@ -173,7 +173,6 @@ pub static FOLDER: Icon = Icon {
     ),
 };
 
-/// A menu item's icon (`cfg/mods/menu/main.js` `menuIcon`).
 /// Copying a command (Lucide `copy`).
 pub static COPY: Icon = Icon {
     name: "herdr-copy",
@@ -183,6 +182,7 @@ pub static COPY: Icon = Icon {
     ),
 };
 
+/// A menu item's icon (`cfg/mods/menu/main.js` `menuIcon`).
 pub fn menu_icon(icon: model::MenuIcon) -> &'static Icon {
     use model::MenuIcon as M;
     match icon {

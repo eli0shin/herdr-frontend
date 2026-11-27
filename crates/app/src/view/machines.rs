@@ -231,14 +231,18 @@ pub fn machines_view(s: &State, list: &ListPopup) -> El {
                         col()
                             .w_full()
                             .gap(2.0)
-                            .child(line_text(need.text, c.blocked))
+                            .child(line_text(need.text, c.blocked).wrap())
                             .child(
                                 line_text(need.command, c.foreground)
+                                    .wrap()
                                     .key(format!("machine-need-{i}-{n}")),
                             )
                     });
-                    let why = machines::why(v)
-                        .map(|w| line_text(w.to_owned(), c.dim).key(format!("machine-why-{i}")));
+                    let why = machines::why(v).map(|w| {
+                        line_text(w.to_owned(), c.dim)
+                            .wrap()
+                            .key(format!("machine-why-{i}"))
+                    });
                     row()
                         .grow(1.0)
                         .min_w(0.0)
@@ -293,7 +297,8 @@ pub fn machines_view(s: &State, list: &ListPopup) -> El {
                  disconnect.",
             )
             .font(s.ui_font(12.5, 400.0))
-            .w_full(),
+            .w_full()
+            .wrap(),
         )
         .child(list::view(s, "machines-rows", items, SHOWN, true))
         .children((others == 0).then(|| {
@@ -356,6 +361,7 @@ pub fn add_view(s: &State, list: &ListPopup) -> El {
                     .font(s.ui_font(12.0, 400.0))
                     .color(c.blocked)
                     .w_full()
+                    .wrap()
                     .pl(25.0)
                     .pb(4.0)
             });
@@ -396,7 +402,8 @@ pub fn add_view(s: &State, list: &ListPopup) -> El {
                  there keep running while your laptop sleeps.",
             )
             .font(s.ui_font(12.8, 400.0))
-            .w_full(),
+            .w_full()
+            .wrap(),
         )
         .child(overlay::field(
             s,
