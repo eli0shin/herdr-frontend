@@ -21,6 +21,9 @@ core: never break the shared layout documents, labels, or terminal state that He
   off-screen). Never port a workaround; build what it was working around, the way Ghostty or the
   intent does. Terminal look and behavior follow Eli's Ghostty config
   (`~/.dotfiles/home/.config/ghostty/config`). If unsure whether something is a workaround, ask.
+- Switching is instant (Eli's rule): switching spaces, tabs, panes, agents or terminals swaps
+  everything the switch changes at once, with no fade, slide or crossfade. When a question like
+  this comes up, the answer is instant. Animations unrelated to switching are out of this rule.
 - No native OS notifications and no sounds, ever. Attention shows in the app only (sidebar,
   markers, in-app toasts).
 - When you need "the latest" version of anything, look it up live without putting a version or
