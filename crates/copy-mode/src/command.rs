@@ -262,3 +262,16 @@ pub enum Command {
     /// `yy`, `Y`: count rows from the cursor's.
     YankLines { count: usize },
 }
+
+impl Command {
+    /// Whether it copies text.
+    pub fn yanks(&self) -> bool {
+        matches!(
+            self,
+            Command::Yank
+                | Command::YankMotion { .. }
+                | Command::YankObject { .. }
+                | Command::YankLines { .. }
+        )
+    }
+}

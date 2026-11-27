@@ -73,6 +73,9 @@ pub enum Output {
     Selection(String),
     /// The link a [`Terminal::open_link`] found.
     Link(Link),
+    /// What a copy-mode yank copied, for the clipboard. A yank that copies nothing sends
+    /// nothing and leaves its reason in [`Snapshot::copy`]; copy mode goes on.
+    Yanked(String),
     Event(Event),
 }
 
@@ -309,8 +312,8 @@ impl Terminal {
         self.send(Request::CopyStart);
     }
 
-    /// Runs a copy-mode command on the terminal's buffer. A yank comes out as
-    /// [`Output::Selection`].
+    /// Runs a copy-mode command on the terminal's buffer. A yank that copies text comes out
+    /// as [`Output::Yanked`].
     pub fn copy_mode(&self, command: copy_mode::Command) {
         self.send(Request::CopyRun(command));
     }
@@ -586,7 +589,7 @@ impl Worker {
             }
             Request::CopyRun(command) => {
                 if let Some(text) = self.vt.copy_run(&command) {
-                    self.out(Output::Selection(text));
+                    self.out(Output::Yanked(text));
                 }
                 true
             }

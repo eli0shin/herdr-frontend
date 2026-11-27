@@ -91,12 +91,13 @@ half-saved file. At start, a home without a key file gets the defaults written t
   | `f` `F` `t` `T` and a character, `;` `,` | Along the line, and again |
   | `%`, `{` `}` | The matching bracket; the previous or next empty line |
   | Ctrl-U/D, Ctrl-B/F or Page Up/Down, Ctrl-Y/E | Half a view, a view, a row: the view and the cursor |
-  | `/` `?` and a query, Enter; `n` `N`; `*` `#` | Search down or up (literal, ASCII letters either case), again, the word under the cursor |
+  | `/` `?` and a query, Enter (`3/foo`: the third match); `n` `N`; `*` `#` | Search down or up (literal, ASCII letters either case), again, the word under the cursor |
   | `m` and a letter; `'` or `` ` `` and a letter; `''` | Set a mark; go to its row or its cell; back before the last jump |
   | `v` or Space, `V`, Ctrl-V; `o` | Select characters, lines, a block (the same key again drops it); the other end |
-  | `iw` `aw` `iW` `aW` `ip` `ap` `i"` `a'` `` i` `` `i(` `a[` `i{` `a<` `ib` `aB` | Text objects, in a selection or after `y` |
+  | `iw` `aw` `iW` `aW` `ip` `ap` `i"` `a'` `` i` `` `i(` `a[` `i{` `a<` `ib` `aB` | Text objects, in a selection or after `y`; again in a selection, the next one grows it (`viwiw`, `va(a(`) |
   | `y`, Enter, Cmd+C | Copy the selection and leave (Enter with nothing selected just leaves) |
   | `yy` / `Y`, `y` and a motion or object (`yw`, `y$`, `yiw`, `y/foo`) | Copy rows, or what the motion or object covers, and leave |
+  | A yank that finds nothing (`y/nowhere`, `yiw` past a line's text) | Stays in copy mode and says why in the bar |
   | Esc | Cancel a key part-way through, else drop the selection, else leave |
   | `q`, Ctrl-C, a press beside the bar | Leave without copying |
 

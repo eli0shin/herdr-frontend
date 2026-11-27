@@ -74,16 +74,19 @@ impl Copy {
         for key in keys(text) {
             assert!(!self.left, "a key after copy mode ended: {text}");
             let step = self.vim.key(key);
+            let mut copied = false;
             for command in &step.commands {
                 let out = self.session.run(command, &mut self.buffer);
                 let height = self.buffer.view.1;
                 self.buffer.view = (self.session.top, height);
                 if let Some(range) = out.yank {
                     self.yanked = Some(self.text(range));
+                    copied = true;
                 }
                 self.message = out.message;
             }
-            self.left |= step.leave;
+            // A yank ends copy mode once something was copied, as the model hears it.
+            self.left |= step.leave || (step.yanks() && copied);
         }
         self
     }
@@ -404,9 +407,11 @@ fn search_forward_and_back_with_n_and_n_wrapping() {
     assert_eq!(c.message.as_deref(), Some("Pattern not found: nope"));
     assert_eq!(
         c.keys("2/e<CR>").at(),
-        (3, 0),
-        "a count before / is dropped"
+        (3, 9),
+        "a count before / picks the match"
     );
+    assert_eq!(c.keys("gg3/error<CR>").at(), (0, 0), "the third, wrapping");
+    assert_eq!(c.keys("gg2?<CR>").at(), (2, 0), "a count before ? too");
     // The prompt edits.
     assert_eq!(c.keys("gg/fx<BS>ine<CR>").at(), (1, 0));
     assert_eq!(c.keys("/abc<C-u>three<CR>").at(), (3, 6));
@@ -544,6 +549,60 @@ fn text_objects_select_words_quotes_brackets_and_paragraphs() {
 }
 
 #[test]
+fn repeating_a_text_object_grows_the_selection() {
+    let lines = ["one two three four", "", "f(a, (b), c)", "x", "", "y"];
+    let grown = |at: (usize, usize), keys: &str| {
+        let mut c = Copy::lines(80, &lines, at);
+        c.keys(keys);
+        let anchor = c.session.anchor.unwrap();
+        ((anchor.row, anchor.col), c.at())
+    };
+    // Blanks are a word to iw, as in Vim: the second iw takes them, the third the next word.
+    assert_eq!(grown((0, 5), "viw"), ((0, 4), (0, 6)));
+    assert_eq!(grown((0, 5), "viwiw"), ((0, 4), (0, 7)));
+    assert_eq!(grown((0, 5), "viwiwiw"), ((0, 4), (0, 12)));
+    assert_eq!(
+        grown((0, 5), "vawaw"),
+        ((0, 4), (0, 13)),
+        "aw: the next word and its blank"
+    );
+    assert_eq!(
+        grown((0, 9), "viwoiw"),
+        ((0, 7), (0, 12)),
+        "back from the other end"
+    );
+    // Brackets: one level out each time.
+    assert_eq!(grown((2, 6), "va("), ((2, 5), (2, 7)));
+    assert_eq!(grown((2, 6), "va(a("), ((2, 1), (2, 11)));
+    assert_eq!(grown((2, 6), "vi(i("), ((2, 2), (2, 10)));
+    assert_eq!(
+        grown((2, 6), "va(a(a("),
+        ((2, 1), (2, 11)),
+        "nothing further out"
+    );
+    // Paragraphs: the empty line after, then the next paragraph.
+    assert_eq!(grown((2, 0), "vipip"), ((2, 0), (4, 79)));
+    assert_eq!(grown((2, 0), "vipipip"), ((2, 0), (5, 79)));
+    // A selection on one row is where a paragraph starts, however many cells it spans.
+    let para = ["one two", "three four", "five six", "", "next"];
+    for keys in ["vip", "vlip", "vwip", "Vlip"] {
+        let mut c = Copy::lines(80, &para, (2, 0));
+        c.keys(keys);
+        let anchor = c.session.anchor.unwrap();
+        assert_eq!((anchor.row, c.at().0), (0, 2), "{keys}");
+    }
+    // One line soft-wrapped over two rows is still one line.
+    let mut c = Copy::lines(10, &["first", "aaaa bbbb cccc", "", "next"], (1, 5));
+    c.keys("vwip");
+    let anchor = c.session.anchor.unwrap();
+    assert_eq!((anchor.row, c.at().0), (0, 2), "vwip across the wrap");
+    // Quotes have nothing bigger: the selection stays.
+    let mut c = Copy::lines(80, &[r#"say "hi there" now"#], (0, 6));
+    c.keys("vi\"i\"");
+    assert_eq!(c.selected().as_deref(), Some("hi there"));
+}
+
+#[test]
 fn y_yanks_the_selection_and_leaves() {
     let lines = ["one two three", "four"];
     let mut c = Copy::lines(80, &lines, (0, 4));
@@ -611,7 +670,27 @@ fn y_with_a_motion_or_an_object_yanks_without_selecting() {
     assert_eq!(yank((0, 5), "yaw"), some("two"));
     assert_eq!(yank((0, 0), "y/fi<CR>"), some("one two three\nfour"));
     assert_eq!(yank((0, 0), "yl"), some("o"));
-    assert_eq!(yank((0, 0), "yh"), None, "nowhere to go: nothing");
+    // A yank that finds nothing stays in copy mode and says so.
+    let stays = |at: (usize, usize), keys: &str| {
+        let mut c = Copy::lines(80, &lines, at);
+        c.keys(keys);
+        assert!(!c.left, "{keys} stays");
+        (c.yanked, c.message)
+    };
+    let nothing = Some("Nothing to copy".to_owned());
+    assert_eq!(stays((0, 0), "yh"), (None, nothing.clone()));
+    assert_eq!(stays((2, 10), "yiw"), (None, nothing), "past the text");
+    assert_eq!(
+        stays((0, 0), "y/zzz<CR>"),
+        (None, Some("Pattern not found: zzz".to_owned()))
+    );
+    let mut c = Copy::lines(80, &lines, (2, 10));
+    c.keys("yiw0yiw");
+    assert_eq!(
+        (c.yanked.as_deref(), c.left),
+        (Some("six"), true),
+        "then one that works"
+    );
     // Esc drops the y.
     let mut c = Copy::lines(80, &lines, (0, 4));
     c.keys("y<Esc>w");

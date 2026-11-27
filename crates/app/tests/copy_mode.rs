@@ -251,6 +251,64 @@ fn text_objects_blocks_and_yanks_over_motions() {
 }
 
 #[test]
+fn a_yank_that_finds_nothing_stays_in_copy_mode_and_says_why() {
+    let (mut rt, _fake, board) = runtime();
+    board.set_text("before");
+    copy_mode(&mut rt);
+    keys(&mut rt, "y/zzz");
+    press(&mut rt, Key::Enter, NONE);
+    frames(&mut rt, 3);
+    assert!(
+        matches!(rt.state.model.mode(), Mode::Copy(_)),
+        "still copying"
+    );
+    assert_eq!(text(&rt, "copy-hint"), "Pattern not found: zzz");
+    assert_eq!(board.text().as_deref().map(String::as_str), Some("before"));
+
+    // At the prompt, past its text, there's no word under the cursor.
+    keys(&mut rt, "G$l");
+    keys(&mut rt, "yiw");
+    frames(&mut rt, 3);
+    assert!(
+        matches!(rt.state.model.mode(), Mode::Copy(_)),
+        "still copying"
+    );
+    assert_eq!(text(&rt, "copy-hint"), "Nothing to copy");
+    assert_eq!(board.text().as_deref().map(String::as_str), Some("before"));
+
+    // One that copies something leaves.
+    keys(&mut rt, "k$yiw");
+    frames(&mut rt, 3);
+    assert_eq!(*rt.state.model.mode(), Mode::Normal);
+    assert_eq!(board.text().as_deref().map(String::as_str), Some("100"));
+}
+
+#[test]
+fn a_count_before_a_search_and_a_repeated_text_object() {
+    let (mut rt, fake, board) = runtime();
+    copy_mode(&mut rt);
+    keys(&mut rt, "gg3/line 1");
+    press(&mut rt, Key::Enter, NONE);
+    assert_eq!(
+        cursor_line(&rt),
+        "line 12",
+        "the third after line 1: 10, 11, 12"
+    );
+
+    fake.output("t1", b"\x1bcf(a, (b), c)\r\n$ ");
+    frames(&mut rt, 3);
+    keys(&mut rt, "q");
+    copy_mode(&mut rt);
+    keys(&mut rt, "k0fbva(a(y");
+    frames(&mut rt, 3);
+    assert_eq!(
+        board.text().as_deref().map(String::as_str),
+        Some("(a, (b), c)"),
+        "a( again takes the pair around"
+    );
+}
+
+#[test]
 fn escape_drops_the_selection_then_leaves_and_q_ctrl_c_and_a_press_outside_leave() {
     let (mut rt, _fake, board) = runtime();
     board.set_text("before");

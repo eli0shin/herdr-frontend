@@ -213,6 +213,31 @@ fn started_at_the_bottom_output_leaves_the_view_and_the_cursor_where_they_are() 
 }
 
 #[test]
+fn a_yank_of_blanks_copies_nothing_and_leaves_no_selection_drawn() {
+    let mut vt = vt();
+    vt.write(b"text\r\n\r\n$ ");
+    vt.copy_start();
+    go(&mut vt, Motion::Up);
+    assert_eq!(vt.copy_run(&Command::YankLines { count: 1 }), None);
+    let s = vt.snapshot();
+    assert!(s.screen.iter().all(|r| r.selection.is_none()));
+    assert_eq!(s.copy.unwrap().message.as_deref(), Some("Nothing to copy"));
+    // A selection made before stays as it was.
+    go(&mut vt, Motion::Up);
+    vt.copy_run(&Command::Visual(Some(Visual::Chars)));
+    go(&mut vt, Motion::Down);
+    assert_eq!(vt.copy_run(&Command::YankLines { count: 1 }), None);
+    let s = vt.snapshot();
+    assert_eq!(
+        s.screen[0].selection,
+        Some((2, 79)),
+        "from the column kept from the prompt"
+    );
+    assert_eq!(s.screen[1].selection, Some((0, 2)));
+    assert_eq!(s.screen[2].selection, None);
+}
+
+#[test]
 fn search_jumps_to_matches_and_marks_them_on_the_rows() {
     let mut vt = vt();
     vt.write(&lines(1..=100));

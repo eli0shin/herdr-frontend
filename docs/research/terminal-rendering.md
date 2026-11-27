@@ -959,8 +959,13 @@ reference dies"). Never keep one across a `vt_write`.
 - **The selection** is the terminal's own (`OPT_SELECTION`; a rectangle for Ctrl-V), so the
   render state draws it in the rows. A yank installs the range and formats it as `selection_text`
   does (`UNWRAP`, `TRIM`): the same text Ghostty copies, so the blanks at the end of a copied line
-  are left out, even a space `yw` ends on. It comes out as `Output::Selection`, for the
-  clipboard.
+  are left out, even a space `yw` ends on. It comes out as `Output::Yanked`, for the clipboard,
+  and the app tells the model (`Event::CopyYanked`), which ends copy mode. A yank that copies
+  nothing (no match, no word past a line's text, only blanks) sends nothing: copy mode goes on
+  and the bar says why, as Vim stays put.
+- **Repeated text objects** grow a selection, as Vim's do: words and paragraphs take the next
+  ones past the cursor's end (`viwiw`, blanks counting as a word for `iw`), brackets go a level
+  out (`va(a(`, and `vi(` on one character takes the level around).
 - **Search** (`/`, `?`, `n`, `N`, `*`, `#`) uses a `ghostty_search` of its own, apart from the
   find bar's: literal, ASCII letters either case, as the find bar matches. `DATA_MATCHES` lists
   every match on the screen and in the scrollback; the engine takes the first after (or before)

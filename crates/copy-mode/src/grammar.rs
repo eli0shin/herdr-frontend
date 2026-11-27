@@ -4,8 +4,9 @@
 //! arrive and says at once whether copy mode goes on.
 //!
 //! Esc cancels a pending command, then drops the selection, then leaves; `q` and Ctrl-C leave;
-//! `y` and Enter yank the selection and leave (Enter with nothing selected just leaves), and so
-//! do `yy`, `Y`, `y{motion}` and `y{object}` (`feature-inventory.md` §16 and §22).
+//! `y` and Enter yank the selection (Enter with nothing selected just leaves), and so do `yy`,
+//! `Y`, `y{motion}` and `y{object}` (`feature-inventory.md` §16 and §22). A yank ends copy mode
+//! once the terminal has copied something ([`Step::yanks`]).
 
 use crate::command::{Command, FindKind, Motion, Object, Visual};
 
@@ -33,7 +34,9 @@ pub enum Key {
 pub struct Prompt {
     pub backward: bool,
     pub query: String,
-    /// A `y` before the `/`: the search is its motion.
+    /// The count typed before the `/`: which match to go to.
+    count: Option<usize>,
+    /// A `y` before the `/`: the search is its motion, with the counts it takes.
     yank: Option<Option<usize>>,
 }
 
@@ -58,7 +61,7 @@ enum Pending {
 pub struct Step {
     /// For the engine, in order.
     pub commands: Vec<Command>,
-    /// Copy mode ends, after the commands.
+    /// Copy mode ends, after the commands. A yank doesn't end it here: see [`Step::yanks`].
     pub leave: bool,
     /// Copy mode used the key. A key it doesn't know goes to the window's own bindings.
     pub taken: bool,
@@ -86,6 +89,18 @@ impl Step {
             taken: true,
             leave: true,
         }
+    }
+
+    /// A yank. Copy mode ends once the terminal says it copied something; a yank that finds
+    /// nothing (`y/nowhere`, `yiw` past a line's text) stays in copy mode and says why, as Vim
+    /// does.
+    fn yank(commands: Vec<Command>) -> Step {
+        Step::run(commands)
+    }
+
+    /// Whether the step yanks: copy mode then waits for the terminal's answer to end.
+    pub fn yanks(&self) -> bool {
+        self.commands.iter().any(Command::yanks)
     }
 }
 
@@ -182,10 +197,8 @@ impl Vim {
             }
             K::Ctrl('c') => return Step::leave(vec![]),
             K::Ctrl('v') => return self.select(Visual::Block),
-            K::Enter => {
-                let yank = self.visual.is_some().then_some(Command::Yank);
-                return Step::leave(yank.into_iter().collect());
-            }
+            K::Enter if self.visual.is_some() => return Step::yank(vec![Command::Yank]),
+            K::Enter => return Step::leave(vec![]),
             K::Char(c) => c,
             _ => return Step::default(),
         };
@@ -195,18 +208,19 @@ impl Vim {
             'v' | ' ' => self.select(Visual::Chars),
             'V' => self.select(Visual::Lines),
             'o' | 'O' if self.visual.is_some() => Step::run(vec![Command::SwapEnds]),
-            'y' if self.visual.is_some() => Step::leave(vec![Command::Yank]),
+            'y' if self.visual.is_some() => Step::yank(vec![Command::Yank]),
             'Y' if self.visual.is_some() => {
                 // Y in a character selection takes its whole rows, as in Vim.
                 let mut commands = Vec::new();
                 if self.visual == Some(Visual::Chars) {
+                    self.visual = Some(Visual::Lines);
                     commands.push(Command::Visual(Some(Visual::Lines)));
                 }
                 commands.push(Command::Yank);
-                Step::leave(commands)
+                Step::yank(commands)
             }
             'y' => match self.yank {
-                Some(before) => Step::leave(vec![Command::YankLines {
+                Some(before) => Step::yank(vec![Command::YankLines {
                     count: times(before, count).unwrap_or(1),
                 }]),
                 None => {
@@ -216,7 +230,7 @@ impl Vim {
                     Step::taken()
                 }
             },
-            'Y' => Step::leave(vec![Command::YankLines {
+            'Y' => Step::yank(vec![Command::YankLines {
                 count: times(self.yank.flatten(), count).unwrap_or(1),
             }]),
             'i' | 'a' if self.visual.is_some() || self.yank.is_some() => {
@@ -239,10 +253,12 @@ impl Vim {
                 None => Step::taken(),
             },
             '/' | '?' => {
+                let yank = self.yank.take().map(|before| times(before, count));
                 self.prompt = Some(Prompt {
                     backward: c == '?',
                     query: String::new(),
-                    yank: self.yank.take().map(|before| times(before, count)),
+                    count: if yank.is_some() { None } else { count },
+                    yank,
                 });
                 self.count = None;
                 self.typed.clear();
@@ -311,7 +327,7 @@ impl Vim {
                 self.count = None;
                 self.typed.clear();
                 if self.yank.take().is_some() {
-                    return Step::leave(vec![Command::YankObject {
+                    return Step::yank(vec![Command::YankObject {
                         object,
                         inner,
                         count,
@@ -340,7 +356,7 @@ impl Vim {
         if let Some(before) = self.yank.take()
             && !motion.scrolls()
         {
-            return Step::leave(vec![Command::YankMotion {
+            return Step::yank(vec![Command::YankMotion {
                 motion,
                 count: times(before, count),
             }]);
@@ -370,10 +386,10 @@ impl Vim {
                     backward: prompt.backward,
                 };
                 return match prompt.yank {
-                    Some(count) => Step::leave(vec![Command::YankMotion { motion, count }]),
+                    Some(count) => Step::yank(vec![Command::YankMotion { motion, count }]),
                     None => Step::run(vec![Command::Move {
                         motion,
-                        count: None,
+                        count: prompt.count,
                     }]),
                 };
             }

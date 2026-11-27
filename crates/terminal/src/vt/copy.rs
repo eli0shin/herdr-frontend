@@ -262,7 +262,8 @@ impl Vt {
     }
 
     /// Runs one copy-mode command: moves, selects, scrolls the view after the cursor. A yank
-    /// returns the text, as Ghostty copies a selection.
+    /// returns the text, as Ghostty copies a selection; one that copies nothing returns `None`
+    /// and says so in [`CopyView::message`].
     pub fn copy_run(&mut self, command: &Command) -> Option<String> {
         let mut copying = self.copying.take()?;
         let term = self.term;
@@ -346,7 +347,19 @@ impl Vt {
         }
         let range = out.yank?;
         self.install(range);
-        self.selection_text()
+        let text = self.selection_text();
+        if text.is_none() {
+            // Only blanks: Ghostty copies nothing for them. Copy mode goes on with its own
+            // selection, not the yank's range.
+            if let Some(copying) = self.copying.as_mut() {
+                copying.message = Some("Nothing to copy".into());
+            }
+            match selection {
+                Some(range) => self.install(range),
+                None => self.clear_selection(),
+            }
+        }
+        text
     }
 
     /// Leaves copy mode: the selection goes and, with history to scroll back from, the view

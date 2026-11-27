@@ -173,6 +173,9 @@ pub enum Event {
         rows: Vec<String>,
         order: Vec<String>,
     },
+    /// Copy mode's yank in this terminal copied text: copy mode ends. A yank that copies
+    /// nothing sends no event, and copy mode goes on.
+    CopyYanked(String),
     /// How many rows the open list popup shows now.
     PopupRows(usize),
     /// Where the open list popup's cursor goes: where it starts when it opens or its query
@@ -824,6 +827,11 @@ impl Model {
             Event::AgentOrder { rows, order } => {
                 self.published_rows = Some(rows);
                 self.published_order = Some(order);
+            }
+            Event::CopyYanked(address) => {
+                if matches!(&self.mode, Mode::Copy(copy) if copy.address == address) {
+                    self.close_mode(fx);
+                }
             }
             Event::PopupRows(rows) => {
                 if let Mode::Popup(mode::PopupState::List(list)) = &mut self.mode {

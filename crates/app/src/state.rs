@@ -2174,6 +2174,7 @@ impl State {
         let shown: Vec<String> = self.model.visible_terminals();
         let mut changed = false;
         let mut links = Vec::new();
+        let mut yanked = Vec::new();
         let rounds = if self.synchronous { 4 } else { 1 };
         for _ in 0..rounds {
             if self.synchronous {
@@ -2191,6 +2192,11 @@ impl State {
                 while let Ok(output) = viewer.terminal.output().try_recv() {
                     match output {
                         Output::Selection(text) => self.ui.copy = Some(text),
+                        // Copy mode copied text: to the clipboard, and copy mode ends.
+                        Output::Yanked(text) => {
+                            self.ui.copy = Some(text);
+                            yanked.push(viewer.address.clone());
+                        }
                         Output::Link(link) => links.push((viewer.address.clone(), link.target)),
                         Output::Reply(_) | Output::Input(_)
                             if viewer.attach == Attach::Attached =>
@@ -2223,6 +2229,10 @@ impl State {
                     changed = true;
                 }
             }
+        }
+        for address in yanked {
+            self.step(self.now, Event::CopyYanked(address));
+            changed = true;
         }
         // A Cmd-click found a link: the model decides what opens it.
         for (address, link) in links {
