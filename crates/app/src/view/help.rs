@@ -4,22 +4,25 @@
 //! `layout:eli` labelled by their section. Typing filters it; Esc, `cmd-/` again or a click
 //! outside closes it.
 //!
-//! The dialog draws the model's list popup: its query is the filter field's text, its cursor
-//! the highlighted row. Keys reach the model through the window's keymap first, so the field
-//! only types what the popup doesn't use.
+//! The dialog draws the model's list popup in the shared frame ([`crate::view::overlay`]): its
+//! query is the filter field's text, its cursor the highlighted row. Keys reach the model through
+//! the window's keymap first, so the field only types what the popup doesn't use. Unlike the
+//! pickers, the whole list scrolls (the wheel moves it; the cursor doesn't).
 
 use model::help::{self, HelpRow};
 use model::mode::ListPopup;
-use model::{Action, PopupAction};
-use rune::{El, ScrollSpec, col, el, row, text, text_input};
+use rune::{El, ScrollSpec, col, row, text};
 
 use crate::State;
+use crate::view::overlay::{self, Place};
 
 pub const WIDTH: f32 = 640.0;
 pub const HEIGHT: f32 = 520.0;
 
-/// The filter field's key: the popup's focus goes there.
-pub const FILTER: &str = "popup-filter";
+pub const PLACE: Place = Place::Dialog {
+    width: WIDTH,
+    height: Some(HEIGHT),
+};
 
 /// The rows the help shows for its query.
 pub fn shown(s: &State, list: &ListPopup) -> Vec<HelpRow> {
@@ -69,7 +72,7 @@ pub fn view(s: &State, list: &ListPopup) -> El {
                 .gap(8.0)
                 .items_center()
                 .radius(5.0)
-                .fill(if on { c.raised } else { c.chrome })
+                .fill(if on { c.raised } else { c.popover })
                 .child(
                     label(r.title.clone())
                         .color(c.foreground)
@@ -91,29 +94,11 @@ pub fn view(s: &State, list: &ListPopup) -> El {
                 .py(8.0),
         );
     }
-    let filter = text_input(&s.help_filter, s.ui_font(14.0, 400.0))
-        .single_line()
-        .key(FILTER)
-        .label("Filter keys")
-        .placeholder("Filter keys", c.muted)
-        .color(c.foreground)
+    col()
         .w_full()
-        .on_edit(|s: &mut State| &mut s.help_filter)
-        .on_input_change(|s: &mut State, tx| {
-            let query = s.help_filter.text.clone();
-            s.act(Action::Popup(PopupAction::Query(query)), tx);
-        });
-    let dialog = col()
-        .key("help")
-        .w(WIDTH)
-        .h(HEIGHT)
-        .radius(10.0)
-        .fill(c.chrome)
-        .border(1.0, c.border)
+        .h_full()
         .padding(12.0)
         .gap(10.0)
-        // A press inside stays inside.
-        .on_press(|_: &mut State| {})
         .child(
             row()
                 .w_full()
@@ -126,12 +111,9 @@ pub fn view(s: &State, list: &ListPopup) -> El {
                         .color(c.foreground),
                 )
                 .child(
-                    el().grow(1.0)
-                        .px(8.0)
-                        .py(5.0)
-                        .radius(6.0)
-                        .fill(c.raised)
-                        .child(filter),
+                    rune::el()
+                        .grow(1.0)
+                        .child(overlay::field(s, "Filter keys", None, None)),
                 ),
         )
         .child(
@@ -142,11 +124,5 @@ pub fn view(s: &State, list: &ListPopup) -> El {
                 .min_h(0.0)
                 .scroll(ScrollSpec::default())
                 .children(body),
-        );
-    el().key("help-scrim")
-        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-        .center()
-        .fill(rune::Color::BLACK.alpha(0.35))
-        .on_press_tx(|s: &mut State, tx| s.act(Action::Popup(PopupAction::Close), tx))
-        .child(dialog)
+        )
 }

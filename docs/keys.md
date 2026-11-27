@@ -70,8 +70,10 @@ half-saved file. At start, a home without a key file gets the defaults written t
   runs, is dropped (an unbound sequence is swallowed whole) or times out.
 - **Popup.** The file's `popup` keys come first, then the popup's own keys (§22 "Keys inside
   Eli's popups"), then one-key global bindings. `tab.close` and `pane.close` close the popup
-  instead. A context menu (the tab menu) reads ↑ and ↓ (wrapping), Enter and Esc, and holds every
-  other key.
+  instead. Lists read ↑/↓, Ctrl+P/N, Page Up/Down (ten rows, `popup.page_up` and
+  `popup.page_down`), Enter and Esc; the picker also Ctrl+D. A context menu (the tab menu, the
+  terminal menu) reads ↑ and ↓ (wrapping), Enter and Esc, and holds every other key; prompts and
+  confirm dialogs read Enter and Esc. What each popup lists is `docs/popups.md`.
 - **Copy.** The file's `copy` keys come first, then copy mode's own keys, then one-key global
   bindings.
 
@@ -79,9 +81,12 @@ half-saved file. At start, a home without a key file gets the defaults written t
 
 Every action goes through `model::step`. An action whose feature isn't built yet shows a
 "Not yet" toast that names the command. A popup or copy mode the window doesn't draw yet closes
-at once with that toast, so it can't hold the keyboard unseen. Today the window draws only the
-keys help. The terminal's sends, paste, copy and paste-image run in the focused terminal
-(`docs/research/terminal-rendering.md` §3); find and select all say "not yet" until ticket 019.
+at once with that toast, so it can't hold the keyboard unseen. The window draws the keys help,
+the palette, the pickers, the prompt and confirm dialogs, the menus, the settings dialog
+(`docs/popups.md`) and the sidebar's sort menu; the new-space folder picker, the PR finder, the
+machine filter and the agent-jump bar still say "not yet". The terminal's sends, paste, copy and paste-image run
+in the focused terminal (`docs/research/terminal-rendering.md` §3); find and select all say "not
+yet" until ticket 019.
 
 ## Keys help
 

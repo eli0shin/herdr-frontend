@@ -40,7 +40,7 @@ pub enum PopupState {
     Prompt(Prompt),
     /// A confirm dialog.
     Confirm(Confirm),
-    /// A context menu.
+    /// A context menu: the tab menu, the terminal menu.
     Menu(Menu),
 }
 
@@ -55,68 +55,22 @@ impl PopupState {
     }
 }
 
-/// What a context menu is for.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MenuTarget {
-    /// A tab pill, right-clicked.
-    Tab(String),
-}
-
-/// One row of a context menu: its label, what it runs, and the named action whose key it shows
-/// on its right (its first `global` binding, [`crate::help::hint`]).
-#[derive(Clone, Debug, PartialEq)]
-pub struct MenuItem {
-    pub label: String,
-    pub action: Action,
-    pub hint: Option<Action>,
-}
-
-/// A context menu (Herdr app's shipped `menu` mod, `cfg/mods/menu/main.js`): ↑/↓ move, wrapping,
-/// Enter runs the item under the cursor, Esc closes.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Menu {
-    pub target: MenuTarget,
-    pub items: Vec<MenuItem>,
-    pub cursor: usize,
-}
-
-impl Menu {
-    /// The tab menu: Rename, New tab (in the tab's space), Close (`menu/main.js` `items`, case
-    /// `"tab"`).
-    pub fn tab(tab: &str, space: &str) -> Menu {
-        let item = |label: &str, action, hint| MenuItem {
-            label: label.into(),
-            action,
-            hint: Some(hint),
-        };
-        Menu {
-            target: MenuTarget::Tab(tab.to_owned()),
-            items: vec![
-                item("Rename", Action::RenameTabOf(tab.into()), Action::TabRename),
-                item("New tab", Action::NewTabIn(space.into()), Action::TabNew),
-                item("Close", Action::CloseTabOf(tab.into()), Action::TabClose),
-            ],
-            cursor: 0,
-        }
-    }
-
-    pub(crate) fn step(&mut self, by: isize) {
-        let n = self.items.len() as isize;
-        if n > 0 {
-            self.cursor = (self.cursor as isize + by).rem_euclid(n) as usize;
-        }
-    }
-}
-
 /// A list popup's query and cursor. The popup's feature filters the rows and reports how many
-/// there are ([`crate::Event::PopupRows`]); the cursor moves over them, wrapping.
+/// there are ([`crate::Event::PopupRows`]) and, when it opens or the query changes, where the
+/// cursor starts ([`crate::Event::PopupCursor`]); the cursor moves over them, wrapping (the
+/// palette stops at its ends instead).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListPopup {
     pub popup: Popup,
     pub query: String,
     pub cursor: usize,
     pub rows: usize,
+    /// Up from the first row goes to the last, and down from the last to the first.
+    pub wrap: bool,
 }
+
+/// How far Page Up and Page Down move a list's cursor: the palette's ten shown rows.
+pub const PAGE: isize = 10;
 
 impl ListPopup {
     pub fn new(popup: Popup) -> ListPopup {
@@ -125,6 +79,8 @@ impl ListPopup {
             query: String::new(),
             cursor: 0,
             rows: 0,
+            // "Stops at the ends: wrapping jumps out of sight" (`cfg/frame/palette/main.js`).
+            wrap: popup != Popup::Palette,
         }
     }
 
@@ -134,7 +90,12 @@ impl ListPopup {
             return;
         }
         let n = self.rows as isize;
-        self.cursor = (self.cursor as isize + by).rem_euclid(n) as usize;
+        let to = self.cursor as isize + by;
+        self.cursor = if self.wrap && by.abs() == 1 {
+            to.rem_euclid(n)
+        } else {
+            to.clamp(0, n - 1)
+        } as usize;
     }
 
     pub(crate) fn set_rows(&mut self, rows: usize) {
@@ -175,6 +136,124 @@ pub struct Confirm {
     pub title: String,
     pub detail: String,
     pub then: Confirmed,
+}
+
+/// What a context menu is for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MenuTarget {
+    /// A tab pill, right-clicked.
+    Tab(String),
+    /// A pane's terminal, right-clicked.
+    Pane(String),
+}
+
+/// The icon a menu item shows (`cfg/mods/menu/main.js` `menuIcon`): Lucide glyphs, drawn by the
+/// window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MenuIcon {
+    /// `x`: closing.
+    Close,
+    /// `square-pen`: renaming.
+    Rename,
+    /// `plus`: something new.
+    New,
+    /// `panel-right`.
+    SplitRight,
+    /// `panel-bottom`.
+    SplitDown,
+    /// `square`: zoom.
+    Zoom,
+    /// `terminal`: anything else.
+    Terminal,
+}
+
+/// One row of a context menu: what it says, its icon, what it runs (in order), and the named
+/// action whose key it shows on its right (its first `global` binding, [`crate::help::hint`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MenuItem {
+    pub label: String,
+    pub icon: MenuIcon,
+    pub actions: Vec<Action>,
+    pub hint: Option<Action>,
+    /// A divider above it (before closing items, as the menu mod draws).
+    pub divided: bool,
+}
+
+impl MenuItem {
+    pub fn new(label: impl Into<String>, icon: MenuIcon, actions: Vec<Action>) -> MenuItem {
+        MenuItem {
+            label: label.into(),
+            icon,
+            divided: icon == MenuIcon::Close,
+            actions,
+            hint: None,
+        }
+    }
+
+    /// Shows `action`'s key on the right.
+    pub fn hint(mut self, action: Action) -> MenuItem {
+        self.hint = Some(action);
+        self
+    }
+}
+
+/// A context menu: its items and the one under the cursor. ↑/↓ move (wrapping), Enter runs the
+/// item, Esc closes (`cfg/mods/menu/main.js`). Built by [`crate::popups`]; any feature can open
+/// one with its own items, and the window draws them all alike.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Menu {
+    pub target: MenuTarget,
+    pub items: Vec<MenuItem>,
+    pub cursor: usize,
+    /// How wide it draws, in points: the opener's choice, as `openOverlay({width})` is.
+    pub width: f32,
+}
+
+impl Menu {
+    pub fn new(target: MenuTarget, items: Vec<MenuItem>, width: f32) -> Menu {
+        Menu {
+            target,
+            items,
+            cursor: 0,
+            width,
+        }
+    }
+
+    /// The tab menu: Rename, New tab (in the tab's space), Close, 200 wide as eli-tabs opens it
+    /// (`menu/main.js` `items`, case `"tab"`).
+    pub fn tab(tab: &str, space: &str) -> Menu {
+        Menu::new(
+            MenuTarget::Tab(tab.to_owned()),
+            vec![
+                MenuItem::new(
+                    "Rename",
+                    MenuIcon::Rename,
+                    vec![Action::RenameTabOf(tab.into())],
+                )
+                .hint(Action::TabRename),
+                MenuItem::new(
+                    "New tab",
+                    MenuIcon::New,
+                    vec![Action::NewTabIn(space.into())],
+                )
+                .hint(Action::TabNew),
+                MenuItem::new(
+                    "Close",
+                    MenuIcon::Close,
+                    vec![Action::CloseTabOf(tab.into())],
+                )
+                .hint(Action::TabClose),
+            ],
+            200.0,
+        )
+    }
+
+    pub(crate) fn step(&mut self, by: isize) {
+        let n = self.items.len() as isize;
+        if n > 0 {
+            self.cursor = (self.cursor as isize + by).rem_euclid(n) as usize;
+        }
+    }
 }
 
 /// What copy mode has selected.
@@ -255,6 +334,8 @@ pub fn popup_key(state: &PopupState, chord: Chord) -> Option<Action> {
         (Key::Down, Mods::NONE) => list(P::Down),
         (Key::Char('p'), CTRL) => list(P::Up),
         (Key::Char('n'), CTRL) => list(P::Down),
+        (Key::PageUp, Mods::NONE) => list(P::PageUp),
+        (Key::PageDown, Mods::NONE) => list(P::PageDown),
         (Key::Char('d'), CTRL) if popup.popup == Popup::Picker => list(P::CloseItem),
         _ if popup.popup == Popup::AgentMachines => match (key, mods) {
             (Key::Char('k'), Mods::NONE) => list(P::Up),
@@ -435,6 +516,63 @@ mod tests {
         assert_eq!(menu.cursor, 2, "wraps");
         menu.step(1);
         assert_eq!(menu.cursor, 0);
+    }
+
+    #[test]
+    fn menus_read_arrows_enter_and_escape_and_wrap() {
+        let item = |l: &str| MenuItem::new(l, MenuIcon::Terminal, vec![]);
+        let mut menu = Menu::new(
+            MenuTarget::Pane("p1".into()),
+            vec![item("a"), item("b"), item("c")],
+            200.0,
+        );
+        let s = PopupState::Menu(menu.clone());
+        assert_eq!(
+            popup_key(&s, chord("up")),
+            Some(Action::Popup(PopupAction::Up))
+        );
+        assert_eq!(
+            popup_key(&s, chord("down")),
+            Some(Action::Popup(PopupAction::Down))
+        );
+        assert_eq!(
+            popup_key(&s, chord("enter")),
+            Some(Action::Popup(PopupAction::Choose))
+        );
+        assert_eq!(
+            popup_key(&s, chord("escape")),
+            Some(Action::Popup(PopupAction::Close))
+        );
+        assert_eq!(popup_key(&s, chord("j")), None);
+        menu.step(-1);
+        assert_eq!(menu.cursor, 2);
+        menu.step(1);
+        assert_eq!(menu.cursor, 0);
+        assert!(MenuItem::new("Close", MenuIcon::Close, vec![]).divided);
+        assert!(!item("x").divided);
+    }
+
+    #[test]
+    fn lists_page_by_ten_and_the_palette_stops_at_its_ends() {
+        assert_eq!(
+            popup_key(&list(Popup::Palette), chord("pagedown")),
+            Some(Action::Popup(PopupAction::PageDown))
+        );
+        let mut palette = ListPopup::new(Popup::Palette);
+        palette.set_rows(15);
+        palette.step(-1);
+        assert_eq!(palette.cursor, 0, "no wrap");
+        palette.step(PAGE);
+        palette.step(PAGE);
+        assert_eq!(palette.cursor, 14);
+        palette.step(1);
+        assert_eq!(palette.cursor, 14);
+        let mut spaces = ListPopup::new(Popup::SpacePicker);
+        spaces.set_rows(15);
+        spaces.step(-1);
+        assert_eq!(spaces.cursor, 14, "wraps one at a time");
+        spaces.step(PAGE);
+        assert_eq!(spaces.cursor, 14, "a page stops at the end");
     }
 
     #[test]

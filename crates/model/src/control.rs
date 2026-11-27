@@ -514,7 +514,7 @@ impl Model {
             pane: fresh_id_on("p", m),
             focus,
         };
-        self.launch(machine, &folder, launch, Some(id), fx);
+        self.launch(machine, &folder, launch, Vec::new(), Some(id), fx);
         None
     }
 

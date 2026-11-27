@@ -32,6 +32,17 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-agents-grouped", shell_agents_grouped),
     ("shell-sort-menu", shell_sort_menu),
     ("shell-agents-empty", shell_agents_empty),
+    ("shell-palette", shell_palette),
+    ("shell-palette-typed", shell_palette_typed),
+    ("shell-picker", shell_picker),
+    ("shell-picker-earlier", shell_picker_earlier),
+    ("shell-space-picker", shell_space_picker),
+    ("shell-space-picker-typed", shell_space_picker_typed),
+    ("shell-prompt", shell_prompt),
+    ("shell-confirm", shell_confirm),
+    ("shell-tab-menu", shell_tab_menu),
+    ("shell-terminal-menu", shell_terminal_menu),
+    ("shell-settings", shell_settings),
 ];
 
 /// The app on the demo core ([`fixtures::demo_core`]): the sidebar, the tab strip with `work`
@@ -82,7 +93,7 @@ fn shell_core_down(s: &mut State) {
 fn shell_keys_help(s: &mut State) {
     shell(s);
     s.step(0.0, model::Action::Open(model::Popup::Help));
-    s.help_filter.text = "pane".into();
+    s.popup_field.text = "pane".into();
     s.step(
         0.0,
         model::Action::Popup(model::PopupAction::Query("pane".into())),
@@ -153,6 +164,102 @@ fn shell_sort_menu(s: &mut State) {
 /// The demo core, whose terminals report no status: the list says how agents show up.
 fn shell_agents_empty(s: &mut State) {
     shell(s);
+}
+
+/// The busy core ([`fixtures::busy_core`]): agents in other spaces, for the pickers.
+fn busy(s: &mut State) {
+    s.connect(Box::new(fixtures::busy_core()));
+    s.settle();
+}
+
+/// Types `text` into the open popup's field, as the field reports it.
+fn type_in(s: &mut State, text: &str) {
+    s.popup_field = rune::TextEdit::new(text);
+    s.step(
+        0.0,
+        model::Action::Popup(model::PopupAction::Query(text.into())),
+    );
+}
+
+/// The palette, empty: recent commands (zoom pane) first, then every group.
+fn shell_palette(s: &mut State) {
+    shell(s);
+    s.step(
+        0.0,
+        model::Action::FromPalette(Box::new(model::Action::PaneZoom)),
+    );
+    s.step(
+        0.0,
+        model::Action::FromPalette(Box::new(model::Action::PaneZoom)),
+    );
+    s.step(0.0, model::Action::Open(model::Popup::Palette));
+}
+
+/// The palette with "split" typed.
+fn shell_palette_typed(s: &mut State) {
+    shell(s);
+    s.step(0.0, model::Action::Open(model::Popup::Palette));
+    type_in(s, "split");
+}
+
+/// The picker on the busy core: the space that needs you first, the quiet one folded.
+fn shell_picker(s: &mut State) {
+    busy(s);
+    s.step(0.0, model::Action::Open(model::Popup::Picker));
+}
+
+/// The picker with its quiet spaces unfolded.
+fn shell_picker_earlier(s: &mut State) {
+    busy(s);
+    s.step(0.0, model::Action::Open(model::Popup::Picker));
+    // The "earlier" row: past the busy spaces' five tabs.
+    s.step(0.0, model::Event::PopupCursor(5));
+    s.step(0.0, model::Action::Popup(model::PopupAction::Choose));
+}
+
+/// The space picker on the busy core, on the shown space.
+fn shell_space_picker(s: &mut State) {
+    busy(s);
+    s.step(0.0, model::Action::Open(model::Popup::SpacePicker));
+}
+
+/// The space picker with "re" typed: names first.
+fn shell_space_picker_typed(s: &mut State) {
+    busy(s);
+    s.step(0.0, model::Action::Open(model::Popup::SpacePicker));
+    type_in(s, "re");
+}
+
+/// Renaming the `work` tab: its name in the field, selected.
+fn shell_prompt(s: &mut State) {
+    shell(s);
+    s.step(0.0, model::Action::TabRename);
+}
+
+/// Closing the space asks first.
+fn shell_confirm(s: &mut State) {
+    shell(s);
+    s.step(0.0, model::Action::SpaceClose);
+}
+
+/// The tab menu, opened by a right-click on the tab strip.
+fn shell_tab_menu(s: &mut State) {
+    shell(s);
+    s.menu_at = Some((420.0, 30.0));
+    s.step(0.0, model::Action::TabMenu("tb-work".into()));
+}
+
+/// The terminal menu over the Neovim pane.
+fn shell_terminal_menu(s: &mut State) {
+    shell(s);
+    s.menu_at = Some((560.0, 220.0));
+    s.step(0.0, model::Action::TerminalMenu("pn-1".into()));
+}
+
+/// The settings dialog.
+fn shell_settings(s: &mut State) {
+    shell(s);
+    s.step(0.0, model::Action::Open(model::Popup::Settings));
 }
 
 /// `fixture` alone in a focused pane: what the Ghostty pixel diff compares, at Ghostty's

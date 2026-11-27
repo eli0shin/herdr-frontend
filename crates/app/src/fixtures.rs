@@ -357,3 +357,73 @@ pub fn agents_core() -> crate::link::Fake {
     }
     fake
 }
+
+/// A Pi reporting `state`, run as `pi`.
+fn pi_agent(address: &str, state: herdr_proto::StatusState) -> herdr_proto::Terminal {
+    herdr_proto::Terminal {
+        argv: vec!["pi".into()],
+        ..agent(address, "pi", state, "")
+    }
+}
+
+/// The demo core with work in other spaces, for the pickers: `dotfiles` holds a Pi that needs
+/// you, `repos` a working Pi with a sub-agent and a finished one, and `scratch` is quiet.
+/// The demo's `herdr-frontend` space stays shown.
+pub fn busy_core() -> crate::link::Fake {
+    use herdr_proto::StatusState;
+    let demo = demo_core();
+    let mut doc = demo.core().docs[&None].0.clone();
+    let space = |id: &str, name: &str, folder: &str, tabs: Vec<serde_json::Value>| serde_json::json!({"id": id, "name": name, "folder": folder, "tabs": tabs});
+    let one = |tab_id: &str, name: &str, pane_id: &str, address: &str| {
+        tab(
+            tab_id,
+            name,
+            split(tab_id, "row", vec![pane(pane_id, address)]),
+        )
+    };
+    let spaces = doc["spaces"].as_array_mut().expect("the demo's spaces");
+    spaces.push(space(
+        "sp-2",
+        "dotfiles",
+        "/tmp/dotfiles",
+        vec![
+            one("tb-review", "review the stow", "pn-a1", "a1"),
+            one("tb-dot", "shell", "pn-5", "t5"),
+        ],
+    ));
+    spaces.push(space(
+        "sp-3",
+        "repos",
+        "/tmp/repos",
+        vec![
+            one("tb-fix", "fix the rebase", "pn-a2", "a2"),
+            one("tb-docs", "docs", "pn-a3", "a3"),
+        ],
+    ));
+    spaces.push(space(
+        "sp-4",
+        "scratch",
+        "/tmp/scratch",
+        vec![one("tb-scratch", "", "pn-6", "t6")],
+    ));
+    let mut terminals: Vec<herdr_proto::Terminal> =
+        demo.core().terminals.values().cloned().collect();
+    let mut kid = pi_agent("a4", StatusState::Working);
+    kid.parent = Some("a2".into());
+    kid.keep = false;
+    terminals.extend([
+        pi_agent("a1", StatusState::Blocked),
+        terminal("t5", COLS, ROWS),
+        pi_agent("a2", StatusState::Working),
+        pi_agent("a3", StatusState::Done),
+        kid,
+        terminal("t6", COLS, ROWS),
+    ]);
+    let fake = crate::link::Fake::new(doc, terminals);
+    {
+        let mut core = fake.core();
+        let screens = demo.core().screens.clone();
+        core.screens = screens;
+    }
+    fake
+}

@@ -128,7 +128,8 @@ fn group(action: &Action, context: Context) -> &'static str {
         Context::Global | Context::Layout => {}
     }
     match action {
-        Action::SpaceNext
+        Action::SpaceNew(_)
+        | Action::SpaceNext
         | Action::SpacePrev
         | Action::SpaceSelect(_)
         | Action::SpaceRename
@@ -206,6 +207,19 @@ pub fn title(action: &Action) -> String {
         Action::TabRename => "Rename tab".into(),
         Action::JumpBack => "Back in the tab jump list".into(),
         Action::JumpForward => "Forward in the tab jump list".into(),
+        Action::SpaceNew(None) => "New space".into(),
+        Action::SpaceNew(Some(machine)) => format!("New space on {machine}"),
+        Action::ShowSpace(_) => "Go to a space".into(),
+        Action::FromPalette(action) => title(action),
+        Action::RenamePaneOf(_) => "Rename pane".into(),
+        Action::RightClicks { to_program, .. } => if *to_program {
+            "Send right-clicks to the pane"
+        } else {
+            "Use the right-click menu"
+        }
+        .into(),
+        Action::Park(_) => "Send back to its parent".into(),
+        Action::EditFile(_) => "Edit a settings file".into(),
         Action::SpaceNext => "Next space".into(),
         Action::SpacePrev => "Previous space".into(),
         Action::SpaceSelect(n) => format!("Space {n}"),
@@ -237,6 +251,8 @@ pub fn title(action: &Action) -> String {
             PopupAction::Close => "Close",
             PopupAction::Toggle => "Show or hide",
             PopupAction::CloseItem => "Close the selected item",
+            PopupAction::PageUp => "Page up",
+            PopupAction::PageDown => "Page down",
             PopupAction::Query(_) => "Filter",
         }
         .into(),

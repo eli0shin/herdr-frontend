@@ -78,6 +78,7 @@ pub fn live_with(link: Live, home: Option<Home>, harness: bool) -> App<State> {
             let tap = tap.clone();
             move || {
                 let mut s = State::new(Box::new(link::Offline), home, keeper);
+                s.reveal = Some(reveal);
                 if let Some(tap) = tap {
                     s.serve_harness(tap);
                 }
@@ -94,6 +95,13 @@ pub fn live_with(link: Live, home: Option<Home>, harness: bool) -> App<State> {
             .full_screen(saved.full_screen);
     }
     app
+}
+
+/// Shows a folder in Finder, without waiting for it.
+fn reveal(dir: &std::path::Path) {
+    if let Err(e) = std::process::Command::new("open").arg(dir).spawn() {
+        eprintln!("herdr-frontend: open {}: {e}", dir.display());
+    }
 }
 
 /// The app's spec: its title, size, state, view, scenes and core hooks.
@@ -120,18 +128,9 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     } else {
         view::shell::view(s, cx)
     };
-    let popup = match s.model.mode() {
-        model::Mode::Popup(model::PopupState::List(list)) if list.popup == model::Popup::Help => {
-            Some(view::help::view(s, list))
-        }
-        model::Mode::Popup(model::PopupState::List(list))
-            if list.popup == model::Popup::SortMenu && s.sidebar.shown().is_some() =>
-        {
-            Some(view::sidebar::sort_menu(s, list))
-        }
-        _ => None,
-    };
+    let popup = view::popup::view(s);
     let toasts = toast::view(s);
+    let zoom = s.zoom();
     el().key("window")
         .w_full()
         .h_full()
@@ -140,6 +139,12 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .on_key_up(|s: &mut State, ev, tx| {
             let pane = s.model.focused_pane();
             tx.focused().is_none() && pane.is_some_and(|pane| s.released(&pane, ev, tx))
+        })
+        // Where a right-click was: a menu it opens opens there.
+        .on_any_press(move |s: &mut State, button, p, _| {
+            if button == rune::PointerButton::Secondary {
+                s.menu_at = Some((p.window_x / zoom, p.window_y / zoom));
+            }
         })
         .child(content)
         .children(popup)
