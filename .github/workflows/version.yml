@@ -6,10 +6,12 @@ on:
 
 permissions: {}
 
-# One run at a time, and never cancelled halfway through tagging a release.
+# One run at a time, each push's in turn. None is cancelled: a run still waiting can be the one
+# that tags a merged version PR, and a later run never tags that version.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   # With changesets on main, opens or updates the "chore: version packages" PR. Once that PR

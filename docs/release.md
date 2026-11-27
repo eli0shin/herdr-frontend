@@ -69,10 +69,16 @@ and the other scripts don't count. A PR that touches those files but changes not
    the three files agree, then runs `changeset git-tag`, which tags `v<version>` (skipped when the
    tag exists). The action pushes the tag and creates the GitHub Release `v<version>`, its notes
    that version's `CHANGELOG.md` entry.
+
+   A run only tags when `main` has no changesets. So merge the version PR after the run for the
+   latest push to `main` has updated it. If a changeset lands on `main` first, the run after the
+   merge opens a new version PR instead, and the merged version is never tagged.
 5. The same run then calls `release-artifacts.yml` with the tag (below).
 
-`version.yml` runs one at a time, so two pushes to `main` can't race on the version branch or a
-tag. A newer push replaces a run that is still waiting, never one in progress.
+`version.yml` runs one at a time, each push's in turn (`queue: max`), so two pushes to `main`
+can't race on the version branch or a tag. No run waiting is cancelled either: the run after a
+version PR merges is the only one that tags that version, since a later run tags only the version
+`package.json` has then.
 
 ## Artifacts
 
