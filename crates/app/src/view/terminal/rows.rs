@@ -78,13 +78,23 @@ pub(super) struct CellColors {
     pub bg: Option<Rgb>,
 }
 
+/// What a cell is marked as, in Ghostty's order of precedence: the selection over a find hit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Mark {
+    None,
+    Selection,
+    /// A find hit; `true` for the selected one.
+    Hit(bool),
+}
+
 /// A cell's colors. Inverse swaps foreground and background, defaults included, as Ghostty's
 /// `rebuildRow` does. A selected cell takes the selection background; with no selection
 /// foreground it keeps its own ink, as Herdr app does (`herdr-app:src/vt.rs:1647`). With no
-/// selection background it's Ghostty's: the default background on the default foreground.
+/// selection background it's Ghostty's: the default background on the default foreground. A
+/// find hit takes Ghostty's search colors.
 pub(super) fn cell_colors(
     cell: &terminal::Cell,
-    selected: bool,
+    mark: Mark,
     colors: &Colors,
     look: &Look,
 ) -> CellColors {
@@ -95,7 +105,18 @@ pub(super) fn cell_colors(
         bg = Some(fg);
         fg = swapped;
     }
-    if selected {
+    if let Mark::Hit(selected) = mark {
+        let (text, under) = if selected {
+            look.search_selected
+        } else {
+            look.search
+        };
+        return CellColors {
+            fg: text,
+            bg: Some(under),
+        };
+    }
+    if mark == Mark::Selection {
         match look.selection_background {
             Some(selection) => {
                 bg = Some(selection);
@@ -141,7 +162,17 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
         let selected = row
             .selection
             .is_some_and(|(start, end)| (start..=end).contains(&at));
-        let resolved = cell_colors(cell, selected, colors, look);
+        let hit = row
+            .matches
+            .iter()
+            .find(|m| (m.start..=m.end).contains(&at))
+            .map(|m| m.selected);
+        let mark = match (selected, hit) {
+            (true, _) => Mark::Selection,
+            (false, Some(chosen)) => Mark::Hit(chosen),
+            (false, None) => Mark::None,
+        };
+        let resolved = cell_colors(cell, mark, colors, look);
 
         // Background runs, merged while the color holds.
         match (&mut fill, resolved.bg) {
@@ -167,7 +198,17 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
         // a curl or dots start again in each cell. Invisible text draws none, as in xterm and
         // Ghostty.
         if !cell.flags.contains(CellFlags::INVISIBLE) {
-            decorations(cell, fg, x0, face, &mut built.boxes);
+            // The link under the pointer while Cmd is held is underlined, twice if it already
+            // was once, as Ghostty marks it.
+            let hovered = row
+                .link
+                .is_some_and(|(start, end)| (start..=end).contains(&col));
+            let underline = match cell.underline {
+                Underline::Single if hovered => Underline::Double,
+                _ if hovered => Underline::Single,
+                own => own,
+            };
+            decorations(cell, underline, fg, x0, face, &mut built.boxes);
         }
 
         let text = cell.text.as_str();
@@ -410,22 +451,23 @@ fn push_sprite(glyph: &sprite::Sprite, x0: i32, color: Color, boxes: &mut Vec<(A
 }
 
 /// Underline, strikethrough and overline sprites for one cell, as Ghostty's `rebuildRow` adds
-/// them: the underline in the underline color (the foreground's if unset), the others in the
-/// foreground, all at the cell's faint opacity.
+/// them: the underline (`underline`, the cell's own or a hovered link's) in the underline color
+/// (the foreground's if unset), the others in the foreground, all at the cell's faint opacity.
 fn decorations(
     cell: &terminal::Cell,
+    underline: Underline,
     fg: Color,
     x0: i32,
     face: &Face,
     boxes: &mut Vec<(AlphaBox, Color)>,
 ) {
     let m = &face.metrics;
-    if cell.underline != Underline::None {
+    if underline != Underline::None {
         let color = cell
             .underline_color
             .map_or(fg, |c| super::look::color(c).alpha(fg.a));
         push_sprite(
-            &sprite::decoration(Kind::Underline(cell.underline), m),
+            &sprite::decoration(Kind::Underline(underline), m),
             x0,
             color,
             boxes,
@@ -489,7 +531,7 @@ type CachedRow = (Arc<Row>, Rc<GridRow>, Rc<[AtlasCell]>, Spill);
 #[derive(Clone, PartialEq)]
 struct CacheKey {
     face: FaceKey,
-    look: [u32; 6],
+    look: [u32; 10],
     foreground: Rgb,
     background: Rgb,
 }
@@ -613,6 +655,78 @@ mod tests {
             contrasted(Rgb::new(0, 0, 0), Rgb::new(255, 255, 255), 3.0),
             Rgb::new(0, 0, 0)
         );
+    }
+
+    #[test]
+    fn find_hits_take_ghosttys_search_colors_under_the_selection() {
+        let snapshot = screen("a \x1b[41mfoo\x1b[0m foo");
+        let mut row = (*snapshot.screen[0]).clone();
+        row.matches = vec![
+            terminal::Match {
+                start: 2,
+                end: 4,
+                selected: false,
+            },
+            terminal::Match {
+                start: 6,
+                end: 8,
+                selected: true,
+            },
+        ];
+        // The selection covers the last cell of the selected hit.
+        row.selection = Some((8, 8));
+        let look = arctic().1;
+        let built = build(&row, &snapshot.colors, &face(), &look);
+        let yellow = rgb(0xffe082);
+        let peach = rgb(0xf2a57e);
+        let selection = color(look.selection_background.unwrap());
+        assert_eq!(
+            built.fills,
+            [(2, 5, yellow), (6, 8, peach), (8, 9, selection)],
+            "the program's red background gives way to the hit"
+        );
+        // Both hits' text is black (the space between doesn't break the run); the selected
+        // cell keeps its own ink.
+        let black = Some(rgb(0x000000));
+        assert_eq!(
+            built
+                .spans
+                .iter()
+                .map(|s| (s.start, s.color))
+                .collect::<Vec<_>>()[1..3],
+            [(2, black), (8, Some(rgb(FG)))]
+        );
+    }
+
+    /// A hovered link is underlined as Ghostty marks it: once, or twice where the program
+    /// already underlined it (Pi's links are SGR 4 and OSC 8), in the cell's own ink.
+    #[test]
+    fn a_hovered_link_is_underlined_once_or_twice() {
+        let snapshot = screen("ab \x1b[4mcd\x1b[0m");
+        let mut row = (*snapshot.screen[0]).clone();
+        let underlines = |row: &Row| -> Vec<(i32, usize)> {
+            let built = build(row, &snapshot.colors, &face(), &arctic().1);
+            let w = face().metrics.cell_width as i32;
+            (0..5)
+                .map(|col| {
+                    let n = built
+                        .boxes
+                        .iter()
+                        .filter(|(b, _)| b.x0 >= col * w && b.x0 < (col + 1) * w)
+                        .count();
+                    (col, n)
+                })
+                .collect()
+        };
+        let plain = underlines(&row);
+        row.link = Some((0, 4));
+        let hovered = underlines(&row);
+        // `ab ` gains an underline; `cd`, underlined already, gains a second line.
+        let single = plain[3].1;
+        assert!(single > 0);
+        assert_eq!(plain[0].1, 0);
+        assert_eq!(hovered[0].1, single, "{hovered:?}");
+        assert!(hovered[3].1 > single, "double: {hovered:?}");
     }
 
     #[test]

@@ -17,6 +17,7 @@ pub mod font;
 pub mod glyph;
 pub mod look;
 pub mod rows;
+pub mod scrollbar;
 pub mod sprite;
 
 use std::cell::RefCell;

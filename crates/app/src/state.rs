@@ -147,6 +147,19 @@ pub struct Viewer {
     automatic_input: bool,
     /// What the input method is composing in this terminal.
     pub preedit: Option<String>,
+    /// The find bar: open or not, and its query, which stays while it's closed.
+    pub find: Option<FindBar>,
+    /// Trackpad travel not yet a whole line, in points.
+    wheel: f32,
+    /// Cmd is held over the grid, so the link under the pointer is underlined.
+    hovering_link: bool,
+}
+
+/// A terminal's find bar (`cmd-f`): its field's text is the query.
+#[derive(Default)]
+pub struct FindBar {
+    pub open: bool,
+    pub edit: TextEdit,
 }
 
 impl Viewer {
@@ -176,6 +189,22 @@ impl Viewer {
 
     fn tracks_mouse(&self) -> bool {
         self.shown().is_some_and(|s| s.modes.mouse_tracking)
+    }
+
+    /// Whether the pixel at `(x, y)` from the grid's corner is on the link underlined while Cmd
+    /// is held.
+    fn link_at(&self, x: f32, y: f32) -> bool {
+        let Some(s) = self.shown() else {
+            return false;
+        };
+        if s.cell_width == 0 || s.cell_height == 0 || x < 0.0 || y < 0.0 {
+            return false;
+        }
+        let col = (x / s.cell_width as f32) as u16;
+        let row = (y / s.cell_height as f32) as u16;
+        s.link
+            .iter()
+            .any(|span| span.row == row && (span.start..=span.end).contains(&col))
     }
 }
 
@@ -210,6 +239,10 @@ struct Ui {
     paste: Vec<String>,
     /// Terminals to paste the clipboard's image into, once it's read.
     paste_image: Vec<String>,
+    /// An element to give the keyboard, by key: a find bar's field.
+    focus_key: Option<String>,
+    /// URLs and paths for the system's opener.
+    open: Vec<String>,
 }
 
 /// A divider being dragged: the sizes beside it before, put back if the drag is cancelled after
@@ -366,8 +399,6 @@ pub struct State {
     keys_down: Vec<(String, terminal::Key)>,
     /// The mouse button held over a terminal.
     press: Option<Press>,
-    /// Trackpad scrolling not yet a whole line, in points.
-    wheel: f32,
     /// The pane whose top strip the pointer is over: its grip shows.
     pub grip_hover: Option<String>,
     pub grip_drag: Option<GripDrag>,
@@ -376,6 +407,12 @@ pub struct State {
     pub hello: Option<Box<herdr_proto::Hello>>,
     /// The machine dialogs' calls, failures and ssh hosts.
     pub machines: crate::machines::Machines,
+    /// What a find field edits when its terminal is gone (Rune asks for a field's text by
+    /// key).
+    spare_edit: TextEdit,
+    /// The pointer over a terminal, in device pixels from its grid's corner: where Cmd
+    /// pressed with no motion underlines a link.
+    pointer: Option<(String, f32, f32)>,
 }
 
 impl Default for State {
@@ -541,10 +578,11 @@ impl State {
             option_as_alt: OptionAsAlt::Both,
             keys_down: Vec::new(),
             press: None,
-            wheel: 0.0,
             grip_hover: None,
             grip_drag: None,
             divider_drag: None,
+            spare_edit: TextEdit::default(),
+            pointer: None,
         };
         s.keys_problem = keys_problem;
         s.configure_all(config);
@@ -1274,6 +1312,10 @@ impl State {
                 self.ui.copy = Some(text.clone());
                 self.toast(Toast::new(Level::Success, "Copied", text));
             }
+            Effect::Open(target) => {
+                self.ui.open.push(target);
+                self.redraw = true;
+            }
             Effect::Terminal { address, command } => self.terminal_command(&address, command),
             // A `do` call's answer that came in a later step: `space.new`'s, once its terminal
             // runs.
@@ -1375,12 +1417,13 @@ impl State {
 
     /// A `terminal` key binding's action, or another command for a terminal's view.
     fn terminal_command(&mut self, address: &str, command: TerminalCommand) {
-        // Find and select all are ticket 019's; until then they say so.
-        if let TerminalCommand::Action(
-            action @ (TerminalAction::Search | TerminalAction::SelectAll),
-        ) = command
-        {
-            self.not_yet(&Action::Terminal(action));
+        if command == TerminalCommand::Action(TerminalAction::Search) {
+            // The peek has no find bar: a search there would have nothing to type in or close.
+            if self.model.peeked() == Some(address) {
+                self.not_yet(&Action::Terminal(TerminalAction::Search));
+            } else {
+                self.open_find(address);
+            }
             return;
         }
         let Some(viewer) = self.viewers.get(address) else {
@@ -1403,7 +1446,8 @@ impl State {
             TerminalCommand::Action(TerminalAction::PasteImage) => {
                 self.ui.paste_image.push(address.into())
             }
-            TerminalCommand::Action(TerminalAction::Search | TerminalAction::SelectAll) => {}
+            TerminalCommand::Action(TerminalAction::SelectAll) => viewer.terminal.select_all(),
+            TerminalCommand::Action(TerminalAction::Search) => {}
             // Copy mode says "not yet" once, as it closes (`State::mode_changed`); it's ticket
             // 020's.
             TerminalCommand::CopyStart
@@ -1411,6 +1455,99 @@ impl State {
             | TerminalCommand::CopySelect(_)
             | TerminalCommand::CopyYank
             | TerminalCommand::CopyEnd => {}
+        }
+    }
+
+    /// `cmd-f`: the terminal's find bar opens with the keyboard in its field. Its query is
+    /// the one it had, selected on reopening so typing replaces it, and searched again.
+    fn open_find(&mut self, address: &str) {
+        let Some(pane) = self.model.world().pane_of(address) else {
+            return;
+        };
+        let Some(viewer) = self.viewers.get_mut(address) else {
+            return;
+        };
+        let bar = viewer.find.get_or_insert_with(FindBar::default);
+        if !bar.open {
+            bar.open = true;
+            bar.edit.anchor = 0;
+            bar.edit.focus = bar.edit.text.len();
+        }
+        viewer.terminal.find(bar.edit.text.clone());
+        self.ui.focus_key = Some(crate::view::find::field_key(&pane));
+        self.redraw = true;
+    }
+
+    /// The find field's text changed: the terminal searches for it.
+    pub fn find_typed(&mut self, address: &str, tx: &mut Tx) {
+        if let Some(viewer) = self.viewers.get(address)
+            && let Some(bar) = &viewer.find
+        {
+            viewer.terminal.find(bar.edit.text.clone());
+        }
+        self.after_input(tx);
+    }
+
+    /// Puts `query` in a terminal's find bar, as if typed, and searches for it: scenes.
+    pub fn search(&mut self, address: &str, query: &str) {
+        if let Some(viewer) = self.viewers.get_mut(address) {
+            let bar = viewer.find.get_or_insert_with(FindBar::default);
+            bar.edit = TextEdit::new(query);
+            viewer.terminal.find(query);
+        }
+        self.redraw = true;
+    }
+
+    /// Enter (up into history) or Shift+Enter (back down) in the find bar, or its arrows. The
+    /// keyboard stays in the field.
+    pub fn find_next(&mut self, address: &str, back: bool, tx: &mut Tx) {
+        if let Some(viewer) = self.viewers.get(address)
+            && viewer
+                .find
+                .as_ref()
+                .is_some_and(|b| b.open && !b.edit.text.is_empty())
+        {
+            viewer.terminal.find_next(back);
+        }
+        self.after_input(tx);
+    }
+
+    /// Escape in the find field, or its ×: the bar and its hits go, and the keyboard goes back
+    /// to the terminal. The query stays for the next `cmd-f`.
+    pub fn close_find(&mut self, address: &str, tx: &mut Tx) {
+        let Some(viewer) = self.viewers.get_mut(address) else {
+            return;
+        };
+        if let Some(bar) = &mut viewer.find {
+            bar.open = false;
+        }
+        viewer.terminal.find("");
+        if let Some(pane) = self.model.world().pane_of(address) {
+            self.ui.focus_key = Some(pane_key(&pane));
+        }
+        self.redraw = true;
+        self.after_input(tx);
+    }
+
+    /// The find field's text, for Rune to edit.
+    pub fn find_edit(&mut self, address: &str) -> &mut TextEdit {
+        match self.viewers.get_mut(address).and_then(|v| v.find.as_mut()) {
+            Some(bar) => &mut bar.edit,
+            None => &mut self.spare_edit,
+        }
+    }
+
+    /// A URL or local path for the system's opener: Rune opens `http:`, `https:` and `mailto:`
+    /// links and local paths; other schemes it refuses, and a toast says so. Headless runs and
+    /// tests open nothing (Rune keeps the requests).
+    fn open_externally(&mut self, target: &str, tx: &mut Tx) {
+        let refused = if model::links::has_scheme(target) {
+            tx.open_url(target).map_err(|e| e.to_string())
+        } else {
+            tx.open_path(target).map_err(|e| e.to_string())
+        };
+        if let Err(why) = refused {
+            self.toast(Toast::new(Level::Warning, "Can't open the link", why));
         }
     }
 
@@ -1423,6 +1560,12 @@ impl State {
             }
             Some(Focus::Peek) => tx.focus_when_shown(PEEK_KEY, false),
             Some(Focus::None) | None => {}
+        }
+        if let Some(key) = self.ui.focus_key.take() {
+            tx.focus_when_shown(key, false);
+        }
+        for target in std::mem::take(&mut self.ui.open) {
+            self.open_externally(&target, tx);
         }
         for command in std::mem::take(&mut self.ui.window) {
             match command {
@@ -1902,6 +2045,9 @@ impl State {
             focus_sent: false,
             automatic_input: false,
             preedit: None,
+            find: None,
+            wheel: 0.0,
+            hovering_link: false,
         }
     }
 
@@ -2031,6 +2177,7 @@ impl State {
     fn drain_terminals(&mut self) -> bool {
         let shown: Vec<String> = self.model.visible_terminals();
         let mut changed = false;
+        let mut links = Vec::new();
         let rounds = if self.synchronous { 4 } else { 1 };
         for _ in 0..rounds {
             if self.synchronous {
@@ -2048,6 +2195,7 @@ impl State {
                 while let Ok(output) = viewer.terminal.output().try_recv() {
                     match output {
                         Output::Selection(text) => self.ui.copy = Some(text),
+                        Output::Link(link) => links.push((viewer.address.clone(), link.target)),
                         Output::Reply(_) | Output::Input(_)
                             if viewer.attach == Attach::Attached =>
                         {
@@ -2078,6 +2226,13 @@ impl State {
                     viewer.show(snapshot);
                     changed = true;
                 }
+            }
+        }
+        // A Cmd-click found a link: the model decides what opens it.
+        for (address, link) in links {
+            if let Some(pane) = self.model.world().pane_of(&address) {
+                self.step(self.now, Action::OpenLink { pane, link });
+                changed = true;
             }
         }
         changed
@@ -2758,6 +2913,12 @@ impl State {
             ..SelectEvent::new(action, x, y)
         };
         match d.phase {
+            // Cmd-click on the underlined link opens it, whatever the program does with the
+            // mouse; anywhere else Cmd-click is a click (Ghostty's `mouseButtonCallback`).
+            Phase::Down if mods.cmd && button == MouseButton::Left && viewer.link_at(x, y) => {
+                viewer.terminal.open_link(x, y);
+                self.press = None;
+            }
             Phase::Down => {
                 let gesture = if in_use && viewer.tracks_mouse() && !mods.shift {
                     // The program took the click: an old selection can't be copied again.
@@ -2805,7 +2966,9 @@ impl State {
                     gesture: Gesture::Select,
                 }) if a == address => {
                     viewer.terminal.select(select(SelectAction::Release));
-                    viewer.terminal.copy(None);
+                    if self.config.settings.copy_on_select {
+                        viewer.terminal.copy(None);
+                    }
                 }
                 _ => {}
             },
@@ -2834,6 +2997,22 @@ impl State {
         };
         let mods = tx.mods();
         let (x, y) = self.grid_px(&address, p.x, p.y);
+        if let Some((was, ..)) = &self.pointer
+            && *was != address
+            && let Some(viewer) = self.viewers.get_mut(was)
+            && viewer.hovering_link
+        {
+            viewer.terminal.hover(None);
+            viewer.hovering_link = false;
+        }
+        self.pointer = Some((address.clone(), x, y));
+        // With Cmd held the link under the pointer is underlined, until Cmd or the pointer goes.
+        if let Some(viewer) = self.viewers.get_mut(&address)
+            && (mods.cmd || viewer.hovering_link)
+        {
+            viewer.terminal.hover(mods.cmd.then_some((x, y)));
+            viewer.hovering_link = mods.cmd;
+        }
         if self.in_use() == Some(address.as_str())
             && let Some(viewer) = self.viewers.get(&address)
             && viewer.tracks_mouse()
@@ -2850,12 +3029,47 @@ impl State {
         }
     }
 
-    /// The wheel over pane `pane`, as Herdr app and Ghostty scroll: a notch is three lines,
-    /// trackpad scrolling a line per cell height. A program tracking the mouse hears wheel
-    /// buttons (Shift keeps the wheel the terminal's); on the alternate screen, which has no
-    /// scrollback, the arrows (xterm's alternate scroll); otherwise the scrollback moves. Only
-    /// the terminal in use sends the program anything: over another pane the wheel moves the
-    /// scrollback alone.
+    /// The pointer left pane `pane`: no link of its is under the pointer any more.
+    pub fn pane_left(&mut self, pane: &str, tx: &mut Tx) {
+        let Some(address) = self.surface_address(pane) else {
+            return;
+        };
+        if self.pointer.as_ref().is_some_and(|(a, ..)| *a == address) {
+            self.pointer = None;
+        }
+        if let Some(viewer) = self.viewers.get_mut(&address)
+            && viewer.hovering_link
+        {
+            viewer.terminal.hover(None);
+            viewer.hovering_link = false;
+            self.after_input(tx);
+        }
+    }
+
+    /// `App::on_modifiers`: Cmd pressed underlines the link under the pointer, as moving with it
+    /// held does; let go, the underline goes.
+    pub fn on_modifiers(s: &mut State, mods: rune::Mods, tx: &mut Tx) {
+        let cmd = mods.cmd;
+        let over = s.pointer.clone();
+        for viewer in s.viewers.values_mut() {
+            let here = over.as_ref().filter(|(a, ..)| *a == viewer.address);
+            if cmd && let Some((_, x, y)) = here {
+                viewer.terminal.hover(Some((*x, *y)));
+                viewer.hovering_link = true;
+            } else if viewer.hovering_link {
+                viewer.terminal.hover(None);
+                viewer.hovering_link = false;
+            }
+        }
+        s.after_input(tx);
+    }
+
+    /// The wheel over pane `pane`, as Ghostty scrolls: a notch is three lines, and trackpad
+    /// travel adds up to a line per cell height, both times `terminal_scroll_speed`; whole lines
+    /// only, never part of one. A program tracking the mouse hears wheel buttons (Shift keeps
+    /// the wheel the terminal's); on the alternate screen, which has no scrollback, the arrows
+    /// (xterm's alternate scroll); otherwise the scrollback moves. Only the terminal in use sends
+    /// the program anything: over another pane the wheel moves the scrollback alone.
     pub fn pane_wheel(&mut self, pane: &str, ev: &WheelEvent, tx: &mut Tx) -> bool {
         let Some(address) = self.surface_address(pane) else {
             return false;
@@ -2866,38 +3080,44 @@ impl State {
         } else {
             ev.dy
         };
+        let speed = self.config.settings.terminal_scroll_speed;
+        let in_use = self.in_use() == Some(address.as_str());
+        let line = self.face(self.scale).cell_pt().1;
+        let zoom = self.zoom();
+        let Some(viewer) = self.viewers.get_mut(&address) else {
+            return true;
+        };
+        let alternate = viewer
+            .shown()
+            .is_some_and(|s| s.active_screen == ActiveScreen::Alternate);
+        let to_program = viewer.tracks_mouse() && !ev.mods.shift;
+        if !in_use && (alternate || to_program) {
+            return true;
+        }
         let lines = if ev.notch || !ev.precise {
             // Rune hands the delta over in the zoomed view's points; a notch is 40 window points.
-            let ticks = dy * self.zoom() / WHEEL_NOTCH;
+            let ticks = dy * zoom / WHEEL_NOTCH;
             if ticks == 0.0 {
                 0
             } else {
-                (ticks.signum() * ticks.abs().max(1.0) * LINES_PER_NOTCH).trunc() as i32
+                // A slow notch still counts as one (Ghostty's `yoff_max = max(yoff, 1)`).
+                let n = whole(ticks.abs().max(1.0) * LINES_PER_NOTCH * speed).max(1.0);
+                (ticks.signum() * n) as i32
             }
         } else {
-            let line = self.face(self.scale).cell_pt().1;
-            self.wheel += dy;
-            let lines = (self.wheel / line).trunc();
-            self.wheel -= lines * line;
+            viewer.wheel += dy * speed;
+            let lines = whole(viewer.wheel / line);
+            viewer.wheel -= lines * line;
             lines as i32
-        };
-        let in_use = self.in_use() == Some(address.as_str());
-        let Some(viewer) = self.viewers.get(&address) else {
-            return true;
         };
         if lines == 0 {
             return true;
         }
+        let viewer = self.viewers.get(&address).expect("found above");
         let (x, y) = self.grid_px(&address, ev.x, ev.y);
         let up = lines > 0;
         let n = lines.unsigned_abs();
-        let alternate = viewer
-            .shown()
-            .is_some_and(|s| s.active_screen == ActiveScreen::Alternate);
-        if !in_use && (alternate || (viewer.tracks_mouse() && !ev.mods.shift)) {
-            return true;
-        }
-        if viewer.tracks_mouse() && !ev.mods.shift {
+        if to_program {
             let button = if up {
                 MouseButton::WheelUp
             } else {
@@ -2932,6 +3152,34 @@ impl State {
         }
         self.after_input(tx);
         true
+    }
+
+    /// A press or drag on a pane's scrollbar, a `track`-point lane: the thumb follows the
+    /// pointer (held where it was pressed, or by its middle when the press was beside it) and
+    /// the viewport with it. All the way down follows the program's output again.
+    pub fn scrollbar_drag(&mut self, address: &str, d: &mut Drag, track: f32, tx: &mut Tx) {
+        use crate::view::terminal::scrollbar::{grab_at, row_at, thumb};
+        let line = self.face(self.scale).cell_pt().1;
+        let Some(viewer) = self.viewers.get(address) else {
+            return;
+        };
+        let Some(sb) = viewer.shown().map(|s| s.scrollbar) else {
+            return;
+        };
+        if d.phase == Phase::Down {
+            let Some((top, len)) = thumb(sb.total, sb.offset, sb.len, track, line) else {
+                return;
+            };
+            d.data = grab_at(top, len, d.y);
+        }
+        let row = row_at(sb.total, sb.len, track, line, d.y - d.data);
+        let bottom = sb.total.saturating_sub(sb.len);
+        viewer.terminal.scroll(if row >= bottom {
+            Scroll::Bottom
+        } else {
+            Scroll::Row(row as usize)
+        });
+        self.after_input(tx);
     }
 
     /// A right-click on pane `pane`: the program's, when its terminal is labelled to send
@@ -3067,6 +3315,13 @@ impl State {
         // The socket goes with the window, even when the process ends before the state drops.
         s.control = None;
     }
+}
+
+/// The whole lines in `lines`, toward zero. Rune divides the wheel's points by the zoom and
+/// [`State::pane_wheel`] multiplies them back, so 27 lines can come back as 26.99997: lines are
+/// counted to a thousandth first.
+pub fn whole(lines: f32) -> f32 {
+    ((lines * 1000.0).round() / 1000.0).trunc()
 }
 
 /// Rune's modifiers as a terminal's (Cmd is Super).

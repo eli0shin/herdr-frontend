@@ -155,6 +155,8 @@ pub enum Effect {
     Clipboard(String),
     /// Not built yet: show a "not yet" toast.
     NotYet(Action),
+    /// Hand a URL, or a path on this machine, to the system's opener (`open` on macOS).
+    Open(String),
     /// Step [`crate::Event::Tick`] at this clock time (seconds) or later.
     WakeAt(f64),
     /// The per-screen view changed: write [`crate::Model::saved_view`] to herdr-frontend's home.

@@ -24,6 +24,11 @@ pub struct Look {
     /// Text whose contrast ratio with its background is below this is drawn white or black,
     /// whichever contrasts more (Ghostty's `minimum-contrast`). 1 leaves every color alone.
     pub minimum_contrast: f32,
+    /// The find bar's hits, text and background (Ghostty's `search-foreground` and
+    /// `search-background`: black on golden yellow).
+    pub search: (Rgb, Rgb),
+    /// The selected hit (Ghostty's `search-selected-*`: black on soft peach).
+    pub search_selected: (Rgb, Rgb),
 }
 
 impl Default for Look {
@@ -35,13 +40,15 @@ impl Default for Look {
             cursor_text: None,
             faint_opacity: 0.5,
             minimum_contrast: 1.0,
+            search: (Rgb::new(0, 0, 0), Rgb::new(0xff, 0xe0, 0x82)),
+            search_selected: (Rgb::new(0, 0, 0), Rgb::new(0xf2, 0xa5, 0x7e)),
         }
     }
 }
 
 impl Look {
     /// What changes a built row: rows built under another look are built again.
-    pub(crate) fn key(&self) -> [u32; 6] {
+    pub(crate) fn key(&self) -> [u32; 10] {
         let rgb = |c: Option<Rgb>| {
             c.map_or(u32::MAX, |c| {
                 u32::from(c.r) << 16 | u32::from(c.g) << 8 | u32::from(c.b)
@@ -54,6 +61,10 @@ impl Look {
             rgb(self.cursor_text),
             self.faint_opacity.to_bits(),
             self.minimum_contrast.to_bits(),
+            rgb(Some(self.search.0)),
+            rgb(Some(self.search.1)),
+            rgb(Some(self.search_selected.0)),
+            rgb(Some(self.search_selected.1)),
         ]
     }
 }

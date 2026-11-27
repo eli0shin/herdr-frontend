@@ -145,6 +145,35 @@ fn keys_go_to_the_peeked_terminal_and_esc_too() {
     assert_eq!(rt.state.in_use(), Some("t1"));
 }
 
+/// The peek has no find bar: `cmd-f` there says "not yet" and starts no search.
+#[test]
+fn cmd_f_in_the_peek_says_not_yet() {
+    let (mut rt, _) = runtime();
+    click(&mut rt, "sub-t20");
+    key(&mut rt, Key::Command('f'), CMD);
+    assert_eq!(rt.state.model.peeked(), Some("t20"), "the peek stays");
+    assert!(
+        rt.state
+            .toasts
+            .shown
+            .iter()
+            .any(|t| t.toast.title == "Not yet" && t.toast.body.contains("terminal.search")),
+        "{:?}",
+        rt.state
+            .toasts
+            .shown
+            .iter()
+            .map(|t| &t.toast)
+            .collect::<Vec<_>>()
+    );
+    assert!(rt.state.viewers["t20"].find.is_none(), "no search started");
+    assert_eq!(
+        focused(&rt).as_deref(),
+        Some(PEEK_KEY),
+        "the keyboard stays"
+    );
+}
+
 #[test]
 fn the_close_button_or_a_click_outside_closes_it() {
     let (mut rt, _) = runtime();

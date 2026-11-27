@@ -67,9 +67,11 @@ pub struct Settings {
     /// Text below this contrast ratio with its background is drawn white or black, whichever
     /// contrasts more (Ghostty's `minimum-contrast`). 1 to 21; 1 leaves program colors alone.
     pub minimum_contrast: f32,
-    /// A scroll position thumb at a terminal pane's right edge. Eli's is off, and herdr-frontend
-    /// draws none either way until scrollback lands.
+    /// A scroll position thumb at a terminal pane's right edge, which can be dragged. Eli's is
+    /// off.
     pub pane_scrollbars: bool,
+    /// Letting go of a mouse selection copies it.
+    pub copy_on_select: bool,
     pub appearance: Appearance,
     /// `arctic` (built in) or the name of a file in the home's `themes/`.
     pub theme: String,
@@ -95,6 +97,7 @@ impl Default for Settings {
             terminal_scroll_speed: 1.0,
             minimum_contrast: 1.0,
             pane_scrollbars: false,
+            copy_on_select: true,
             appearance: Appearance::Dark,
             theme: "arctic".into(),
             colors: BTreeMap::new(),
@@ -277,6 +280,7 @@ mod tests {
         );
         assert_eq!(s.minimum_contrast, 1.0);
         assert!(!s.pane_scrollbars);
+        assert!(s.copy_on_select);
         assert_eq!(s.appearance, Appearance::Dark);
         assert_eq!(s.theme, "arctic");
     }

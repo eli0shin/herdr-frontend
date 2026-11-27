@@ -52,9 +52,10 @@ the other, except the four `font_style*` keys, which are Ghostty's. Every key is
 | `ui_font` | `"Operator Mono"` | The panels' font family. Their text is 13 pt at zoom 1. |
 | `terminal_line_height` | `1` | Row height multiplier, clamped to 0.8..2 (Ghostty's `adjust-cell-height` as a factor; text stays centered). |
 | `terminal_cell_width` | `1` | Column width multiplier, clamped to 0.8..2 (Ghostty's `adjust-cell-width`). |
-| `terminal_scroll_speed` | `1` | Wheel and trackpad multiplier, clamped to 0.1..5. Read once terminal scrolling lands. |
+| `terminal_scroll_speed` | `1` | Wheel and trackpad multiplier, clamped to 0.1..5: the scrollback, and the wheel buttons and arrows a program hears. Part of a notch counts as a whole one, and a notch always moves at least a line. |
 | `minimum_contrast` | `1` | 1 to 21. Text below this contrast ratio with its background is drawn white or black, whichever contrasts more (Ghostty's `minimum-contrast`). Box drawing, block elements, legacy computing and Powerline keep their colors. 1 leaves program colors alone. |
-| `pane_scrollbars` | `false` | A scroll thumb at a pane's right edge. herdr-frontend draws none either way until scrollback lands. |
+| `pane_scrollbars` | `false` | A scroll thumb at a pane's right edge, as Herdr app draws it: none on the alternate screen or with no scrollback. Dragging the thumb, or pressing beside it, scrolls there. |
+| `copy_on_select` | `true` | Letting go of a mouse selection copies it. |
 | `appearance` | `"dark"` | `"dark"`, `"light"` or `"system"`: picks Rune's token set for shadows. |
 | `theme` | `"arctic"` | `arctic`, or the name of a file in `themes/`. |
 | `colors` | `{}` | Theme colors by name over the theme's own (`{"accent": "#ff8800"}`), `#rrggbb` or `#rrggbbaa`. Terminal colors too (`background`, `terminal_foreground`, `cursor`, `selection`, `ansi0`…`ansi15`). |
@@ -62,8 +63,8 @@ the other, except the four `font_style*` keys, which are Ghostty's. Every key is
 A value out of range takes its default (or is clamped, where noted) and is reported; a `colors`
 value that isn't a color is skipped and reported, and the rest apply. Keys
 herdr-frontend doesn't read are ignored: `sounds` and `telemetry` (it has neither, ever),
-`font_ligatures` (terminals are drawn without ligatures), `core`, `worktrees`, `option_as_alt`,
-`clipboard_write` and `copy_on_select` (the input and clipboard tickets read their own).
+`font_ligatures` (terminals are drawn without ligatures), `core`, `worktrees`, `option_as_alt`
+and `clipboard_write` (the input and clipboard tickets read their own).
 
 ### Zoom keys
 

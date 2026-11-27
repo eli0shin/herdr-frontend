@@ -24,6 +24,7 @@
 //! draws ([`face`], [`metrics`]), with the grid and padding math in [`size`].
 
 pub mod face;
+pub mod links;
 pub mod metrics;
 pub mod size;
 
@@ -46,12 +47,12 @@ pub use input::{
     PasteRejected, SelectAction, SelectEvent, encode_focus,
 };
 pub use snapshot::{
-    ActiveScreen, Cell, CellFlags, Colors, Cursor, CursorStyle, Dirty, Grapheme, Modes, Rgb, Row,
-    RowId, Scrollbar, Snapshot, Underline, Width,
+    ActiveScreen, Cell, CellFlags, Colors, Cursor, CursorStyle, Dirty, Found, Grapheme, Match,
+    Modes, Rgb, Row, RowId, Scrollbar, Snapshot, Span, Underline, Width,
 };
 pub use vt::{
-    AUTOSCROLL_EVERY, ClipboardLocation, ColorScheme, Config, Event, Progress, Scroll, Scrollback,
-    Theme, Vt,
+    AUTOSCROLL_EVERY, ClipboardLocation, ColorScheme, Config, Event, Link, Progress, Scroll,
+    Scrollback, Theme, Vt,
 };
 
 /// Called from the worker thread when there is something new for the UI: a snapshot to take or
@@ -70,6 +71,8 @@ pub enum Output {
     Input(Vec<u8>),
     /// The selected text, for the clipboard ([`Terminal::copy`]).
     Selection(String),
+    /// The link a [`Terminal::open_link`] found.
+    Link(Link),
     Event(Event),
 }
 
@@ -101,7 +104,17 @@ enum Request {
     Input(Vec<u8>),
     Select(SelectEvent),
     ClearSelection,
+    SelectAll,
     Copy(Option<KeyEvent>),
+    Find(String),
+    FindNext {
+        back: bool,
+    },
+    Hover(Option<(f32, f32)>),
+    OpenLink {
+        x: f32,
+        y: f32,
+    },
     /// The UI took the snapshot in the handoff and the worker has a newer frame waiting.
     Publish,
     /// Snapshot everything handled so far, now, and empty the handoff.
@@ -251,6 +264,33 @@ impl Terminal {
 
     pub fn clear_selection(&self) {
         self.send(Request::ClearSelection);
+    }
+
+    /// Selects the whole scrollback and screen.
+    pub fn select_all(&self) {
+        self.send(Request::SelectAll);
+    }
+
+    /// Searches the screen and scrollback for `needle` as output keeps coming; empty stops.
+    /// Snapshots carry the counts ([`Snapshot::find`]) and mark the hits on their rows.
+    pub fn find(&self, needle: impl Into<String>) {
+        self.send(Request::Find(needle.into()));
+    }
+
+    /// Selects the next hit up into history, or with `back` the next one down, scrolling to it.
+    pub fn find_next(&self, back: bool) {
+        self.send(Request::FindNext { back });
+    }
+
+    /// The pointer, in device pixels from the grid's top left, while Cmd is held: the link
+    /// under it is underlined ([`Snapshot::link`]). `None` takes the underline away.
+    pub fn hover(&self, at: Option<(f32, f32)>) {
+        self.send(Request::Hover(at));
+    }
+
+    /// Looks up the link at a pixel position: [`Output::Link`] if there is one.
+    pub fn open_link(&self, x: f32, y: f32) {
+        self.send(Request::OpenLink { x, y });
     }
 
     /// The selected text, as [`Output::Selection`]. With nothing selected, `or_key` is encoded
@@ -487,6 +527,26 @@ impl Worker {
                 let had = self.vt.has_selection();
                 self.vt.clear_selection();
                 had
+            }
+            Request::SelectAll => {
+                self.vt.select_all();
+                true
+            }
+            Request::Find(needle) => {
+                let was = self.vt.finding().map(str::to_owned);
+                self.vt.find(&needle);
+                was.as_deref() != self.vt.finding()
+            }
+            Request::FindNext { back } => {
+                self.vt.find_next(back);
+                true
+            }
+            Request::Hover(at) => self.vt.hover(at),
+            Request::OpenLink { x, y } => {
+                if let Some(link) = self.vt.link_at(x, y) {
+                    self.out(Output::Link(link));
+                }
+                false
             }
             Request::Copy(or_key) => {
                 self.flush();

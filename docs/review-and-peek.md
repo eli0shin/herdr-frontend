@@ -107,10 +107,11 @@ itself.
 
 ## Not yet
 
-- While Cmd is held, Herdr app underlines a link under the pointer. herdr-frontend draws no
-  underline for addresses. Links (URLs and paths, ticket 019) bring the hover underline, and
-  addresses should share it.
+- While Cmd is held, Herdr app underlines a link under the pointer. herdr-frontend underlines
+  URLs and paths that way (`docs/research/terminal-rendering.md` §2, "What herdr-frontend does
+  (ticket 019)"), but not addresses yet; they should share it.
 - The terminal menu isn't offered inside the peek.
+- Find (`cmd-f`) has no bar in the peek: it says "not yet" there.
 
 ## Scenes
 
