@@ -14,7 +14,7 @@ build:
 test: check-pins
     cargo fmt --all -- --check
     cargo clippy --all-targets --locked -- -D warnings
-    cargo test --locked
+    cargo test --locked --no-fail-fast
     cargo clippy --locked -p ghostty-vt-sys --all-targets --features bindgen -- -D warnings
     just bindings --check
 
