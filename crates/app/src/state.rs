@@ -693,6 +693,13 @@ impl State {
                 viewer.terminal.set_theme(self.theme.clone());
             }
         }
+        // A program ending in front of the shell or an agent (a checkout, a commit) has its
+        // folder's checkout looked up again.
+        let programs = config.programs.clone();
+        self.model.set_front(model::Front::new(move |t| {
+            let p = programs.of_terminal(t);
+            p.shell || p.agent
+        }));
         self.config = config;
     }
 

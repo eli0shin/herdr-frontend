@@ -12,6 +12,8 @@ use herdr_proto::Terminal;
 use herdr_proto::types::{CoreInfo, MachineState, MachineView};
 use herdr_shared::{Document, Mirror, Node, Space, Tab, machine_of};
 
+use crate::checkouts::Checkout;
+
 /// A machine: `None` is the core this screen is connected to.
 pub type MachineKey = Option<String>;
 
@@ -56,6 +58,9 @@ impl Machine {
 pub struct World {
     machines: BTreeMap<MachineKey, Machine>,
     terminals: BTreeMap<String, Terminal>,
+    /// What git last said about each terminal's folder ([`crate::checkouts`]), where it is in a
+    /// checkout.
+    checkouts: BTreeMap<String, Checkout>,
     /// The core this screen is connected to (`hello.core`), and every machine `machine.list`
     /// has, temporary ones too: what a record's `parent` may name a machine by.
     core: Option<CoreInfo>,
@@ -76,6 +81,7 @@ impl World {
         World {
             machines,
             terminals: BTreeMap::new(),
+            checkouts: BTreeMap::new(),
             core: None,
             every_machine: Vec::new(),
         }
@@ -246,6 +252,8 @@ impl World {
             .into_iter()
             .map(|t| (t.address.clone(), t))
             .collect();
+        let terminals = &self.terminals;
+        self.checkouts.retain(|a, _| terminals.contains_key(a));
     }
 
     pub(crate) fn update_terminals(&mut self, updated: Vec<Terminal>, removed: &[String]) {
@@ -254,7 +262,22 @@ impl World {
         }
         for address in removed {
             self.terminals.remove(address);
+            self.checkouts.remove(address);
         }
+    }
+
+    /// The checkout a terminal's folder is in, as git last said; `None` outside one, or before
+    /// git said.
+    pub fn checkout(&self, address: &str) -> Option<&Checkout> {
+        self.checkouts.get(address)
+    }
+
+    /// What git said about a terminal's folder: the checkout it is in, or `None` (not one).
+    pub(crate) fn set_checkout(&mut self, address: &str, checkout: Option<Checkout>) {
+        match checkout {
+            Some(c) => self.checkouts.insert(address.to_owned(), c),
+            None => self.checkouts.remove(address),
+        };
     }
 
     /// The folder a new terminal beside this one starts in: its live folder, else its launch
@@ -268,9 +291,9 @@ impl World {
             .or_else(|| (!t.cwd.is_empty()).then_some(t.cwd.as_str()))
     }
 
-    /// What a space is called: its name, else its first terminal's folder, else its own folder
-    /// (`app:src/model.rs` `space_name`). herdr-app uses the folder's git checkout top where it
-    /// has read one; that lookup needs `machine.exec` and comes with the sidebar.
+    /// What a space is called: its name, else its first terminal's checkout (a worktree's own
+    /// top), else that terminal's folder, else the space's own folder (`app:src/model.rs`
+    /// `space_name`). A checkout stands until git answers for a folder the terminal moved to.
     pub fn space_name(&self, space: &Space, home: &str) -> String {
         if !space.name.is_empty() {
             return space.name.clone();
@@ -281,7 +304,12 @@ impl World {
             .flat_map(|t| t.root.terminals())
             .find_map(|n| n.terminal());
         let folder = first
-            .and_then(|a| self.folder_of(a))
+            .and_then(|a| {
+                self.checkouts
+                    .get(a)
+                    .map(|c| c.top.as_str())
+                    .or_else(|| self.folder_of(a))
+            })
             .unwrap_or(&space.folder);
         folder_name(folder, home)
     }
@@ -457,6 +485,31 @@ mod tests {
         assert_eq!(tab_name(&space, &space.tabs[0]), "1");
         w.update_terminals(vec![], &["t1".into()]);
         assert!(w.terminal("t1").is_none());
+    }
+
+    #[test]
+    fn an_unnamed_space_takes_its_first_terminals_checkout() {
+        let mut w = World::new();
+        read(&mut w, None, doc("sp1", "tb1", "p1", "t1"));
+        let space = w.space("sp1").unwrap().clone();
+        w.replace_terminals(vec![Terminal {
+            address: "t1".into(),
+            cwd: "/home/me/code/repo/crates/app".into(),
+            ..Default::default()
+        }]);
+        assert_eq!(w.space_name(&space, "/home/me"), "app", "before git said");
+        let checkout = Checkout {
+            top: "/home/me/code/repo".into(),
+            branch: Some("main".into()),
+        };
+        w.set_checkout("t1", Some(checkout.clone()));
+        assert_eq!(w.space_name(&space, "/home/me"), "repo");
+        assert_eq!(w.checkout("t1"), Some(&checkout));
+        w.set_checkout("t1", None);
+        assert_eq!(w.space_name(&space, "/home/me"), "app", "not a checkout");
+        w.set_checkout("t1", Some(checkout));
+        w.replace_terminals(vec![]);
+        assert_eq!(w.checkout("t1"), None, "gone with its terminal");
     }
 
     #[test]

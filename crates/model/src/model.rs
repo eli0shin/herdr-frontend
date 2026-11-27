@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use herdr_proto::methods::{
-    DocGetResult, DocSetResult, ExecResult, ReadResult, TerminalGet, TerminalKeep, TerminalKill,
-    TerminalLabel, TerminalRead, TerminalRun,
+    DocGetResult, DocSetResult, ExecResult, MachineExec, ReadResult, TerminalGet, TerminalKeep,
+    TerminalKill, TerminalLabel, TerminalRead, TerminalRun,
 };
 use herdr_proto::types::{CoreInfo, MachineState, MachineView};
 use herdr_proto::{Changes, CloseReason, RpcError, Terminal, TerminalSet};
@@ -24,6 +24,7 @@ use herdr_shared::{
 };
 
 use crate::action::{Action, AppCommand, Direction};
+use crate::checkouts::{self, Check, Front};
 use crate::control::{Call, CallId, answer_call};
 use crate::effect::{Effect, Effects, Focus, Level, Request, TerminalCommand, Toast, Token};
 use crate::folders::{self, NewSpace};
@@ -278,6 +279,11 @@ pub(crate) enum Pending {
     LaunchFailed {
         code: i32,
     },
+    /// A folder's checkout being looked up for the terminals there ([`crate::checkouts`]).
+    Checkout {
+        cwd: String,
+        terminals: Vec<String>,
+    },
 }
 
 /// herdr-frontend's state.
@@ -331,6 +337,12 @@ pub struct Model {
     pub(crate) new_space: Option<NewSpace>,
     /// How many times the new-space picker has opened.
     pub(crate) openings: u64,
+    /// Each live terminal's last checkout lookup ([`crate::checkouts`]).
+    pub(crate) checks: BTreeMap<String, Check>,
+    /// Whether the shell or an agent is in front of a terminal, from the app's program table.
+    pub(crate) front: Front,
+    /// The fallback lookup the model last asked to be woken for.
+    checks_due: Option<f64>,
     last_focus: Option<Focus>,
     last_saved: View,
 }
@@ -378,6 +390,9 @@ impl Model {
             scan: false,
             new_space: None,
             openings: 0,
+            checks: BTreeMap::new(),
+            front: Front::default(),
+            checks_due: None,
             last_focus: None,
             last_saved,
         }
@@ -390,6 +405,12 @@ impl Model {
 
     pub fn set_keymap(&mut self, keymap: Keymap) {
         self.keymap = keymap;
+    }
+
+    /// How to tell the shell or an agent in front of a terminal from another program, whose end
+    /// (a checkout, a commit) has its folder's checkout looked up again ([`crate::checkouts`]).
+    pub fn set_front(&mut self, front: Front) {
+        self.front = front;
     }
 
     pub fn world(&self) -> &World {
@@ -794,8 +815,9 @@ impl Model {
 
     fn event(&mut self, event: Event, fx: &mut Effects) {
         match event {
-            // The clock already moved, and an overdue prefix was dropped.
-            Event::Tick => {}
+            // The clock already moved, and an overdue prefix was dropped. The app keeps only the
+            // earliest wake, so a later one (a repo's fallback lookup) is asked for again.
+            Event::Tick => self.checks_due = None,
             Event::Key { press, terminal } => self.key(press, terminal, fx),
             Event::Connected => {
                 self.connected = true;
@@ -808,6 +830,9 @@ impl Model {
                 // what is on screen is looked at again.
                 self.seen = SeenTracker::default();
                 self.seen_failed.clear();
+                // Lookups under way may never be answered: every folder is looked up again.
+                self.checks.clear();
+                self.checks_due = None;
                 for (_, m) in self.world.machines_mut() {
                     m.mirror.reconnected();
                     m.refresh();
@@ -1141,12 +1166,13 @@ impl Model {
             Pending::Navigate { .. }
             | Pending::Folders { .. }
             | Pending::Link { .. }
-            | Pending::LaunchFailed { .. } => {}
+            | Pending::LaunchFailed { .. }
+            | Pending::Checkout { .. } => {}
         }
     }
 
-    /// A `machine.exec` came back: the Neovim navigation, the new-space folder lookup or the
-    /// link lookup it was for.
+    /// A `machine.exec` came back: the Neovim navigation, the new-space folder lookup, the link
+    /// lookup or the checkout lookup it was for.
     fn executed(&mut self, token: Token, result: Result<ExecResult, RpcError>, fx: &mut Effects) {
         let Some(pending) = self.pending.remove(&token) else {
             return;
@@ -1173,6 +1199,10 @@ impl Model {
                 local,
                 lookup,
             } => self.link_found(&pane, local, &lookup, result, fx),
+            Pending::Checkout { cwd, terminals } => {
+                let (checkout, repo) = checkouts::read(&result);
+                self.checked(&cwd, &terminals, checkout, repo);
+            }
             Pending::Launch { .. }
             | Pending::Adopt(_)
             | Pending::CheckClosed { .. }
@@ -1244,6 +1274,99 @@ impl Model {
                 }),
                 Some(Pending::Seen(write)),
             );
+        }
+    }
+
+    /// Looks up the checkout of each live terminal's folder whose answer could have changed, once
+    /// per machine and folder (`app:src/window.rs` `track_folders`). A terminal on a machine that
+    /// can't be reached now waits for it. The home folder on this machine is no checkout, without
+    /// asking.
+    fn track_checkouts(&mut self, fx: &mut Effects) {
+        let (world, checks) = (&self.world, &mut self.checks);
+        checks.retain(|a, _| world.is_live(a));
+        let mut todo: BTreeMap<(Option<String>, String), Vec<String>> = BTreeMap::new();
+        for t in world.live() {
+            let Some(cwd) = world.folder_of(&t.address) else {
+                continue;
+            };
+            let machine = machine_of(&t.address);
+            if !world.machine(machine).is_some_and(|m| m.reachable()) {
+                continue;
+            }
+            let busy = checkouts::busy(t, &self.front);
+            let last = checks.get(&t.address);
+            if !checkouts::recheck(last, cwd, busy, self.window_active, self.now) {
+                if let Some(last) = checks.get_mut(&t.address) {
+                    last.busy = busy;
+                }
+                continue;
+            }
+            // A repo until git says otherwise.
+            let repo = last.is_none_or(|l| l.cwd != cwd || l.repo);
+            let check = Check {
+                at: self.now,
+                cwd: cwd.to_owned(),
+                busy,
+                repo,
+            };
+            checks.insert(t.address.clone(), check);
+            todo.entry((machine.map(str::to_owned), cwd.to_owned()))
+                .or_default()
+                .push(t.address.clone());
+        }
+        for ((machine, cwd), terminals) in todo {
+            if machine.is_none() && cwd == self.home {
+                self.checked(&cwd, &terminals, None, false);
+                continue;
+            }
+            let exec = MachineExec {
+                argv: checkouts::argv(&cwd),
+                on: machine,
+                timeout: Some(checkouts::TIMEOUT),
+                ..Default::default()
+            };
+            self.call(
+                fx,
+                Request::Exec(exec),
+                Some(Pending::Checkout { cwd, terminals }),
+            );
+        }
+        // Woken when the next repo's fallback comes due, while the window is in front. One already
+        // due waits for its machine.
+        let now = self.now;
+        let due = self
+            .window_active
+            .then(|| {
+                self.checks
+                    .values()
+                    .filter_map(checkouts::due)
+                    .filter(|&at| at > now)
+                    .reduce(f64::min)
+            })
+            .flatten();
+        if due != self.checks_due {
+            self.checks_due = due;
+            if let Some(at) = due {
+                fx.push(Effect::WakeAt(at));
+            }
+        }
+    }
+
+    /// What git said about `cwd`, for the terminals still there (one that moved on meanwhile has
+    /// its own answer coming).
+    fn checked(
+        &mut self,
+        cwd: &str,
+        terminals: &[String],
+        checkout: Option<checkouts::Checkout>,
+        repo: bool,
+    ) {
+        for address in terminals {
+            let Some(check) = self.checks.get_mut(address).filter(|c| c.cwd == cwd) else {
+                continue;
+            };
+            check.repo = repo;
+            self.world.set_checkout(address, checkout.clone());
         }
     }
 
@@ -1580,6 +1703,7 @@ impl Model {
         if self.connected {
             if self.listed {
                 self.share_seen(fx);
+                self.track_checkouts(fx);
             }
             self.pump(fx);
             if self.listed && std::mem::take(&mut self.scan) {

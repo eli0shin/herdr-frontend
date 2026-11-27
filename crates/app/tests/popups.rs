@@ -3,7 +3,7 @@
 //! where the keyboard goes, and what picking runs on the fake core.
 
 use herdr_frontend::config::settings::Settings;
-use herdr_frontend::fixtures::{agents_core, busy_core, folders_core};
+use herdr_frontend::fixtures::{agents_core, busy_core, demo_core, folders_core};
 use herdr_frontend::link::Fake;
 use herdr_frontend::{SIZE, State, app};
 use model::mode::{ListPopup, PopupState};
@@ -435,6 +435,40 @@ fn the_space_picker_ranks_and_goes_to_a_terminal_tab() {
     ch(&mut rt, "", 's');
     type_text(&mut rt, "zzz");
     assert!(element(&rt, "space-empty").is_some());
+}
+
+#[test]
+fn an_unnamed_space_shows_its_checkout_and_the_space_picker_finds_its_branch() {
+    let fake = demo_core();
+    {
+        let mut core = fake.core();
+        core.docs.get_mut(&None).unwrap().0["spaces"][0]["name"] = "".into();
+        core.terminals.get_mut("t1").unwrap().cwd = "/code/repo/crates/app".into();
+        core.repos
+            .push((None, "/code/repo".into(), Some("feature/x".into())));
+    }
+    let (mut rt, fake) = runtime_on(fake);
+    ch(&mut rt, "⌃", 'g');
+    ch(&mut rt, "", 's');
+    frames(&mut rt, 2);
+    assert_eq!(text_of(&rt, "space-name-0"), "repo", "not `app`");
+    type_text(&mut rt, "feat");
+    assert_eq!(list(&rt).rows, 1, "its branch matches");
+    press(&mut rt, "", Key::Escape);
+
+    // Neovim in front is a program (the programs table): once the shell is back in front, the
+    // folder is looked up again.
+    let asked = fake.core().git.len();
+    let mut t1 = fake.core().terminals["t1"].clone();
+    t1.foreground = Some(herdr_proto::Foreground {
+        name: "zsh".into(),
+        argv: vec!["zsh".into()],
+        cwd: "/code/repo/crates/app".into(),
+        ..Default::default()
+    });
+    fake.update(t1);
+    frames(&mut rt, 2);
+    assert_eq!(fake.core().git.len(), asked + 1);
 }
 
 #[test]
