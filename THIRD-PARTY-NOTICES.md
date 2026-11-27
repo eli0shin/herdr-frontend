@@ -62,7 +62,7 @@ changed where its design differs. Each carries a notice saying so.
 | `crates/model/src/mode.rs` | `defaults/mods/menu/main.js`, `defaults/frame/palette/main.js` (popup and menu keys) |
 | `crates/model/src/popups.rs` | `defaults/mods/menu/main.js`, `defaults/frame/palette/main.js` (the menus and the palette's commands); `src/window.rs` `publish` |
 | `crates/app/src/control.rs` | `src/control.rs` (the control socket, `parse_args`) |
-| `crates/app/src/state.rs` | `src/terminal.rs` `quote_paths`, `paste_image`; `src/window/pane_drag.rs` `PaneDrag` |
+| `crates/app/src/state.rs` | `src/terminal/drag_paths.rs` `quote_paths`, `src/terminal.rs` `paste_image`; `src/window/pane_drag.rs` `PaneDrag` |
 | `crates/app/src/toast.rs` | `defaults/mods/toast/main.js` (through Eli's `eli-toast` clone) |
 | `crates/app/src/config/settings.rs` | `src/settings.rs` `next_zoom`, `ZOOM_MIN`, `ZOOM_MAX`, `ui_font_size` |
 | `crates/app/src/view/dialog.rs` | `defaults/mods/prompt/main.js`, `defaults/mods/confirm/main.js` |
@@ -92,11 +92,12 @@ as ported from Herdr app too, except Eli's own changes in them.
 Other files cite Herdr app only for behavior or file formats they match so both apps work on one
 layout, such as `docs/labels.md`'s labels or the find bar's size. They hold no code from it.
 
-Assets, copied as they are:
+Assets and data files:
 
 | File | Copied from | Changed? |
 | ---- | ----------- | -------- |
 | `assets/programs/herdr.json` | [`defaults/programs.json`](https://github.com/herdrdev/herdr-app/blob/1180a5cec3b8bd4dfebf4a9b217ab8cb59a96ffa/defaults/programs.json) at [`1180a5c`](https://github.com/herdrdev/herdr-app/tree/1180a5cec3b8bd4dfebf4a9b217ab8cb59a96ffa) | Unchanged |
+| `crates/model/src/keys.json` | [`defaults/keys.macos.json`](https://github.com/herdrdev/herdr-app/blob/9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c/defaults/keys.macos.json) at v0.1.18 | Modified: Eli's edits and added bindings (`layout:eli`, `mod:copy-mode` and the global keys he added). JSON holds no comment, so this row is its notice. |
 | `assets/icons/` | [`defaults/icons/`](https://github.com/herdrdev/herdr-app/tree/1180a5cec3b8bd4dfebf4a9b217ab8cb59a96ffa/defaults/icons) at `1180a5c` | Unchanged, except the last line of `LICENSES.md`, which now points here. The icons' own licenses are under "Icons" below. |
 
 ## Ghostty (MIT)
@@ -203,7 +204,7 @@ The ones he wrote himself, `agent-jump`, `agent-machines`, `space-picker`, `pr-f
 `navigator-status`: pane and Neovim navigation, tab keys, numbered agents, review, the jump list,
 the dead-space sweep, stow preferences; in `eli-tabs`, `eli-agents` and `pr-finder`: tab names
 from Pi), are his work. So are the files that port only them (in `crates/model/src/`:
-`filter.rs`, `folders.rs`, `prs.rs`, `names.rs`, `keys.rs`, `keys.json`, `action.rs`, `review.rs`,
+`filter.rs`, `folders.rs`, `prs.rs`, `names.rs`, `keys.rs`, `action.rs`, `review.rs`,
 `dead_spaces.rs`; `crates/copy-mode`; and the views `jump.rs`, `space_picker.rs`, `pr_finder.rs`,
 `new_space.rs`, `copy.rs`), `assets/programs/eli.json` and `assets/themes/arctic.json`. They fall
 under the MIT License above.
