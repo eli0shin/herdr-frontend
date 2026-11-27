@@ -17,7 +17,8 @@ Scope rules are in `AGENTS.md`.
   (focus, zoom, active tab, recents, seen) stays in herdr-frontend's own home, never in shared
   state. Protocol rules 1-10 (`herdr-core-protocol.md` "The rules in one place") are binding.
 - **Terminals:** libghostty-vt 1.0.2, from the pinned and checksummed xcframework (macOS slice,
-  no Zig), behind our own `ghostty-vt-sys`. Each terminal runs on its own worker thread and
+  no Zig; CI's Linux runner builds the release's source with the pinned Zig), behind our own
+  `ghostty-vt-sys`. Each terminal runs on its own worker thread and
   hands out one snapshot per frame. We draw it ourselves, first on `rune::grid`. Cell metrics
   are Ghostty's, computed in whole device pixels. Ligatures are off.
 - **The terminal is Ghostty with Herdr around it.** Its font is an installed family found the way
@@ -47,7 +48,7 @@ Scope rules are in `AGENTS.md`.
 
 ```text
 crates/
-  ghostty-vt-sys/   libghostty-vt bindings + link of the pinned xcframework
+  ghostty-vt-sys/   libghostty-vt bindings + link of the pinned release (xcframework; Linux: Zig build)
   herdr-proto/      pure: frame codec, JSON-RPC types, Event, TerminalSet::apply
   herdr-client/     I/O: Connection (hc connect / socket), threads, calls, attach, subscribe, Supervisor
   herdr-shared/     pure: lossless herdr-app Document, Mirror with CAS replay, labels, seen, attention, adoption
@@ -92,5 +93,10 @@ The tracker holds the dependency graph. These are the stages:
   his display. It runs the full app and Herdr app on isolated cores and homes. It sends keys to
   herdr-frontend through its control socket, never OS-level input. Feature tickets add their
   steps to `crates/app/tests/e2e/scenarios/`.
-- `just test` (pin check, fmt, clippy, tests and the bindings check) passes in CI on the
-  `xcode-27` (macOS 27) runner, which runs that recipe rather than repeating its commands.
+- Two checks are required before a merge. GitHub's `ci` job runs `just --list` and `just test`
+  (pin check, fmt, clippy, tests and the bindings check) on a free `ubuntu-latest` runner, since
+  macOS runners cost money. It runs that recipe rather than repeating its commands, with the
+  pinned hc so herdr-client's isolated-core tests run, and Mesa's software Vulkan for the headless
+  Rune tests. `just ci` (`scripts/local-ci`) runs the same steps on a Mac, where the macOS-only
+  code and tests (CoreText, the xcframework link) run too, plus `just e2e` when a change adds or
+  changes scenarios. The orchestrator reruns `just ci` on the PR's head before merging.

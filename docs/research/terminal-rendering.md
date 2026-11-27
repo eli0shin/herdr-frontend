@@ -188,25 +188,30 @@ the generated `bindings.rs` for each pinned release, and have CI regenerate it a
 diff. That keeps libclang out of normal builds. At startup, check `ghostty_build_info()` against
 the header version (`stability.md` "Checking the Version").
 
-> **Later, out of current scope: Linux, Windows and source builds.** Nothing is built or tested
-> for Linux or Windows yet (`AGENTS.md` "Scope"). When they are:
-> - build from the source tarball and the deps tarball of the same version (checksums above),
->   with Zig 0.17.x. Major and minor must match exactly, and any 0.17 patch works:
->   `zig build --system ../libghostty-vt-1.0.2-deps -Doptimize=ReleaseFast -Dcpu=baseline -Dtarget=<arch-os-abi> --prefix <out>`
->   (`ghostty:PACKAGING-LIBGHOSTTY.md` "Building libghostty-vt").
+**Linux: build from source with Zig.** CI runs on Linux (`AGENTS.md` "Scope"), and the release
+has no prebuilt Linux library, so `ghostty-vt-sys` builds one there from the source tarball and
+the deps tarball of the same version (checksums above), with Zig 0.17.1. Major and minor must
+match the release's `minimum_zig_version` (0.17.0) exactly, and any 0.17 patch works. Zig comes
+from `ziglang.org/download/0.17.1`, checked against the SHA-256 in Zig's `download/index.json`.
+The build is the one `ghostty:PACKAGING-LIBGHOSTTY.md` "Building libghostty-vt" gives:
+`zig build --system ../libghostty-vt-1.0.2-deps -Doptimize=ReleaseFast -Dcpu=baseline -Dtarget=<arch>-linux-<abi> --prefix <out>`,
+with a new, empty `ZIG_GLOBAL_CACHE_DIR`, which that document requires for Zig 0.17. It takes
+about 2 minutes on an M-series Mac. The static `libghostty-vt.a` leaves only libc symbols
+undefined, so it links like the macOS slice. Its installed headers are identical to the
+xcframework's, so the committed bindings serve both.
+
+> **Later, out of current scope: Windows, and git checkouts.**
 > - a git checkout needs `-Demit-lib-vt`, because without a `LIB_VERSION` file `zig build`
 >   builds the app.
 > - Windows has prebuilt zips with `ghostty-vt-static.lib`.
-> - add one Zig 0.17 CI job for Linux.
->
-> I didn't run a Zig build in this research.
 
 **Pin:** libghostty-vt `vt-1.0.2` (`573c4a21e0`), from the release's checksummed xcframework,
 not a git submodule. Move to later 1.x releases on purpose. They only add API.
 
-`crates/ghostty-vt-sys` implements this: `build.rs` holds the pin (version, URL, SHA-256), caches
-the zip outside `target/`, and links the macOS slice thinned to the target architecture. To bump,
-change the constants in `build.rs`, run `just bindings`, and commit both.
+`crates/ghostty-vt-sys` implements this: `build.rs` holds the pins (version, URLs, SHA-256s, and
+Zig's), caches the downloads outside `target/`, and links the macOS slice thinned to the target
+architecture. On Linux it builds the source once into that cache and links the static library.
+To bump, change the constants in `build.rs`, run `just bindings`, and commit both.
 
 Don't copy either reference pin:
 

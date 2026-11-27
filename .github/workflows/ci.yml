@@ -23,11 +23,11 @@ jobs:
       - name: docs
         run: test -f README.md && test -f AGENTS.md
       - name: packages
-        # Mesa's software Vulkan driver (lavapipe) for the headless Rune tests, and libclang for
-        # the bindings check.
+        # Mesa's software Vulkan driver (lavapipe) for the headless Rune tests, libxkbcommon for
+        # Rune's keyboard handling to link against, and libclang for the bindings check.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1 libclang-dev
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1 libxkbcommon-dev libclang-dev
       - name: toolchain
         # Installs the channel and components rust-toolchain.toml pins.
         run: |

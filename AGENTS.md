@@ -5,7 +5,9 @@ core: never break the shared layout documents, labels, or terminal state that He
 
 ## Scope (decided with Eli)
 
-- macOS first. Rune is cross-platform, but nothing is built or tested for Linux or Windows yet.
+- macOS first. Rune is cross-platform. CI builds and tests the whole workspace on Linux because
+  GitHub's Linux runners are free, but Linux and Windows aren't targets: nothing else is built or
+  tested for them.
 - UI is anomalyco/rune, the GPU-rendered native Rust UI framework, not a TUI library. Sidebar, tabs,
   popups, palette and toasts are native Rune elements; terminal panes are GPU-rendered views.
 - Features are built in Rust, configured by files (keys, theme, settings). No JS mod runtime.
@@ -38,11 +40,14 @@ and runs `tickets lint`. Only the orchestrator runs `tickets done`.
 ## Conventions
 
 - Commit messages: lowercase conventional commits, single line, no AI co-author lines.
-- Work on a branch via `repos`, open a PR to the landing branch, CI must pass, squash merges.
-- While GitHub Actions can't run (billing), `just ci` (scripts/local-ci) is the required check: it
-  runs exactly what CI runs and prints `local-ci: PASS <sha>`. Run it on your pushed head, then
-  tell the orchestrator with `ask_orchestrator`, including that line. The orchestrator reruns it
-  on the same commit before reviewing.
+- Work on a branch via `repos`, open a PR to the landing branch, the required checks must pass,
+  squash merges.
+- Two checks are required. GitHub's `ci` job runs `just --list` and `just test` on a free Linux
+  runner (macOS runners cost money), and must be green on the PR. `just ci` (scripts/local-ci)
+  runs the same steps on this Mac, where the macOS-only code and tests run too, and prints
+  `local-ci: PASS <sha>`. Run it on your pushed head, plus `just e2e` when your change adds or
+  changes scenarios, then tell the orchestrator with `ask_orchestrator`, including that line and
+  the green GitHub run. The orchestrator reruns `just ci` on the same commit before merging.
 - Run checks through the `justfile`, the way Eli does: `just test` before every push, plus the
   recipes your change touches (`just run`, `just snap`, `just e2e`, `just bundle`, …). Never report
   a recipe as passing unless you ran that recipe and it passed; if a tool is missing, say so and
