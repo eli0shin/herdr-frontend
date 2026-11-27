@@ -5,7 +5,8 @@ The sidebar is Eli's `eli-chrome` top row over his `eli-agents` list
 `crates/model/src/agents.rs` (`Tracker::build` returns a `List`), covered by
 `crates/model/tests/agents.rs`. The app draws it in `crates/app/src/view/sidebar.rs` and keeps its
 state in `crates/app/src/state.rs`. `crates/app/tests/sidebar.rs` and the `shell-agents*` and
-`shell-sort-menu` scenes test it headless.
+`shell-sort-menu` scenes test it headless; `crates/app/tests/agent_jump.rs` and the
+`shell-agent-jump` scene test the jump bar.
 
 ![the shell-agents scene](images/agents-sidebar.png)
 
@@ -41,7 +42,7 @@ state in `crates/app/src/state.rs`. `crates/app/tests/sidebar.rs` and the `shell
   orchestrator isn't listed is an ordinary row.
 - **A viewed done agent stays in Done** until you leave it, even though looking made it idle.
 - **Jump labels** (1–9, 0, then letters; two letters each past 36 rows) on every row. They
-  brighten while agent-jump (ticket 024) has the keyboard.
+  brighten (working blue, semibold) while the jump bar is open.
 - **Empty states.** "No agent status yet…", or "Every agent is on a hidden machine…".
 
 A click on a row focuses its agent's pane. `cmd-b` and `ctrl-g b` show and hide the sidebar. Its
@@ -62,6 +63,42 @@ or folded, and `agent.next`/`agent.prev` follow it. The rows' order also goes to
 and each agent's address, status and pin), as `eli-agents` writes it. Unlike Herdr app, where the
 mod only runs while the sidebar shows, the list is built whether or not the sidebar is visible,
 so the order is never stale.
+
+## Agent navigation and the jump bar
+
+These follow the published orders (`feature-inventory.md` §7). The model's
+`crates/model/src/actions.rs` runs them, and `crates/model/tests/modes.rs` covers them.
+
+- **`agent.next` / `agent.prev`** (`cmd-]` / `cmd-[`, `ctrl-g j` / `ctrl-g k`) step through the
+  navigation order and wrap. Agents the list leaves out (on hidden machines) come after it. A
+  focused sub-agent steps from its agent, the top of its chain of live parents (a terminal
+  that reports no status is not a sub-agent, whoever started it). From a terminal
+  that isn't an agent, `agent.next` goes to the first agent and `agent.prev` to the last.
+- **Numbered agents** (`ctrl-g shift-1` to `shift-9` and `shift-0`, also `ctrl-g !` to `)`) focus
+  the Nth row of the rows' order, the number its label shows.
+- **The jump bar** (`ctrl-;`, Eli's `agent-jump`; `crates/app/src/view/jump.rs`). A 360 × 32 pt
+  bar hangs centered below the window's top edge, in the popover frame: 6 pt down, zoomed, but
+  never closer than 8 window points, as Herdr app places a top popup. It reads "JUMP",
+  then the labels it takes (`1–6 · Esc`, `1–9 · 0 · a s d · Esc`, `… · letters`, `… · two
+  letters`; "No agents to jump to · Esc" with no rows), then the letter typed so far. It holds
+  the keyboard. A whole label closes the bar, then focuses its row's agent (a sub-agent's is a
+  peek). The first of two letters waits for the second. Any other key is dropped, and keys with
+  Cmd, Ctrl or Alt are ignored. Esc, `ctrl-;` again, or a press beside the bar (either button)
+  leaves without a jump. A hidden sidebar is shown while the bar is open and hidden again when it
+  closes; that isn't saved, and toggling the sidebar meanwhile keeps the toggle.
+
+Where it differs from Herdr app and the mods:
+
+- From a terminal that isn't an agent, Herdr app's `agent.next` steps from the first agent, so it
+  lands on the second. Its "shown agent" falls back to the first agent, a fallback meant for
+  layouts with an agent block, which eli has none of. Its own code goes to the first agent when
+  nothing is shown, so here `agent.next` does that.
+- The mod stamps the shared `dotfiles.agents.jumping {at}` every 20 s so `eli-agents` knows to
+  brighten its labels, and drops a stamp a minute old in case the jump died. Here the list reads
+  the open bar from the model directly, so there is no stamp and nothing to go stale.
+- In Herdr app, a press beside the bar also reaches what is under it (GPUI hit-tests through the
+  overlay's backdrop), so clicking a row while jumping both closes the bar and clicks the row.
+  The mod means "a click elsewhere leaves without a jump", so here the press only leaves.
 
 ## Files in the home
 

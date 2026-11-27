@@ -523,7 +523,7 @@ struct TabInfo<'a> {
 /// The terminal that started `t`, among the terminals: as given, else the same id on `t`'s own
 /// machine (a remote record may name its machine by host name or core id,
 /// `herdr-core-protocol.md` §5).
-fn parent_of<'a>(world: &'a World, t: &'a Terminal) -> Option<&'a str> {
+pub(crate) fn parent_of<'a>(world: &'a World, t: &'a Terminal) -> Option<&'a str> {
     let parent = t.parent.as_deref().filter(|p| !p.is_empty())?;
     if world.terminal(parent).is_some() {
         return Some(parent);

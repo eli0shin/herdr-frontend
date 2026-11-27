@@ -351,12 +351,14 @@ pub fn popup_key(state: &PopupState, chord: Chord) -> Option<Action> {
 }
 
 /// The agent-jump bar: a label character, or leaving (Esc, Ctrl+;). Keys with Cmd, Ctrl or Alt
-/// are ignored, as the mod ignores them.
+/// are ignored, as the mod ignores them. The mod reads the typed character, so Shift+1 is `!`
+/// (its other spelling), never row 1; a shifted letter is the letter.
 fn jump_key(chord: Chord) -> Option<Action> {
     match (chord.key, chord.mods) {
         (Key::Escape, _) => Some(Action::Popup(PopupAction::Close)),
         (Key::Char(';'), CTRL) => Some(Action::Popup(PopupAction::Close)),
         (_, m) if m.command_like() => None,
+        (Key::Char(c), SHIFT) if !c.is_ascii_alphabetic() => None,
         (Key::Char(c), _) => Some(Action::AgentJumpKey(c.to_ascii_lowercase())),
         _ => None,
     }
@@ -412,6 +414,36 @@ pub fn jump_labels(count: usize) -> Vec<String> {
         LETTERS.chars().map(String::from).collect()
     };
     digits.chain(rest).take(count).collect()
+}
+
+/// What the agent-jump bar says after "JUMP" for `count` rows: the labels it takes, then Esc.
+/// Letters go a, s, d, f…, so a range like a–d would mislead: up to six are named, else it
+/// says "letters" or "two letters" (`cfg/mods/agent-jump/main.js` `render`).
+pub fn jump_hint(count: usize) -> String {
+    if count == 0 {
+        return "No agents to jump to · Esc".into();
+    }
+    let labels = jump_labels(count);
+    let letters = &labels[labels.len().min(10)..];
+    let digits = if count <= 9 {
+        format!("1–{count}")
+    } else {
+        "1–9 · 0".into()
+    };
+    let range = match letters {
+        [] => digits,
+        [first, ..] => {
+            let letters = if letters.len() <= 6 {
+                letters.join(" ")
+            } else if first.len() > 1 {
+                "two letters".into()
+            } else {
+                "letters".into()
+            };
+            format!("{digits} · {letters}")
+        }
+    };
+    format!("{range} · Esc")
 }
 
 #[cfg(test)]
@@ -586,6 +618,8 @@ mod tests {
             Some(Action::AgentJumpKey('a'))
         );
         assert_eq!(popup_key(&s, chord("1")), Some(Action::AgentJumpKey('1')));
+        assert_eq!(popup_key(&s, chord("shift-1")), None, "Shift+1 types !");
+        assert_eq!(popup_key(&s, chord("!")), Some(Action::AgentJumpKey('!')));
         assert_eq!(popup_key(&s, chord("cmd-a")), None);
         assert_eq!(popup_key(&s, chord("alt-a")), None);
         assert_eq!(popup_key(&s, chord("ctrl-a")), None);
@@ -679,6 +713,18 @@ mod tests {
                 assert!(i == j || !b.starts_with(a.as_str()), "{a} begins {b}");
             }
         }
+    }
+
+    #[test]
+    fn the_jump_hint_names_the_labels_it_takes() {
+        assert_eq!(jump_hint(0), "No agents to jump to · Esc");
+        assert_eq!(jump_hint(1), "1–1 · Esc");
+        assert_eq!(jump_hint(9), "1–9 · Esc");
+        assert_eq!(jump_hint(10), "1–9 · 0 · Esc");
+        assert_eq!(jump_hint(13), "1–9 · 0 · a s d · Esc");
+        assert_eq!(jump_hint(16), "1–9 · 0 · a s d f g h · Esc");
+        assert_eq!(jump_hint(17), "1–9 · 0 · letters · Esc");
+        assert_eq!(jump_hint(37), "1–9 · 0 · two letters · Esc");
     }
 
     #[test]

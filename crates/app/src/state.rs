@@ -245,6 +245,8 @@ pub struct Sidebar {
     pub hidden: bool,
     /// The width a divider drag started from.
     dragged_from: Option<f32>,
+    /// Shown only for the agent-jump bar, to hide again when it goes: never saved.
+    for_jump: bool,
 }
 
 impl Sidebar {
@@ -454,6 +456,7 @@ impl State {
             width: shared.sidebar_px(),
             hidden: shared.sidebar_hidden(),
             dragged_from: None,
+            for_jump: false,
         };
         let mut s = State {
             model,
@@ -822,7 +825,9 @@ impl State {
     /// hold every key unseen, so it closes at once with a "not yet" toast. A list popup that
     /// opens starts with an empty field; each change tells the model its rows, and on opening
     /// or a new query where its cursor starts; the window follows the cursor. A prompt opens
-    /// with its name in the field, selected.
+    /// with its name in the field, selected. A hidden sidebar shows while the agent-jump bar is
+    /// open, for its labels, and hides again when it closes (the mod's `layout.show` and
+    /// `layout.hide`); that isn't saved.
     fn mode_changed(&mut self, before: &model::Mode) {
         let mode = self.model.mode().clone();
         // One popup replacing another in a step (a menu's "Rename" opening the prompt) is no
@@ -832,6 +837,11 @@ impl State {
             if crate::view::popup::focus_key(before) != key || box_changed(before, &mode) {
                 self.ui.focus = Some(Focus::Popup);
             }
+        }
+        let jumping = |m: &model::Mode| matches!(m, model::Mode::Popup(PopupState::Jump(_)));
+        if jumping(before) && !jumping(&mode) && self.sidebar.for_jump {
+            self.sidebar.for_jump = false;
+            self.sidebar.hidden = true;
         }
         match &mode {
             model::Mode::Popup(PopupState::List(list)) if crate::view::popup::drawn(list.popup) => {
@@ -869,12 +879,14 @@ impl State {
                 }
             }
             model::Mode::Popup(PopupState::Confirm(_) | PopupState::Menu(_)) => {}
-            model::Mode::Popup(state) => {
-                let action = match state {
-                    PopupState::List(list) => Action::Open(list.popup),
-                    _ => Action::Open(Popup::AgentJump),
-                };
-                self.not_yet(&action);
+            model::Mode::Popup(PopupState::Jump(_)) => {
+                if !jumping(before) && self.sidebar.hidden {
+                    self.sidebar.hidden = false;
+                    self.sidebar.for_jump = true;
+                }
+            }
+            model::Mode::Popup(PopupState::List(list)) => {
+                self.not_yet(&Action::Open(list.popup));
                 self.step(self.now, Action::Popup(PopupAction::Close));
             }
             model::Mode::Copy(_) => {
@@ -1118,6 +1130,8 @@ impl State {
             }
             AppCommand::ToggleSidebar => {
                 self.sidebar.hidden = !self.sidebar.hidden;
+                // Toggled by hand while the jump bar showed it: it stays as toggled.
+                self.sidebar.for_jump = false;
                 let sort_menu = self.model.mode().popup().and_then(PopupState::popup);
                 if self.sidebar.hidden && sort_menu == Some(Popup::SortMenu) {
                     self.step(self.now, Action::Popup(PopupAction::Close));
@@ -2162,6 +2176,10 @@ impl State {
     /// the background, after FOCUS(0): sent, that DATA would take the size back from the window
     /// in front (`herdr-core-protocol.md` §4), so it's dropped.
     pub fn on_ime(s: &mut State, ime: &Ime, tx: &mut Tx) -> bool {
+        // The jump bar holds the keyboard: nothing composes into the terminal behind it.
+        if matches!(s.model.mode(), model::Mode::Popup(PopupState::Jump(_))) {
+            return false;
+        }
         let Some(address) = s.typing_into() else {
             return false;
         };

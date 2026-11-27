@@ -3,6 +3,7 @@
 pub mod dialog;
 pub mod help;
 pub mod icons;
+pub mod jump;
 pub mod list;
 pub mod menu;
 pub mod overlay;
