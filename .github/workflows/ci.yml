@@ -53,17 +53,12 @@ jobs:
           tar -xzf "$dir/hc.tar.gz" -C "$dir"
           "$dir/herdr-core" --version
           echo "HERDR_TEST_HC=$dir/herdr-core" >> "$GITHUB_ENV"
-      - name: rune pins
-        run: scripts/check-rune-pins
-      - name: fmt
-        run: cargo fmt --all -- --check
-      - name: clippy
-        run: cargo clippy --all-targets --locked -- -D warnings
-      - name: test
-        run: cargo test --locked
-      - name: ghostty-vt bindings
-        # Lints the feature-gated bindgen binary, then regenerates src/bindings.rs from the pinned
-        # headers and fails on a diff.
-        run: |
-          cargo clippy --locked -p ghostty-vt-sys --all-targets --features bindgen -- -D warnings
-          cargo run --locked -p ghostty-vt-sys --features bindgen --bin ghostty-vt-bindgen -- --check
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: 1.59.0
+      - name: justfile
+        # Parses the justfile, so a broken one fails here rather than mid-run.
+        run: just --list
+      - name: just test
+        # The same entry point used locally: rune pins, fmt, clippy, tests and the bindings check.
+        run: just test
