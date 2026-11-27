@@ -379,10 +379,11 @@ fallback would do what Ghostty does: one atlas pair per (font configuration, dev
 shared by all panes and keyed by (face, glyph id, render options), with sprites rasterized into
 the grayscale atlas once per (codepoint, cell size).
 
-**Implemented** for the cells grid's line can't place as Ghostty does (ticket 018,
-`crates/app/src/view/terminal/glyph/`). Wide, fallback, emoji and Nerd Font cells are resolved in
-Ghostty's fallback order and rasterized with Ghostty's CoreText calls and constraints, once per
-glyph. They're drawn as images over the grid at device pixels (`renderer-gates.md` "Fidelity").
+**Implemented** for the cells grid's line can't place as Ghostty does (tickets 018 and 037,
+`crates/app/src/view/terminal/glyph/`). Wide, fallback, emoji and Nerd Font cells, and the
+terminal font's own glyphs that Ghostty constrains, are resolved in Ghostty's fallback order and
+rasterized with Ghostty's CoreText calls and constraints, once per glyph. They're drawn as images
+over the grid at device pixels (`renderer-gates.md` "Fidelity").
 
 ### Font fallback and shaping
 
@@ -392,7 +393,10 @@ glyph. They're drawn as images over the grid at device pixels (`renderer-gates.m
   2. the sprite font
   3. loaded faces in the requested style and presentation
   4. loaded faces in regular style
-  5. system discovery
+  5. system discovery: CoreText's own fallback (`CTFontCreateForString`) for Han ideographs,
+     otherwise the fonts CoreText matches for the codepoint, best first by Ghostty's score
+     (`ghostty:src/font/discovery.zig` `discoverFallback`). The two pick different faces: for
+     kana CoreText's fallback is Hiragino Sans, the score picks Arial Unicode MS.
   6. any presentation
 
   Presentation follows VS15/VS16 and skin tone modifiers (`ghostty:src/font/shaper/run.zig:170-188`).
@@ -944,13 +948,13 @@ Each stage ends with tests in `cargo test` plus a fixture or screenshot check.
    fills, pinned cells), the row-id cache, cursor and selection. One pane, then many. Start the
    pixel-diff harness against Ghostty.app, and measure the §2 gates. If a gate fails, decide
    here whether to move to the `Compositor` pass.
-5. **Fidelity:** port the sprites (`sprite/draw/*.zig`), underline styles and colors, Nerd Font
-   icon constraints, the color emoji atlas, and fallback, with ligatures off. Neovim checklist:
-   splits, floats, undercurl, statusline icons, CJK. Built in ticket 018, except Symbols for
-   Legacy Computing and branch drawing, and clusters of several code points, which Rune still
-   shapes (`renderer-gates.md` "Fidelity"). Still open: the Ghostty diffs of the Neovim
-   checklist screen and of the glyph atlas after its last fixes, in ticket
-   `037-ghostty-diffs-for-the-neovim-checklist-and-glyph-atlas`.
+5. **Fidelity (done):** port the sprites (`sprite/draw/*.zig`), underline styles and colors, Nerd
+   Font icon constraints, the color emoji atlas, and fallback, with ligatures off. Neovim
+   checklist: splits, floats, undercurl, statusline icons, CJK. Built in ticket 018 and measured
+   against Ghostty in ticket 037, which fixed the fallback faces, the constrained glyphs of the
+   terminal font, emoji edges and undercurls over a filled next row (`renderer-gates.md`
+   "Fidelity"). Not taken: Symbols for Legacy Computing and branch drawing, and clusters of
+   several code points, which Rune still shapes.
 6. **Input:** keys (kitty, consumed mods, releases), IME preedit, mouse, paste, focus.
 7. **Scrollback:** viewport and scrollbar, smooth scroll with overscan, search, OSC 8 and links.
 8. **Copy/visual mode** (§6).

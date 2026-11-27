@@ -21,7 +21,7 @@ pub mod sprite;
 
 use std::cell::RefCell;
 
-use rune::{El, OptionAsAlt, Transition, el, grid, text};
+use rune::{El, OptionAsAlt, Shape, Transition, canvas, el, grid, text};
 use terminal::{Padding, Snapshot};
 
 use self::font::Face;
@@ -72,10 +72,14 @@ impl TerminalPane {
     pub fn view(&self, face: &Face, look: &Look) -> El {
         let snapshot = &self.snapshot;
         let (cell_w, cell_h) = face.cell_pt();
-        let (rows, atlas) = {
+        let (rows, atlas, spill) = {
             let mut cache = self.rows.borrow_mut();
             let rows = cache.rows(&snapshot.screen, &snapshot.colors, face, look);
-            (rows, std::mem::take(&mut cache.atlas))
+            (
+                rows,
+                std::mem::take(&mut cache.atlas),
+                std::mem::take(&mut cache.spill),
+            )
         };
         let (grid_w, grid_h) = (
             f32::from(snapshot.cols) * cell_w,
@@ -102,6 +106,7 @@ impl TerminalPane {
                 el().absolute(self.padding.left as f32 / s, self.padding.top as f32 / s)
                     .size(grid_w, grid_h)
                     .child(screen)
+                    .children(spill_view(&spill, face, grid_w, grid_h))
                     .children(atlas.iter().map(|(row, cell)| cell.view(*row, face)))
                     .children(cursor::overlay(snapshot, self.focused, face, look))
                     .children(self.ime(face)),
@@ -159,4 +164,33 @@ impl TerminalPane {
         }
         Some(at)
     }
+}
+
+/// The sprite parts that reach below their rows ([`rows::BuiltRow::spill`]), over the grid: there
+/// they draw over the next row's background, as in Ghostty, rather than under its fill.
+fn spill_view(spill: &[(u16, rows::Spill)], face: &Face, grid_w: f32, grid_h: f32) -> Option<El> {
+    if spill.is_empty() {
+        return None;
+    }
+    let cell_h = face.metrics.cell_height as i32;
+    let mut shape = Shape::new();
+    for (row, boxes) in spill {
+        let dy = i32::from(*row) * cell_h;
+        for &(b, color) in boxes.iter() {
+            let b = sprite::AlphaBox {
+                y0: b.y0 + dy,
+                y1: b.y1 + dy,
+                ..b
+            };
+            shape = shape.fill(sprite::alpha_box_pt(b, 0, face.scale), color);
+        }
+    }
+    Some(
+        canvas(shape)
+            .key("spill")
+            .absolute(0.0, 0.0)
+            .size(grid_w, grid_h)
+            .a11y_hidden()
+            .inert(),
+    )
 }

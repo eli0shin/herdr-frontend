@@ -1,25 +1,27 @@
 //! The glyph atlas: cells the row's shaped line can't draw the way Ghostty does (wide characters,
-//! characters the terminal font lacks, emoji, Nerd Font icons), rasterized as Ghostty's macOS
-//! face rasterizes them and drawn as images over the grid at whole device pixels
-//! (`docs/research/terminal-rendering.md` §2 "Glyph atlas" and "Font fallback and shaping").
+//! characters the terminal font lacks, emoji, Nerd Font icons, and the terminal font's glyphs
+//! Ghostty constrains), rasterized as Ghostty's macOS face rasterizes them and drawn as images
+//! over the grid at whole device pixels (`docs/research/terminal-rendering.md` §2 "Glyph atlas"
+//! and "Font fallback and shaping").
 //!
 //! For each such cell:
 //!
 //! - **Font fallback** follows Ghostty's order (`font/CodepointResolver.zig`,
-//!   `font/SharedGridSet.zig`): for a terminal font other than JetBrains Mono, the JetBrains Mono
-//!   Ghostty embeds as its backup (`SharedGridSet.zig:260-316`), then the Symbols Nerd Font Ghostty embeds, then Apple Color Emoji for
-//!   emoji presentation, then the fallback faces already loaded, then CoreText's fallback for the
-//!   character, scaled so its ideograph width matches the terminal font's
-//!   (`Collection.SizeAdjustment.ic_width`). A character is emoji when a variation selector says
-//!   so, or by default when it has the Unicode `Emoji_Presentation` property.
+//!   `font/SharedGridSet.zig`): the terminal font; for a terminal font other than JetBrains Mono,
+//!   the JetBrains Mono Ghostty embeds as its backup (`SharedGridSet.zig:260-316`); the Symbols
+//!   Nerd Font Ghostty embeds; Apple Color Emoji for emoji presentation; the fallback faces
+//!   already loaded; then Ghostty's discovery (`discovery.rs`), scaled so its ideograph width
+//!   matches the terminal font's (`Collection.SizeAdjustment.ic_width`). A character is emoji
+//!   when a variation selector says so, or by default when it has the Unicode
+//!   `Emoji_Presentation` property.
 //! - **Constraints** ([`constraint`]) size and place the glyph: every emoji covers its cells,
 //!   Nerd Font icons follow Ghostty's table, other symbols shrink to fit, and a symbol followed by
 //!   a blank cell may spread into it.
 //! - **Rasterizing** makes the same CoreGraphics calls as Ghostty's `coretext.zig`
 //!   `renderGlyph`: antialiased, no font smoothing, subpixel positioning without quantizing, the
 //!   glyph's box placed by its constraint and centered in the rounded cell. Color glyphs are drawn
-//!   in sRGB (Ghostty uses Display P3 for its P3 surface; ours is sRGB), text glyphs as an alpha
-//!   mask in the cell's color.
+//!   in sRGB (Ghostty uses Display P3 for its P3 surface; ours is sRGB) with the darker edges
+//!   Ghostty's shader gives them, text glyphs as an alpha mask in the cell's color.
 //!
 //! What it doesn't take: clusters of several code points other than a variation selector
 //! (combining marks, emoji ZWJ sequences, skin tones). Those stay pinned cells Rune shapes, as do
@@ -28,6 +30,8 @@
 pub mod constraint;
 #[cfg(target_os = "macos")]
 mod coretext;
+#[cfg(target_os = "macos")]
+mod discovery;
 mod tables;
 
 use std::cell::RefCell;

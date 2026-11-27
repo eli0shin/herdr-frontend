@@ -13,7 +13,9 @@
 //! - Ghostty's sprites in the vector layer, at whole device pixels: underlines of every style,
 //!   strikethrough, overline, and the characters Ghostty draws itself (box drawing, blocks,
 //!   braille, Powerline, [`sprite`] has the list). A sprite character also stays in the text,
-//!   drawn transparent, so the row reads as the terminal's text.
+//!   drawn transparent, so the row reads as the terminal's text. The part of a sprite below the
+//!   row (an undercurl's lower half) is kept apart, for the view to draw over the next row's
+//!   background, as Ghostty draws every background first.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -43,6 +45,9 @@ pub struct BuiltRow {
     /// Sprites over the text, in device pixels from the row's top left, each box in its color
     /// at its coverage.
     pub boxes: Vec<(AlphaBox, Color)>,
+    /// The parts of sprites below the row, from the same top left. The grid would paint them
+    /// under the next row's background fill, so the view draws them over the grid instead.
+    pub spill: Vec<(AlphaBox, Color)>,
     /// Cells the glyph atlas draws, over the grid.
     pub atlas: Vec<AtlasCell>,
     pub wraps: bool,
@@ -116,6 +121,7 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
         fills: Vec::new(),
         cells: Vec::new(),
         boxes: Vec::new(),
+        spill: Vec::new(),
         atlas: Vec::new(),
         wraps: row.wrapped,
     };
@@ -204,7 +210,7 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
         };
         let italic = cell.flags.contains(CellFlags::ITALIC);
         let on_line =
-            drawn && cell.width == Width::Narrow && single.is_some_and(|c| face.covers(c));
+            drawn && cell.width == Width::Narrow && single.is_some_and(|c| on_line(c, cell, face));
         if drawn
             && !on_line
             && ink_fg != Color::TRANSPARENT
@@ -273,7 +279,28 @@ pub fn build(row: &Row, colors: &Colors, face: &Face, look: &Look) -> BuiltRow {
         s.end = s.end.min(trimmed as u32);
     }
     built.spans.retain(|s| s.end > s.start);
+    built.spill = split_spill(&mut built.boxes, metrics.cell_height as i32);
     built
+}
+
+/// Takes the parts of `boxes` below a row `height` pixels tall out of them.
+fn split_spill(boxes: &mut Vec<(AlphaBox, Color)>, height: i32) -> Vec<(AlphaBox, Color)> {
+    let mut spill = Vec::new();
+    boxes.retain_mut(|(b, color)| {
+        if b.y1 <= height {
+            return true;
+        }
+        spill.push((
+            AlphaBox {
+                y0: b.y0.max(height),
+                ..*b
+            },
+            *color,
+        ));
+        b.y1 = height;
+        b.y0 < height
+    });
+    spill
 }
 
 /// Each cell's code point, 0 for an empty one, as `constraintWidth` reads its neighbors.
@@ -282,6 +309,18 @@ fn code_points(row: &Row) -> Vec<u32> {
         .iter()
         .map(|c| c.text.as_str().chars().next().map_or(0, |c| c as u32))
         .collect()
+}
+
+/// Whether a narrow `c` in `cell` draws on the row's line: the terminal font has it, and Ghostty
+/// draws it with no constraint. A glyph Ghostty constrains (a Nerd Font or other symbol, even
+/// from the terminal font, as `addGlyph` does) goes through the atlas, which has only the
+/// terminal font's regular face: in a bold or italic cell it stays on the line, in its style but
+/// unconstrained.
+pub fn on_line(c: char, cell: &terminal::Cell, face: &Face) -> bool {
+    face.covers(c)
+        && (cell.flags.contains(CellFlags::BOLD)
+            || cell.flags.contains(CellFlags::ITALIC)
+            || !glyph::constraint::for_text(c as u32).does_anything())
 }
 
 /// The atlas glyph for column `x` of `row`, if the atlas draws that cell.
@@ -294,9 +333,9 @@ pub(super) fn atlas_glyph(
     let cell = row.cells.get(x)?;
     let text = cell.text.as_str();
     let mut chars = text.chars();
-    // A narrow character the terminal font has draws on the row's line, and a sprite as itself.
+    // A narrow character the row's line draws stays there, and a sprite draws as itself.
     if let (Some(c), None) = (chars.next(), chars.next())
-        && ((cell.width == Width::Narrow && face.covers(c)) || sprite::drawn(c))
+        && ((cell.width == Width::Narrow && on_line(c, cell, face)) || sprite::drawn(c))
     {
         return None;
     }
@@ -436,10 +475,16 @@ pub struct RowCache {
     pub built: usize,
     /// The atlas cells of the last [`RowCache::rows`] call's rows, by row.
     pub atlas: Vec<(u16, AtlasCell)>,
+    /// The sprite parts below the last call's rows ([`BuiltRow::spill`]), by row.
+    pub spill: Vec<(u16, Spill)>,
 }
 
-/// A built row: the snapshot row it was built from, what Rune draws, and its atlas cells.
-type CachedRow = (Arc<Row>, Rc<GridRow>, Rc<[AtlasCell]>);
+/// A row's sprite parts below it ([`BuiltRow::spill`]), each box in its color at its coverage.
+pub type Spill = Rc<[(AlphaBox, Color)]>;
+
+/// A built row: the snapshot row it was built from, what Rune draws, its atlas cells and its
+/// sprites' spill.
+type CachedRow = (Arc<Row>, Rc<GridRow>, Rc<[AtlasCell]>, Spill);
 
 #[derive(Clone, PartialEq)]
 struct CacheKey {
@@ -471,22 +516,29 @@ impl RowCache {
         let mut kept = HashMap::with_capacity(screen.len());
         self.built = 0;
         self.atlas.clear();
+        self.spill.clear();
         let rows = screen
             .iter()
             .enumerate()
             .map(|(y, row)| {
-                let (grid_row, atlas) = match self.rows.remove(&row.id) {
-                    Some((was, grid_row, atlas)) if Arc::ptr_eq(&was, row) => (grid_row, atlas),
+                let (grid_row, atlas, spill) = match self.rows.remove(&row.id) {
+                    Some((was, grid_row, atlas, spill)) if Arc::ptr_eq(&was, row) => {
+                        (grid_row, atlas, spill)
+                    }
                     _ => {
                         self.built += 1;
                         let built = build(row, colors, face, look);
                         let atlas: Rc<[AtlasCell]> = built.atlas.clone().into();
-                        (Rc::new(built.grid_row(face)), atlas)
+                        let spill: Spill = built.spill.clone().into();
+                        (Rc::new(built.grid_row(face)), atlas, spill)
                     }
                 };
                 self.atlas
                     .extend(atlas.iter().map(|cell| (y as u16, cell.clone())));
-                kept.insert(row.id, (row.clone(), grid_row.clone(), atlas));
+                if !spill.is_empty() {
+                    self.spill.push((y as u16, spill.clone()));
+                }
+                kept.insert(row.id, (row.clone(), grid_row.clone(), atlas, spill));
                 grid_row
             })
             .collect();
@@ -737,6 +789,59 @@ mod tests {
             .collect();
         assert_eq!(moved, second, "the same sprite in each cell");
         assert!(row.boxes.iter().any(|(_, c)| c.a < 1.0), "antialiased");
+    }
+
+    #[test]
+    fn an_undercurls_lower_half_is_kept_apart_to_draw_over_the_next_row() {
+        let h = face().metrics.cell_height as i32;
+        let row = built("\x1b[4:3mab\x1b[0m");
+        // JetBrains Mono's undercurl reaches below the cell, as Ghostty draws it.
+        assert!(!row.spill.is_empty(), "{:?}", row.boxes);
+        assert!(row.boxes.iter().all(|(b, _)| b.y1 <= h && b.y0 < b.y1));
+        assert!(row.spill.iter().all(|(b, _)| b.y0 >= h && b.y0 < b.y1));
+    }
+
+    #[test]
+    fn a_box_across_the_rows_bottom_is_cut_there_and_one_below_moves_whole() {
+        let b = |y0, y1, alpha| AlphaBox {
+            x0: 0,
+            y0,
+            x1: 4,
+            y1,
+            alpha,
+        };
+        let red = rgb(0xff0000);
+        let mut boxes = vec![
+            (b(30, 40, 1), red),
+            (b(37, 39, 2), red),
+            (b(10, 20, 3), red),
+        ];
+        let spill = split_spill(&mut boxes, 37);
+        assert_eq!(boxes, [(b(30, 37, 1), red), (b(10, 20, 3), red)]);
+        assert_eq!(spill, [(b(37, 40, 1), red), (b(37, 39, 2), red)]);
+    }
+
+    #[test]
+    fn a_glyph_ghostty_constrains_leaves_the_line_even_from_the_terminal_font() {
+        let face = face();
+        // JetBrains Mono has the Powerline branch symbol, but Ghostty draws it to its Nerd Font
+        // constraint; a letter it draws as it is.
+        assert!(face.covers('\u{e0a0}'));
+        let row = built("\u{e0a0} a");
+        assert_eq!(row.text, "  a");
+        if cfg!(target_os = "macos") {
+            assert_eq!(row.atlas.iter().map(|c| c.col).collect::<Vec<_>>(), [0]);
+        }
+    }
+
+    #[test]
+    fn a_bold_or_italic_symbol_from_the_terminal_font_stays_on_the_line_in_its_style() {
+        // The atlas has only the regular face; a bold prompt's ❯ keeps its weight on the line.
+        let row = built("\x1b[1m❯\x1b[0;3m→\x1b[0m");
+        assert_eq!(row.text, "❯→");
+        assert!(row.atlas.is_empty(), "{:?}", row.atlas);
+        let styles: Vec<_> = row.spans.iter().map(|s| (s.weight, s.italic)).collect();
+        assert_eq!(styles, [(Some(BOLD), false), (None, true)]);
     }
 
     #[test]

@@ -33,9 +33,9 @@ png = "0.18.1"
 # The glyph atlas (`src/view/terminal/glyph/`): fallback faces, emoji and icons rasterized with the
 # same CoreText calls Ghostty's macOS face makes. The versions Rune's text stack already uses.
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFData", "CFString", "CFCGTypes"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFArray", "CFCharacterSet", "CFData", "CFDictionary", "CFNumber", "CFString", "CFCGTypes"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGBitmapContext", "CGContext", "CGColorSpace", "CGImage", "CGFont"] }
-objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFont", "CTFontDescriptor", "CTFontManager", "CTFontTraits", "objc2-core-graphics"] }
+objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFont", "CTFontCollection", "CTFontDescriptor", "CTFontManager", "CTFontTraits", "objc2-core-graphics"] }
 
 # The end-to-end harness (`docs/e2e.md`): real windows on the person's display, so it runs only
 # under `just e2e` (`HERDR_E2E=1`); plain `cargo test` builds it and skips.
