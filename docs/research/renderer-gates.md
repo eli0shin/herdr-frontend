@@ -377,12 +377,12 @@ What it doesn't take yet:
 
 | item | how it draws | Ghostty diff |
 | --- | --- | --- |
-| splits | `│` separators as sprites; the `nvim` screen | lines ≤ 3.1% of pixels, none over 16 |
-| floats | rounded border: `╭╮╯╰` arcs and `─│` lines as sprites | arcs ≤ 5%, none over 16 |
+| splits | `│` separators as sprites; the `nvim` screen | lines ≤ 3.1% of pixels, none over 16; the checklist screen in ticket 037 |
+| floats | rounded border: `╭╮╯╰` arcs and `─│` lines as sprites | arcs ≤ 5%, none over 16; the checklist screen in ticket 037 |
 | undercurl | per-cell curl sprites in the SGR 58 color; dotted and dashed too | identical |
 | statusline icons | Nerd Font glyphs through the atlas with Ghostty's constraints; Powerline separators as sprites | separators within 16; icons not measured yet (ticket 037) |
 | cmdline | text on the line, the cursor in it | not measured yet (ticket 037) |
-| cursor | the cell's whole-pixel box, the glyph under a block redrawn | identical on every screen measured |
+| cursor | the cell's whole-pixel box, the glyph under a block redrawn | identical on every screen measured; the cmdline cursor in ticket 037 |
 | CJK and emoji | the atlas | see [Glyph atlas](#glyph-atlas); the last fixes not measured yet (ticket 037) |
 | ligatures off | `calt` and `liga` off, as Ghostty's `-calt`, `-liga` | `-> => != fi fl` measure as text |
 
