@@ -148,6 +148,11 @@ pub enum Effect {
         cursor: usize,
         query: String,
     },
+    /// A machine call (`machine.add`, `machine.connect`, `machine.rename`, `machine.rm`); the
+    /// window makes it and shows its answer.
+    Machine(crate::machines::MachineCall),
+    /// Put this text on the clipboard.
+    Clipboard(String),
     /// Not built yet: show a "not yet" toast.
     NotYet(Action),
     /// Step [`crate::Event::Tick`] at this clock time (seconds) or later.

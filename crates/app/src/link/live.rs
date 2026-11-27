@@ -16,10 +16,13 @@ use herdr_client::{
     StreamControl, StreamItem, Supervisor, SupervisorOptions, Transport, Update,
 };
 use herdr_proto::methods::{
-    DocGetResult, DocSetResult, ExecResult, RunResult, TerminalAttach, TerminalPut,
+    DocGetResult, DocSetResult, ExecResult, MachineAdd, MachineConnect, MachineRename, MachineRm,
+    RemoveResult, RunResult, TerminalAttach, TerminalPut,
 };
+use herdr_proto::types::{Machine, MachineView};
 use herdr_proto::{CloseReason, RpcError, Terminal};
 use herdr_shared::Round;
+use model::machines::MachineCall;
 use model::{Event, Request, TerminalUpdate, Token};
 
 use super::{Attachment, Link, News, Out, Upload, unavailable};
@@ -40,6 +43,7 @@ pub struct Live {
     generation: u64,
     calls: Vec<(Token, CallAnswer)>,
     docs: Vec<(Option<String>, DocAnswer)>,
+    machine_calls: Vec<(MachineCall, MachineAnswer)>,
     controls: HashMap<String, StreamControl>,
     /// Answers known at once (no connection), for the next poll.
     ready: Vec<News>,
@@ -53,6 +57,25 @@ enum CallAnswer {
     Record(Pending<Terminal>),
     Exec(Pending<ExecResult>),
 }
+
+enum MachineAnswer {
+    Machine(Pending<Machine>),
+    View(Pending<MachineView>),
+    Removed(Pending<RemoveResult>),
+}
+
+impl MachineAnswer {
+    fn try_take(&mut self) -> Option<Result<(), Error>> {
+        match self {
+            MachineAnswer::Machine(p) => p.try_take().map(|r| r.map(drop)),
+            MachineAnswer::View(p) => p.try_take().map(|r| r.map(drop)),
+            MachineAnswer::Removed(p) => p.try_take().map(|r| r.map(drop)),
+        }
+    }
+}
+
+/// How long a machine call may take: adding or dialing one goes through ssh.
+const MACHINE_CALL: Duration = Duration::from_secs(120);
 
 enum DocAnswer {
     Read(Pending<DocGetResult>),
@@ -74,6 +97,7 @@ impl Live {
             generation: 0,
             calls: Vec::new(),
             docs: Vec::new(),
+            machine_calls: Vec::new(),
             controls: HashMap::new(),
             ready: Vec::new(),
             puts: mpsc::channel(),
@@ -119,10 +143,10 @@ impl Link for Live {
         };
         while let Some(update) = supervisor.try_recv() {
             match update {
-                Update::Connected { generation, .. } => {
+                Update::Connected { generation, hello } => {
                     self.generation = generation;
                     self.controls.clear();
-                    news.push(News::Connected);
+                    news.push(News::Connected(Some(hello)));
                     let update = supervisor.with_terminals(|set| TerminalUpdate {
                         resynced: true,
                         terminals: set.iter().cloned().collect(),
@@ -182,6 +206,22 @@ impl Link for Live {
             news.push(News::Event(event));
             false
         });
+        let before = self.machine_calls.len();
+        self.machine_calls.retain_mut(|(call, answer)| {
+            let Some(result) = answer.try_take() else {
+                return true;
+            };
+            news.push(News::Machine {
+                call: call.clone(),
+                result: result.map_err(rpc),
+            });
+            false
+        });
+        if self.machine_calls.len() != before
+            && let Some(machines) = &self.machines
+        {
+            machines.poke();
+        }
         self.docs.retain_mut(|(machine, answer)| {
             let event = match answer {
                 DocAnswer::Read(p) => p.try_take().map(|result| Event::DocRead {
@@ -267,6 +307,45 @@ impl Link for Live {
             Round::Write(set) => DocAnswer::Write(connection.call(set)),
         };
         self.docs.push((machine, answer));
+    }
+
+    fn machine(&mut self, call: MachineCall) {
+        let Some(connection) = self.connection() else {
+            self.ready.push(News::Machine {
+                call,
+                result: Err(unavailable("not connected")),
+            });
+            return;
+        };
+        let wait = Some(MACHINE_CALL);
+        let answer = match &call {
+            MachineCall::Add(target) => MachineAnswer::Machine(connection.call_timeout(
+                MachineAdd {
+                    target: Some(target.clone()),
+                    ..Default::default()
+                },
+                wait,
+            )),
+            MachineCall::Connect(machine) => MachineAnswer::View(connection.call_timeout(
+                MachineConnect {
+                    machine: machine.clone(),
+                    ..Default::default()
+                },
+                wait,
+            )),
+            MachineCall::Rename { machine, to } => {
+                MachineAnswer::Machine(connection.call(MachineRename {
+                    machine: machine.clone(),
+                    new_name: to.clone(),
+                    ..Default::default()
+                }))
+            }
+            MachineCall::Remove(machine) => MachineAnswer::Removed(connection.call(MachineRm {
+                machine: machine.clone(),
+                ..Default::default()
+            })),
+        };
+        self.machine_calls.push((call, answer));
     }
 
     fn attach(&mut self, params: TerminalAttach, writer: terminal::Writer, fresh: bool) {

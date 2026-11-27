@@ -469,8 +469,9 @@ fn settings_lists_the_files_and_opens_one_in_the_editor() {
     ch(&mut rt, "⌘", ',');
     frames(&mut rt, 2);
     assert_eq!(list(&rt).popup, Popup::Settings);
-    assert_eq!(list(&rt).rows, 4);
+    assert_eq!(list(&rt).rows, 5);
     assert_eq!(focused(&rt).as_deref(), Some("settings"));
+    assert_eq!(text_of(&rt, "settings-name-3"), "Machines");
     assert_eq!(text_of(&rt, "settings-name-1"), "keys.json");
     // keys.json, in a new tab running the editor.
     press(&mut rt, "", Key::Down);
@@ -489,6 +490,13 @@ fn settings_lists_the_files_and_opens_one_in_the_editor() {
     press(&mut rt, "", Key::Up);
     press(&mut rt, "", Key::Enter);
     assert_eq!(rt.state.revealed, [rt.state.home_dir()]);
+    // The row before it opens the Machines dialog.
+    ch(&mut rt, "⌘", ',');
+    press(&mut rt, "", Key::Up);
+    press(&mut rt, "", Key::Up);
+    press(&mut rt, "", Key::Enter);
+    frames(&mut rt, 2);
+    assert_eq!(list(&rt).popup, Popup::Machines);
 }
 
 #[test]

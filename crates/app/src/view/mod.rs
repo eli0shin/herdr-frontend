@@ -5,6 +5,7 @@ pub mod help;
 pub mod icons;
 pub mod jump;
 pub mod list;
+pub mod machines;
 pub mod menu;
 pub mod new_space;
 pub mod overlay;

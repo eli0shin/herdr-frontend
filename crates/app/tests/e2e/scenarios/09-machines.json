@@ -1,9 +1,13 @@
 {
   "title": "Machines",
   "inventory": "§9",
-  "notes": "The isolated core has no other machines; the tab bar names this computer and the machine filter lists it alone. Herdr app's copied shared.json keeps Eli's hidden machines.",
+  "notes": "The isolated core has no other machines: the tab bar names this computer, the machine filter lists it alone and the Machines dialog shows only this computer. Herdr app's copied shared.json keeps Eli's hidden machines. A real second machine is covered by crates/app/tests/remote_machine.rs (docs/machines.md).",
   "steps": [
     {"name": "machine filter", "keys": "ctrl-g /", "herdr-app": {"do": "mod.open", "args": {"name": "agent-machines"}}},
-    {"name": "close the filter", "keys": "escape", "herdr-app": {"do": "overlay.close"}}
+    {"name": "hide this computer", "keys": "j space", "herdr-app": {"skip": "keys go to herdr-frontend only"}},
+    {"name": "show every machine and close", "keys": "k enter", "herdr-app": {"do": "overlay.close"}},
+    {"name": "palette: machines", "keys": "cmd-shift-p", "type": "machines", "herdr-app": {"skip": "typing goes to herdr-frontend only"}},
+    {"name": "machines dialog", "keys": "enter", "herdr-app": {"do": "app.settings"}},
+    {"name": "close the dialog", "keys": "escape", "herdr-app": {"do": "overlay.close"}}
   ]
 }

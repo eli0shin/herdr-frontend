@@ -117,6 +117,8 @@ pub enum Rename {
     Space(String),
     /// The terminal menu's "Rename": a pane's name, its block's `title`.
     Pane(String),
+    /// A machine this core added (`machine.rename`).
+    Machine(String),
 }
 
 /// A rename prompt: "Name", the current value selected, and a hint ("empty: its number").
@@ -131,6 +133,8 @@ pub struct Prompt {
 pub enum Confirmed {
     /// Close a space and end its terminals (also closing a space's last tab).
     CloseSpace(String),
+    /// Forget a machine (`machine.rm`); its terminals keep running there.
+    RemoveMachine(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -147,6 +151,8 @@ pub enum MenuTarget {
     Tab(String),
     /// A pane's terminal, right-clicked.
     Pane(String),
+    /// A machine in the Machines dialog.
+    Machine(String),
 }
 
 /// The icon a menu item shows (`cfg/mods/menu/main.js` `menuIcon`): Lucide glyphs, drawn by the
@@ -167,6 +173,10 @@ pub enum MenuIcon {
     Zoom,
     /// `terminal`: anything else.
     Terminal,
+    /// `server`: a machine.
+    Machine,
+    /// `copy`: a command to the clipboard.
+    Copy,
 }
 
 /// One row of a context menu: what it says, its icon, what it runs (in order), and the named

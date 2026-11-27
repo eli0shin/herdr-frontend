@@ -173,6 +173,15 @@ pub static FOLDER: Icon = Icon {
     ),
 };
 
+/// Copying a command (Lucide `copy`).
+pub static COPY: Icon = Icon {
+    name: "herdr-copy",
+    view: 24.0,
+    body: lucide!(
+        r#"<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>"#
+    ),
+};
+
 /// A menu item's icon (`cfg/mods/menu/main.js` `menuIcon`).
 pub fn menu_icon(icon: model::MenuIcon) -> &'static Icon {
     use model::MenuIcon as M;
@@ -184,5 +193,7 @@ pub fn menu_icon(icon: model::MenuIcon) -> &'static Icon {
         M::SplitDown => &PANEL_BOTTOM,
         M::Zoom => &SQUARE,
         M::Terminal => &TERMINAL,
+        M::Machine => &SERVER,
+        M::Copy => &COPY,
     }
 }

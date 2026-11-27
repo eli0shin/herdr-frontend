@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use herdr_proto::Terminal;
-use herdr_proto::types::{MachineState, MachineView};
+use herdr_proto::types::{CoreInfo, MachineState, MachineView};
 use herdr_shared::{Document, Mirror, Node, Space, Tab, machine_of};
 
 /// A machine: `None` is the core this screen is connected to.
@@ -56,6 +56,10 @@ impl Machine {
 pub struct World {
     machines: BTreeMap<MachineKey, Machine>,
     terminals: BTreeMap<String, Terminal>,
+    /// The core this screen is connected to (`hello.core`), and every machine `machine.list`
+    /// has, temporary ones too: what a record's `parent` may name a machine by.
+    core: Option<CoreInfo>,
+    every_machine: Vec<MachineView>,
 }
 
 impl Default for World {
@@ -72,6 +76,8 @@ impl World {
         World {
             machines,
             terminals: BTreeMap::new(),
+            core: None,
+            every_machine: Vec::new(),
         }
     }
 
@@ -95,6 +101,7 @@ impl World {
     /// Takes a `machine.list`: other machines appear and go (temporary ones are left out, as
     /// herdr-app does). This machine always stays. Returns whether the set changed.
     pub(crate) fn set_machines(&mut self, list: &[MachineView]) -> bool {
+        self.every_machine = list.to_vec();
         let wanted: BTreeMap<MachineKey, &MachineView> = list
             .iter()
             .filter(|m| !m.machine.temporary && !m.machine.name.is_empty())
@@ -111,6 +118,44 @@ impl World {
             machine.status = Some(view.clone());
         }
         before != self.machines.keys().cloned().collect::<Vec<_>>()
+    }
+
+    /// The core this screen is connected to, from its `hello`.
+    pub(crate) fn set_core(&mut self, core: CoreInfo) {
+        self.core = Some(core);
+    }
+
+    /// An address as this core names it. Another core's record may name a machine by that
+    /// core's host name or core id (`host-alpha/t4`, `alpha-id/t4`), or name this machine
+    /// itself: a prefix that is this core's id or name means a local `t4`; otherwise it maps
+    /// through `machine.list` by name, then id, then a host only one machine has
+    /// (`herdr-core-protocol.md` §5 "Parents and children"). Unknown prefixes stay as they are.
+    pub fn normalize<'a>(&self, address: &'a str) -> std::borrow::Cow<'a, str> {
+        use std::borrow::Cow;
+        let Some((prefix, id)) = address.split_once('/') else {
+            return Cow::Borrowed(address);
+        };
+        if self
+            .core
+            .as_ref()
+            .is_some_and(|c| c.id == prefix || c.name == prefix)
+        {
+            return Cow::Owned(id.to_owned());
+        }
+        let machines = &self.every_machine;
+        let by = |f: &dyn Fn(&MachineView) -> bool| machines.iter().find(|m| f(m));
+        let named = by(&|m| m.machine.name == prefix).or_else(|| by(&|m| m.machine.id == prefix));
+        let named = named.or_else(|| {
+            let mut hosts = machines.iter().filter(|m| m.machine.host == prefix);
+            match (hosts.next(), hosts.next()) {
+                (Some(only), None) => Some(only),
+                _ => None,
+            }
+        });
+        match named {
+            Some(m) if m.machine.name != prefix => Cow::Owned(format!("{}/{id}", m.machine.name)),
+            _ => Cow::Borrowed(address),
+        }
     }
 
     /// Whether a machine's layout has been read (`None`: this machine).
@@ -339,6 +384,33 @@ mod tests {
         assert_eq!(w.space_of("devbox/tb2").unwrap().id, "devbox/sp2");
         assert!(w.loaded_for("devbox/p2"));
         assert!(w.tab("sp1").is_none());
+    }
+
+    #[test]
+    fn addresses_naming_a_machine_by_its_core_id_or_host_or_this_core_are_normalized() {
+        let mut w = World::new();
+        w.set_core(CoreInfo {
+            id: "here-id".into(),
+            name: "laptop".into(),
+            ..Default::default()
+        });
+        let mut alpha = machine("alpha", MachineState::Connected, false);
+        alpha.machine.id = "alpha-id".into();
+        alpha.machine.host = "host-alpha".into();
+        let mut b1 = machine("b1", MachineState::Connected, false);
+        b1.machine.host = "twin".into();
+        let mut b2 = machine("b2", MachineState::Connected, true);
+        b2.machine.host = "twin".into();
+        w.set_machines(&[alpha, b1, b2]);
+        let n = |a: &str| w.normalize(a).into_owned();
+        assert_eq!(n("t4"), "t4");
+        assert_eq!(n("alpha/t4"), "alpha/t4");
+        assert_eq!(n("alpha-id/t4"), "alpha/t4");
+        assert_eq!(n("host-alpha/t4"), "alpha/t4");
+        assert_eq!(n("here-id/t4"), "t4");
+        assert_eq!(n("laptop/t4"), "t4");
+        assert_eq!(n("twin/t4"), "twin/t4", "two machines share that host");
+        assert_eq!(n("nobody/t4"), "nobody/t4");
     }
 
     #[test]

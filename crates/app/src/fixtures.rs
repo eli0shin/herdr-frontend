@@ -492,3 +492,69 @@ pub fn folders_core() -> crate::link::Fake {
     }
     fake
 }
+
+/// A machine `machine.list` reports: `name`, reached as `target`, in `state`.
+pub fn machine(
+    name: &str,
+    target: &str,
+    state: herdr_proto::types::MachineState,
+) -> herdr_proto::types::MachineView {
+    herdr_proto::types::MachineView {
+        state,
+        since_ms: None,
+        why: None,
+        machine: herdr_proto::types::Machine {
+            name: name.into(),
+            id: format!("{name}-id"),
+            host: format!("host-{name}"),
+            target: target.into(),
+            version: herdr_proto::MIN_CORE.to_string(),
+            ..Default::default()
+        },
+    }
+}
+
+/// The agents core with two other machines (the machine scenes and tests):
+///
+/// - `devbox`, connected, with its own `herdr-app` document: the space `api` with Claude working
+///   (`devbox/t1`) and a shell (`devbox/t2`), and a Codex sub-agent of that Claude whose
+///   `parent` names devbox by its host (`host-devbox/t1`).
+/// - `omarchy`, needing a login, whose agents stop when it's disconnected (no lingering).
+/// - `work-mac`, a temporary sandbox: left out everywhere.
+pub fn machines_core() -> crate::link::Fake {
+    use herdr_proto::StatusState::*;
+    use herdr_proto::types::MachineState;
+    let fake = agents_core();
+    let remote = serde_json::json!({"spaces": [
+        {"id": "sp-api", "name": "api", "folder": "/home/eli/api", "tabs": [
+            tab("tb-api", "", split("tb-api", "row", vec![pane("pn-api", "t1")])),
+            tab("tb-sh", "shell", split("tb-sh", "row", vec![pane("pn-sh", "t2")])),
+        ]},
+    ]});
+    let mut omarchy = machine("omarchy", "eli@omarchy", MachineState::NeedsLogin);
+    omarchy.machine.keeps_running_after_logout = Some(false);
+    omarchy.machine.logout_linger_user = Some("eli".into());
+    let mut sandbox = machine("work-mac", "work-mac", MachineState::Connected);
+    sandbox.machine.temporary = true;
+    let mut sub = agent("devbox/t3", "codex", Working, "codex");
+    sub.parent = Some("host-devbox/t1".into());
+    sub.name = Some("tests".into());
+    {
+        let mut core = fake.core();
+        core.docs.insert(Some("devbox".into()), (remote, 1));
+        core.machines = vec![
+            machine("devbox", "devbox", MachineState::Connected),
+            omarchy,
+            sandbox,
+        ];
+        for t in [
+            agent("devbox/t1", "claude", Working, "✳ Serve the API"),
+            terminal("devbox/t2", COLS, ROWS),
+            sub,
+        ] {
+            core.screens.insert(t.address.clone(), b"$ ".to_vec());
+            core.terminals.insert(t.address.clone(), t);
+        }
+    }
+    fake
+}

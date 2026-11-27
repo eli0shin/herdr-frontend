@@ -82,10 +82,15 @@ pub enum Popup {
     AgentJump,
     /// The Agents header's sort button.
     SortMenu,
+    /// The machines this core added, each with its line and what it needs (Herdr app's
+    /// Settings → Machines).
+    Machines,
+    /// Add a machine ssh reaches (the shipped `machine-add` mod).
+    MachineAdd,
 }
 
 impl Popup {
-    pub const ALL: [Popup; 10] = [
+    pub const ALL: [Popup; 12] = [
         Popup::Palette,
         Popup::Settings,
         Popup::Help,
@@ -96,6 +101,8 @@ impl Popup {
         Popup::PrFinder,
         Popup::AgentJump,
         Popup::SortMenu,
+        Popup::Machines,
+        Popup::MachineAdd,
     ];
 
     /// The popup's name in command names (`popup.<name>`).
@@ -111,6 +118,8 @@ impl Popup {
             Popup::PrFinder => "pr-finder",
             Popup::AgentJump => "agent-jump",
             Popup::SortMenu => "sort-menu",
+            Popup::Machines => "machines",
+            Popup::MachineAdd => "machine-add",
         }
     }
 
@@ -457,6 +466,11 @@ pub enum Action {
         pane: String,
         link: String,
     },
+    /// The Machines dialog's machine menu and the add dialog: connect, rename, remove or add a
+    /// machine.
+    Machine(crate::machines::MachineAction),
+    /// Put this text on the clipboard (a command a machine needs run).
+    CopyText(String),
     /// Drag a pane's top-edge grip onto another pane.
     RearrangePane {
         pane: String,
@@ -552,6 +566,8 @@ impl Action {
             | Action::Park(_)
             | Action::EditFile(_)
             | Action::NewSpaceIn { .. }
+            | Action::Machine(_)
+            | Action::CopyText(_)
             | Action::AgentJumpKey(_)
             | Action::ShowTab(_)
             | Action::RenameTabOf(_)

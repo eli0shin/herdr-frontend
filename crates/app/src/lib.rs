@@ -13,6 +13,7 @@ pub mod home;
 pub mod keyfile;
 pub mod keys;
 pub mod link;
+pub mod machines;
 mod scenes;
 pub mod shared;
 pub mod state;

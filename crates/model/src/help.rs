@@ -194,6 +194,8 @@ pub fn title(action: &Action) -> String {
             Popup::PrFinder => "Find a PR's agent",
             Popup::AgentJump => "Jump to an agent by label",
             Popup::SortMenu => "Sort agents",
+            Popup::Machines => "Machines",
+            Popup::MachineAdd => "Add a machine",
         }
         .into(),
         Action::CopyMode => "Copy mode".into(),
@@ -225,6 +227,14 @@ pub fn title(action: &Action) -> String {
             machine: Some(machine),
             ..
         } => format!("New space on {machine} in a folder"),
+        Action::Machine(m) => match m {
+            crate::machines::MachineAction::Menu(name) => format!("{name}'s menu"),
+            crate::machines::MachineAction::Connect(name) => format!("Connect to {name}"),
+            crate::machines::MachineAction::Rename(name) => format!("Rename {name}"),
+            crate::machines::MachineAction::Remove(name) => format!("Remove {name}"),
+            crate::machines::MachineAction::Add(target) => format!("Add {target}"),
+        },
+        Action::CopyText(_) => "Copy a command".into(),
         Action::SpaceNext => "Next space".into(),
         Action::SpacePrev => "Previous space".into(),
         Action::SpaceSelect(n) => format!("Space {n}"),

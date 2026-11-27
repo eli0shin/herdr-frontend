@@ -6,8 +6,10 @@ use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 
 use herdr_proto::methods::{DocGetResult, DocSetResult, ExecResult, TerminalAttach};
+use herdr_proto::types::{Machine, MachineState, MachineView};
 use herdr_proto::{ErrorKind, Reason, RpcError, StreamCaps, Terminal, TerminalState};
 use herdr_shared::Round;
+use model::machines::MachineCall;
 use model::{Event, Request, TerminalUpdate, Token};
 use serde_json::Value;
 
@@ -41,6 +43,12 @@ pub struct FakeCore {
     pub exec: Option<Result<ExecResult, RpcError>>,
     /// What a `machine.exec` of this argv answers.
     pub exec_by: BTreeMap<Vec<String>, Result<ExecResult, RpcError>>,
+    /// The machines `machine.list` has, posted on every connection and after each change.
+    pub machines: Vec<MachineView>,
+    /// Every [`Link::machine`] call, in order.
+    pub machine_calls: Vec<MachineCall>,
+    /// What machine calls fail with, by target or machine name; the others work.
+    pub machine_fails: BTreeMap<String, RpcError>,
     connected: bool,
     news: VecDeque<News>,
     writers: BTreeMap<String, terminal::Writer>,
@@ -60,6 +68,16 @@ pub fn printed(stdout: &str) -> Result<ExecResult, RpcError> {
 /// A handle on a [`FakeCore`]: the app's link, and the test's view of it.
 #[derive(Clone, Default)]
 pub struct Fake(Rc<RefCell<FakeCore>>);
+
+fn failure(kind: ErrorKind, message: &str) -> RpcError {
+    RpcError {
+        code: -32000,
+        message: message.into(),
+        kind,
+        hint: None,
+        data: Default::default(),
+    }
+}
 
 fn not_found() -> RpcError {
     RpcError {
@@ -143,6 +161,14 @@ impl Fake {
             })));
     }
 
+    /// The machine list changes (a machine added elsewhere, or its line went up or down): the
+    /// watcher posts it.
+    pub fn set_machines(&self, machines: Vec<MachineView>) {
+        let mut core = self.core();
+        core.machines = machines;
+        core.post_machines();
+    }
+
     /// The connection drops; the next poll reconnects with a fresh snapshot.
     pub fn drop_connection(&self) {
         let mut core = self.core();
@@ -163,13 +189,67 @@ impl Fake {
 impl FakeCore {
     fn connect(&mut self) {
         self.connected = true;
-        self.news.push_back(News::Connected);
+        self.news.push_back(News::Connected(None));
         self.news
             .push_back(News::Event(Event::Terminals(TerminalUpdate {
                 resynced: true,
                 terminals: self.terminals.values().cloned().collect(),
                 ..Default::default()
             })));
+        if !self.machines.is_empty() {
+            self.post_machines();
+        }
+    }
+
+    fn post_machines(&mut self) {
+        let list = self.machines.clone();
+        self.news.push_back(News::Event(Event::Machines(list)));
+    }
+
+    /// A machine call, as the core would take it: the list changes, and is posted.
+    fn machine(&mut self, call: &MachineCall) -> Result<(), RpcError> {
+        if let Some(error) = self.machine_fails.get(call.machine()) {
+            return Err(error.clone());
+        }
+        let unknown = || failure(ErrorKind::MachineUnknown, "no such machine");
+        let find = |machines: &[MachineView], name: &str| {
+            machines.iter().position(|m| m.machine.name == name)
+        };
+        match call {
+            MachineCall::Add(target) => {
+                if self.machines.iter().any(|m| m.machine.target == *target) {
+                    return Err(failure(ErrorKind::AlreadyAdded, "already added"));
+                }
+                let host = target.rsplit('@').next().unwrap_or(target);
+                let name = host.split(':').next().unwrap_or(host).to_owned();
+                self.machines.push(MachineView {
+                    state: MachineState::Connected,
+                    since_ms: None,
+                    why: None,
+                    machine: Machine {
+                        host: name.clone(),
+                        name,
+                        target: target.clone(),
+                        version: herdr_proto::MIN_CORE.to_string(),
+                        ..Default::default()
+                    },
+                });
+            }
+            MachineCall::Connect(name) => {
+                let i = find(&self.machines, name).ok_or_else(unknown)?;
+                self.machines[i].state = MachineState::Connected;
+            }
+            MachineCall::Rename { machine, to } => {
+                let i = find(&self.machines, machine).ok_or_else(unknown)?;
+                self.machines[i].machine.name = to.clone();
+            }
+            MachineCall::Remove(name) => {
+                let i = find(&self.machines, name).ok_or_else(unknown)?;
+                self.machines.remove(i);
+            }
+        }
+        self.post_machines();
+        Ok(())
     }
 
     fn changed(&mut self, t: Terminal) {
@@ -437,5 +517,15 @@ impl Link for Fake {
             address: address.to_owned(),
             paths,
         });
+    }
+
+    fn machine(&mut self, call: MachineCall) {
+        let mut core = self.core();
+        core.machine_calls.push(call.clone());
+        let result = core.machine(&call);
+        // The answer comes before the list it changed, as the watcher's poll follows it.
+        let list = result.is_ok().then(|| core.news.pop_back()).flatten();
+        core.news.push_back(News::Machine { call, result });
+        core.news.extend(list);
     }
 }

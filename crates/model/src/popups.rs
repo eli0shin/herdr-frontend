@@ -571,6 +571,18 @@ fn entries() -> Vec<(Action, &'static str, String, &'static str)> {
             "preferences options config look font theme keys",
         ),
         (
+            Action::Open(Popup::Machines),
+            "App",
+            "Machines".into(),
+            "ssh remote servers login connect rename remove status",
+        ),
+        (
+            Action::Open(Popup::MachineAdd),
+            "App",
+            "Add a machine".into(),
+            "ssh remote server new",
+        ),
+        (
             Action::Open(Popup::Help),
             "App",
             "Keys".into(),

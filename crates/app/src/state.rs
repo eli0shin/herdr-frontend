@@ -372,6 +372,10 @@ pub struct State {
     pub grip_hover: Option<String>,
     pub grip_drag: Option<GripDrag>,
     divider_drag: Option<DividerDrag>,
+    /// What the connected core said in its `hello`: its version, for the Machines dialog.
+    pub hello: Option<Box<herdr_proto::Hello>>,
+    /// The machine dialogs' calls, failures and ssh hosts.
+    pub machines: crate::machines::Machines,
 }
 
 impl Default for State {
@@ -527,6 +531,8 @@ impl State {
             list_top: 0,
             picker_earlier: false,
             menu_at: None,
+            hello: None,
+            machines: Default::default(),
             list_wheel_travel: 0.0,
             keys_problem: None,
             reveal: None,
@@ -874,6 +880,16 @@ impl State {
                     self.list_top = 0;
                     self.list_wheel_travel = 0.0;
                     self.picker_earlier = false;
+                    if list.popup == Popup::MachineAdd {
+                        // Each opening starts fresh, as the mod does: a target that needed a
+                        // terminal can be tried again once that's done.
+                        self.machines.failed.clear();
+                        let home = std::path::PathBuf::from(self.model.home());
+                        self.machines.read_hosts(&home, self.waker.clone());
+                        if self.synchronous {
+                            self.machines.wait_hosts();
+                        }
+                    }
                 }
                 let new_query = was.is_none_or(|b| b.query != list.query);
                 self.relist(new_query);
@@ -949,7 +965,7 @@ impl State {
     /// A list row was picked (`Effect::Pick`): run what it stands for. Enter already closed the
     /// list; Ctrl+D closes it here first.
     fn picked(&mut self, popup: Popup, how: model::Pick, cursor: usize, query: String) {
-        use crate::view::{palette, picker, pr_finder, settings, space_picker};
+        use crate::view::{machines, palette, picker, pr_finder, settings, space_picker};
         let mut list = model::mode::ListPopup::new(popup);
         list.query = query.clone();
         let now = self.now;
@@ -999,10 +1015,60 @@ impl State {
                     model::Pick::Toggle => {}
                 }
             }
+            (Popup::AgentMachines, how) => {
+                let rows = machines::filter_rows(self);
+                let hidden = model::machines::hidden_after(
+                    &rows,
+                    &self.shared.hidden_machines(),
+                    cursor,
+                    how == model::Pick::Choose,
+                );
+                self.set_hidden_machines(hidden);
+            }
+            (Popup::Machines, model::Pick::Choose) => {
+                match machines::machines_rows(self).into_iter().nth(cursor) {
+                    Some(machines::MachinesRow::Machine(view)) => {
+                        // Its menu opens over the dialog's middle, where the row was.
+                        let (vw, vh) = self.view_size();
+                        self.menu_at = Some((vw / 2.0 - 150.0, vh / 3.0));
+                        let name = view.machine.name.clone();
+                        self.machines.picked = Some(name.clone());
+                        self.step(
+                            now,
+                            Action::Machine(model::machines::MachineAction::Menu(name)),
+                        );
+                    }
+                    Some(machines::MachinesRow::Add) => {
+                        self.step(now, Action::Open(Popup::MachineAdd));
+                    }
+                    Some(machines::MachinesRow::ThisComputer) | None => {}
+                }
+            }
+            (Popup::MachineAdd, model::Pick::Choose) => {
+                let Some(row) = machines::add_rows(self, &list).into_iter().nth(cursor) else {
+                    return;
+                };
+                if self.machines.busy.contains_key(&row.target) {
+                    return;
+                }
+                let copy = self
+                    .machines
+                    .failed
+                    .get(&row.target)
+                    .and_then(|f| f.command.clone());
+                let action = match copy {
+                    Some(command) => Action::CopyText(command),
+                    None => Action::Machine(model::machines::MachineAction::Add(row.target)),
+                };
+                self.step(now, action);
+            }
             (Popup::Settings, model::Pick::Choose) => {
                 match settings::rows(self).into_iter().nth(cursor) {
                     Some(settings::Row::File { path, .. }) => {
                         self.step(now, Action::EditFile(path.to_string_lossy().into_owned()));
+                    }
+                    Some(settings::Row::Machines) => {
+                        self.step(now, Action::Open(Popup::Machines));
                     }
                     Some(settings::Row::Reveal(dir)) => {
                         if let Some(reveal) = self.reveal {
@@ -1039,6 +1105,75 @@ impl State {
         self.relist(false);
         self.step(tx.clock(), Event::PopupCursor(i));
         self.act(Action::Popup(PopupAction::Choose), tx);
+    }
+
+    /// A press on row `i` of the machine filter: the cursor goes there, and its machine shows or
+    /// hides; the filter stays open.
+    pub fn toggle_row(&mut self, i: usize, tx: &mut Tx) {
+        self.relist(false);
+        self.step(tx.clock(), Event::PopupCursor(i));
+        self.act(Action::Popup(PopupAction::Toggle), tx);
+    }
+
+    /// The machine filter's choice: shared `dotfiles.agents.hidden-machines`, `null` when
+    /// nothing is hidden, as the mod stores it.
+    pub fn set_hidden_machines(&mut self, hidden: std::collections::BTreeSet<String>) {
+        let value = if hidden.is_empty() {
+            Value::Null
+        } else {
+            json!(hidden)
+        };
+        self.share(agents::HIDDEN_MACHINES_KEY, value);
+        self.redraw = true;
+    }
+
+    /// A machine call answered: a toast says how it went; a failed add explains itself in the
+    /// add dialog instead, and a working one empties its field.
+    fn machine_answered(
+        &mut self,
+        call: model::machines::MachineCall,
+        result: Result<(), herdr_proto::RpcError>,
+    ) {
+        use model::machines::MachineCall;
+        self.machines.busy.remove(call.machine());
+        self.redraw = true;
+        match (&call, result) {
+            (MachineCall::Add(target), Err(error)) => {
+                let failure = model::machines::add_failure(target, &error);
+                self.machines.failed.insert(target.clone(), failure);
+            }
+            (_, Err(error)) => {
+                let verb = match &call {
+                    MachineCall::Add(_) => "add",
+                    MachineCall::Connect(_) => "connect to",
+                    MachineCall::Rename { .. } => "rename",
+                    MachineCall::Remove(_) => "remove",
+                };
+                self.toast(Toast::new(
+                    Level::Error,
+                    format!("Couldn't {verb} {}", call.machine()),
+                    error.message,
+                ));
+            }
+            (MachineCall::Add(target), Ok(())) => {
+                self.toast(Toast::new(Level::Success, call.done(), ""));
+                let adding = matches!(self.model.mode(),
+                    model::Mode::Popup(PopupState::List(l)) if l.popup == Popup::MachineAdd);
+                if adding && self.popup_field.text.trim() == target {
+                    self.popup_field = TextEdit::default();
+                    self.step(self.now, Action::Popup(PopupAction::Query(String::new())));
+                }
+            }
+            (MachineCall::Connect(_), Ok(())) => {}
+            (MachineCall::Rename { machine, to }, Ok(())) => {
+                if self.machines.picked.as_ref() == Some(machine) {
+                    self.machines.picked = Some(to.clone());
+                }
+                self.toast(Toast::new(Level::Success, call.done(), ""));
+            }
+            (_, Ok(())) => self.toast(Toast::new(Level::Success, call.done(), "")),
+        }
+        self.relist(false);
     }
 
     /// The wheel over the open list: each 32 points move the cursor a row, so the window follows.
@@ -1123,6 +1258,22 @@ impl State {
             Effect::App(command) => self.app_command(command),
             Effect::Toast(toast) => self.toast(toast),
             Effect::NotYet(action) => self.not_yet(&action),
+            Effect::Machine(call) => {
+                let key = call.machine().to_owned();
+                if self.machines.busy.contains_key(&key) {
+                    return;
+                }
+                if let model::machines::MachineCall::Add(target) = &call {
+                    self.machines.failed.remove(target);
+                }
+                self.machines.busy.insert(key, call.clone());
+                self.link.machine(call);
+                self.redraw = true;
+            }
+            Effect::Clipboard(text) => {
+                self.ui.copy = Some(text.clone());
+                self.toast(Toast::new(Level::Success, "Copied", text));
+            }
             Effect::Terminal { address, command } => self.terminal_command(&address, command),
             // A `do` call's answer that came in a later step: `space.new`'s, once its terminal
             // runs.
@@ -1321,6 +1472,10 @@ impl State {
             self.step(now, Event::Tick);
         }
         self.hear_keys();
+        if self.machines.take_hosts() {
+            self.redraw = true;
+            self.relist(false);
+        }
         if self.toasts.expire(now) {
             self.redraw = true;
         }
@@ -1538,13 +1693,18 @@ impl State {
 
     fn hear(&mut self, now: f64, news: News) {
         match news {
-            News::Connected => {
+            News::Connected(hello) => {
                 self.status = Status::Connected;
                 for viewer in self.viewers.values_mut() {
                     viewer.attach = Attach::Want { fresh: true };
                 }
                 self.step(now, Event::Connected);
+                if let Some(hello) = &hello {
+                    self.step(now, Event::Core(hello.core.clone()));
+                }
+                self.hello = hello;
             }
+            News::Machine { call, result } => self.machine_answered(call, result),
             News::Lost(why) => {
                 self.status = Status::Down(why);
                 for viewer in self.viewers.values_mut() {
