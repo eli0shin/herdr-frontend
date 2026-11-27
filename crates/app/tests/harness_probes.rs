@@ -175,7 +175,7 @@ fn a_window_the_harness_didnt_start_refuses_its_requests() {
     ] {
         assert_eq!(
             ask(&mut rt, home, request),
-            json!({"error": "expected { do }, { ls }, { commands } or { status }"})
+            json!({"error": "expected { do }, { ls }, { commands }, { status } or { raise }"})
         );
     }
 }

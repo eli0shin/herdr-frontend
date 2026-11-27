@@ -1792,6 +1792,9 @@ impl State {
             return false;
         };
         let probes = control.take_probes();
+        if control.take_raise() {
+            self.window.raise();
+        }
         self.agents_stale = true;
         for effect in fx.list {
             self.carry_out(effect);

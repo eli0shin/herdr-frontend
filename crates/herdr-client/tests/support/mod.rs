@@ -10,7 +10,7 @@
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
-use std::process::{Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
@@ -111,6 +111,30 @@ impl IsolatedCore {
         }
         words.push("sh -c".to_owned());
         words.join(" ")
+    }
+
+    /// Points `command` at this core, as `hc connect` from it would reach it: inherited `HC_*`
+    /// variables removed, this core's session and scratch directories set, and this `hc` first on
+    /// `PATH`. For a program that finds its core itself (the app's own binary).
+    pub fn isolate<'c>(&self, command: &'c mut Command) -> &'c mut Command {
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().starts_with("HC_") {
+                command.env_remove(key);
+            }
+        }
+        let bin = self.hc.program().parent().unwrap_or(Path::new("/"));
+        let mut path = vec![bin.to_path_buf()];
+        path.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        command
+            .env("PATH", std::env::join_paths(path).unwrap())
+            .env("HC_SESSION", &self.session)
+            .env("SHELL", "/bin/sh");
+        for (var, dir) in XDG {
+            command.env(var, self.scratch.join(dir));
+        }
+        command
     }
 
     pub fn transport(&self) -> Transport {

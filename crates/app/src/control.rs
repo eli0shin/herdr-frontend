@@ -90,6 +90,8 @@ pub struct Control {
     stop: Arc<AtomicBool>,
     /// Whether harness requests are served ([`Control::with_probes`]), and those waiting.
     probes: Option<Vec<Probe>>,
+    /// A launch asked for the window to come forward since [`Control::take_raise`].
+    raise: bool,
 }
 
 impl Control {
@@ -139,6 +141,7 @@ impl Control {
             next: 0,
             stop,
             probes: None,
+            raise: false,
         })
     }
 
@@ -156,6 +159,12 @@ impl Control {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Whether a launch asked for the window to come forward ([`raise_running`]) since the last
+    /// call.
+    pub fn take_raise(&mut self) -> bool {
+        std::mem::take(&mut self.raise)
     }
 
     /// Runs the requests that arrived, on the UI thread. `ls` and `status` read `model`; a `do`
@@ -209,8 +218,11 @@ impl Control {
                 Value::Object(status(model, window))
             } else if cmd.get("commands").is_some() {
                 model::control::listing()
+            } else if cmd.get("raise").is_some() {
+                self.raise = true;
+                json!({ "ok": true })
             } else {
-                json!({ "error": "expected { do }, { ls }, { commands } or { status }" })
+                json!({ "error": "expected { do }, { ls }, { commands }, { status } or { raise }" })
             };
             let _ = reply.send(answer);
         }
@@ -273,6 +285,27 @@ fn serve(stream: UnixStream, tx: &mpsc::Sender<Request>, wake: &(dyn Fn() + Send
         Err(e) => json!({ "error": format!("bad request: {e}") }),
     };
     let _ = (&stream).write_all(format!("{answer}\n").as_bytes());
+}
+
+/// One window per home: a launch with no arguments asks the window serving [`socket_path`] to
+/// come forward, as `herdr-app` does (`app:src/control.rs` `raise_running`), and opens none of
+/// its own. True when one answered on the socket, even too busy to reply in time.
+pub fn raise_running() -> bool {
+    raise_running_at(&socket_path())
+}
+
+fn raise_running_at(path: &Path) -> bool {
+    let Ok(mut stream) = UnixStream::connect(path) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(CLIENT_TIMEOUT));
+    if stream
+        .write_all(format!("{}\n", json!({ "raise": true })).as_bytes())
+        .is_ok()
+    {
+        let _ = BufReader::new(&stream).read_line(&mut String::new());
+    }
+    true
 }
 
 /// Whether these arguments (after the program name) are a control subcommand, not a window.
@@ -451,6 +484,28 @@ mod tests {
             assert!(err.starts_with(&format!("herdr-frontend: {want}")), "{err}");
             assert!(out.is_empty());
         }
+    }
+
+    #[test]
+    fn a_bare_launch_asks_the_window_on_its_home_to_raise() {
+        let path = std::env::temp_dir().join(format!("hf-raise-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        assert!(!raise_running_at(&path), "no window: the launch opens one");
+        let mut control = Control::listen(&path, || {}).unwrap();
+        let asking = {
+            let path = path.clone();
+            std::thread::spawn(move || raise_running_at(&path))
+        };
+        let mut model = Model::new("/home/me");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !asking.is_finished() {
+            assert!(std::time::Instant::now() < deadline, "the raise hangs");
+            control.drain(&mut model, 0.0, &Map::new());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(asking.join().unwrap(), "a window answered");
+        assert!(control.take_raise(), "the window was asked to raise");
+        assert!(!control.take_raise(), "once");
     }
 
     #[test]

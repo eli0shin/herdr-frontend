@@ -114,6 +114,14 @@ impl Keeper {
         }
     }
 
+    /// Brings the window forward and activates the app, restoring it if minimized (a bare
+    /// launch while it runs, `control::raise_running`).
+    pub fn raise(&self) {
+        if let Some(handle) = self.handle.borrow().as_ref() {
+            handle.focus();
+        }
+    }
+
     /// The window's macOS CGWindowID (`screencapture -l`), once it's open.
     pub fn window_number(&self) -> Option<u32> {
         self.handle.borrow().as_ref()?.window_number()
