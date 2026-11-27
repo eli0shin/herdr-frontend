@@ -642,9 +642,10 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   model's `pane_rects` (`Geometry { gap: 1 }`) over a border-colored fill. Each divider has a
   6 pt handle centered on its gap (`on_drag`, the resize cursor) that writes sizes as it moves; a
   cancelled drag puts them back. A movable pane's 18 pt top strip shows a 28 × 18 grip while the
-  pointer is on it (`on_hover_change`, which takes no presses from the terminal); dragging it
-  4 pt picks the pane under the pointer and the drop zone (outer quarter: beside, middle: swap),
-  drawn as a tinted preview, and the release rearranges. The tab area's
+  pointer is on it. The tab area, the panes' parent, follows the pointer for this, so only the
+  grip itself covers a terminal's top row, and presses elsewhere on it reach the terminal.
+  Dragging the grip 4 pt picks the pane under the pointer and the drop zone (outer quarter:
+  beside, middle: swap), drawn as a tinted preview, and the release rearranges. The tab area's
   `on_layout_tx` reports the geometry; before the first layout it comes from the window size
   (`App::on_window_geometry`, `SIZE` headless).
 - **Input.** Every key goes through the keymap first (ticket 016, `docs/keys.md`). While

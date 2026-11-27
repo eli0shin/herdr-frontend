@@ -159,7 +159,7 @@ fn main(s: &State, cx: &mut Cx<State>) -> El {
         .filter(|(pane, _)| s.model.pane_movable(pane))
         .filter_map(|(pane, rect)| grip(s, pane, *rect));
     let preview = s
-        .pane_drag
+        .grip_drag
         .as_ref()
         .and_then(|d| d.target.as_ref())
         .and_then(|(target, edge)| {
@@ -178,8 +178,9 @@ fn main(s: &State, cx: &mut Cx<State>) -> El {
         });
     // Pointer input comes in view points, the panes' own (Rune's `zoom.rs`): drags need no
     // conversion at any zoom.
-    // The tab area follows the pointer for the grips: as the panes' parent it never covers
-    // them, so every press on a terminal's top row still reaches the terminal.
+    // The tab area follows the pointer for the grips: as the panes' parent it covers none of
+    // them. Only a grip, drawn while the pointer is on its pane's top edge, covers a terminal's
+    // top row; presses anywhere else on that row reach the terminal.
     area.fill(c.border)
         .on_pointer_move_local(|s: &mut State, p, tx| s.tab_area_pointer(Some((p.x, p.y)), tx))
         .on_hover_change(|s: &mut State, inside, tx| {
@@ -231,7 +232,7 @@ fn divider(d: geometry::Divider) -> El {
 /// (`app:src/window/pane_drag.rs`).
 fn grip(s: &State, pane: &str, rect: model::Rect) -> Option<El> {
     let c = &s.chrome;
-    let held = s.pane_drag.as_ref().is_some_and(|d| d.pane == pane);
+    let held = s.grip_drag.as_ref().is_some_and(|d| d.pane == pane);
     if !held && s.grip_hover.as_deref() != Some(pane) {
         return None;
     }

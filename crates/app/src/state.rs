@@ -212,7 +212,7 @@ struct DividerDrag {
 
 /// A pane's grip being dragged (`app:src/window/pane_drag.rs` `PaneDrag`).
 #[derive(Clone, Debug, PartialEq)]
-pub struct PaneDrag {
+pub struct GripDrag {
     pub pane: String,
     /// The tab it started in: a drag ends if another tab shows.
     tab: String,
@@ -315,7 +315,7 @@ pub struct State {
     wheel: f32,
     /// The pane whose top strip the pointer is over: its grip shows.
     pub grip_hover: Option<String>,
-    pub pane_drag: Option<PaneDrag>,
+    pub grip_drag: Option<GripDrag>,
     divider_drag: Option<DividerDrag>,
 }
 
@@ -421,7 +421,7 @@ impl State {
             press: None,
             wheel: 0.0,
             grip_hover: None,
-            pane_drag: None,
+            grip_drag: None,
             divider_drag: None,
         };
         s.configure_all(config);
@@ -1786,8 +1786,8 @@ impl State {
         let shown = self.model.shown_tab().map(|t| t.id.clone());
         match phase {
             rune::Phase::Down => {
-                self.pane_drag = match shown {
-                    Some(tab) if self.model.pane_movable(pane) => Some(PaneDrag {
+                self.grip_drag = match shown {
+                    Some(tab) if self.model.pane_movable(pane) => Some(GripDrag {
                         pane: pane.to_owned(),
                         tab,
                         from: at,
@@ -1799,11 +1799,11 @@ impl State {
             }
             rune::Phase::Move => {
                 let rects = self.model.pane_rects();
-                let Some(drag) = self.pane_drag.as_mut() else {
+                let Some(drag) = self.grip_drag.as_mut() else {
                     return;
                 };
                 if shown.as_ref() != Some(&drag.tab) {
-                    self.pane_drag = None;
+                    self.grip_drag = None;
                     return;
                 }
                 let travel = (at.0 - drag.from.0).abs().max((at.1 - drag.from.1).abs());
@@ -1820,7 +1820,7 @@ impl State {
                         });
             }
             rune::Phase::Up => {
-                let Some(drag) = self.pane_drag.take() else {
+                let Some(drag) = self.grip_drag.take() else {
                     return;
                 };
                 if cancelled || !drag.moving || shown.as_ref() != Some(&drag.tab) {
