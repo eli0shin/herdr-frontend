@@ -1,9 +1,26 @@
 {
   "title": "Peek",
   "inventory": "§15",
-  "notes": "Peeking the explore sub-agent, which has no pane. Esc is the terminal's, so closing goes by cmd-w (tab.close closes the peek, not the tab behind it).",
+  "notes": "Peeking the explore sub-agent, which has no pane. Cmd+F opens the peeked terminal's find bar over the peek; Escape in it closes the bar and leaves the peek open. Esc is the terminal's, so closing goes by cmd-w (tab.close closes the peek, not the tab behind it). The right-click menu and Cmd-hover underlines need the pointer, which the harness doesn't drive: the headless tests cover them (crates/app/tests/peek.rs).",
   "steps": [
-    {"name": "peek explore", "do": "terminal.peek", "args": {"terminal": "{{t:explore}}"}},
+    {
+      "name": "peek explore",
+      "do": "terminal.peek",
+      "args": {"terminal": "{{t:explore}}"},
+      "send": {"terminal": "{{t:explore}}", "text": "echo found the sidebar"},
+      "wait": 0.3
+    },
+    {"name": "find bar in the peek", "keys": "cmd-f", "herdr-app": {"do": "terminal.search"}},
+    {
+      "name": "find a word in the peeked terminal",
+      "type": "sidebar",
+      "herdr-app": {"skip": "typing goes to herdr-frontend only"}
+    },
+    {
+      "name": "close the find bar, the peek stays",
+      "keys": "escape",
+      "herdr-app": {"skip": "Escape in the find field is typing, which goes to herdr-frontend only"}
+    },
     {"name": "close the peek", "keys": "cmd-w", "herdr-app": {"do": "overlay.close"}}
   ]
 }

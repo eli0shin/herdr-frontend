@@ -51,7 +51,18 @@ window without moving focus.
   all, `send:` bindings, pastes, dropped files and copy mode go to the peeked terminal. Copy mode
   (`ctrl-g [`) runs in the peeked terminal's buffer with its bar over the peek; leaving it (or a
   press beside its bar) gives the keyboard back to the peek, which stays open. Closing the peek
-  ends copy mode. Find (`cmd-f`) is the one exception: the peek has no find bar.
+  ends copy mode. Find (`cmd-f`) opens the peeked terminal's find bar at the top right of the
+  peek's terminal area (`view::find`, under the key `find-bar-@peek`); Escape in it, or its ×,
+  gives the keyboard back to the peek, which stays open. A terminal's find bar shows where it's
+  in front: over the peek while it's peeked, not over its pane behind as well.
+- **The terminal menu.** A right-click in the peek opens the terminal menu for the peeked
+  terminal (`Action::PeekMenu`, `model::popups::peek_menu`) at the pointer, without the pane
+  items (Rename, Split right, Split down, Zoom, Close pane), as Herdr app's menu mod leaves them
+  out for a terminal shown outside a tab. What's left is where its right-clicks go and, for a
+  sub-agent, "Send back to \<parent\>". With no pane to take away, sending back takes its place
+  labels off and turns `keep` off, as Herdr app's `terminal.park` does. A terminal that sends
+  right-clicks to its program gets them there, as in a pane (Shift+right-click still opens the
+  menu).
 - **The size.** While the peek has the keyboard and the window is in front, the peeked terminal
   is the one in use (`herdr-core-protocol.md` §4). It takes the size of the peek's terminal area,
   then gives it back when the peek closes (FOCUS(0)).
@@ -101,21 +112,23 @@ under the pointer in the last snapshot (`view::peek::word_at`), not at lines a p
 itself.
 
 1. **The word** under the pointer is the run of letters, digits, `-`, `_`, `/` and `.` around
-   it, without dots at its ends (`model::peek::word`).
+   it, without dots at its ends (`terminal::links::word`).
 2. **The address** (`model::peek::terminal_address`). A bare word means the machine of the
    terminal that shows it. `machine/address` names another machine. Only a live terminal's
    address counts, so names aren't links.
 3. **The click** opens the peek and goes no further: no selection, nothing to the program. A
    Cmd-click that isn't on an address goes on as a plain click.
 
-## Not yet
-
-- While Cmd is held, Herdr app underlines a link under the pointer. herdr-frontend underlines
-  URLs and paths that way (`docs/research/terminal-rendering.md` §2, "What herdr-frontend does
-  (ticket 019)"), but not addresses yet; they should share it.
-- The terminal menu isn't offered inside the peek.
-- Find (`cmd-f`) has no bar in the peek: it says "not yet" there.
+While Cmd is held, the address under the pointer is underlined the way URLs and paths are
+(`docs/research/terminal-rendering.md` §2, "Links"), in a pane and in the peek. The window finds
+the word and checks it names a live terminal, then hands the word to the terminal's worker with
+the pointer (`terminal::Terminal::hover`). The worker underlines that word ahead of any link
+there, the order a Cmd-click follows, for as long as it's still the word under the pointer
+(`terminal::links::word`). Moving the pointer, or pressing Cmd again, looks again, so a terminal
+that ended stops being underlined.
 
 ## Scenes
 
-`just snap shell-peek`: the agents core peeking the `explore` sub-agent.
+- `just snap shell-peek`: the agents core peeking the `explore` sub-agent.
+- `just snap shell-peek-find`: the same with its find bar open on `sidebar`.
+- `just snap shell-peek-menu`: the same with the terminal menu a right-click opens there.

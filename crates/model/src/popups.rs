@@ -687,14 +687,34 @@ pub fn terminal_menu(m: &Model, pane: &str) -> Option<Menu> {
     let in_tab = world
         .tab_of(pane)
         .is_some_and(|t| t.root.find(pane).is_some());
-    let address = world.address_of(pane).map(str::to_owned);
-    let record = address.as_deref().and_then(|a| world.terminal(a));
+    let record = world.address_of(pane).and_then(|a| world.terminal(a));
     if !in_tab && record.is_none() {
         return None;
     }
-    let on = |action: Action| vec![Action::FocusPane(pane.into()), action];
+    let items = terminal_items(m, in_tab.then_some(pane), record);
+    // Herdr app's terminal menu default (`terminal_menu_spec`).
+    Some(Menu::new(MenuTarget::Pane(pane.to_owned()), items, 220.0))
+}
+
+/// The terminal menu over the peek (a right-click on its terminal): the peeked terminal's
+/// items, without the pane items, as for any terminal outside a tab.
+pub fn peek_menu(m: &Model) -> Option<Menu> {
+    let record = m.world().terminal(m.peeked()?)?;
+    let items = terminal_items(m, None, Some(record));
+    Some(Menu::new(
+        MenuTarget::Terminal(record.address.clone()),
+        items,
+        220.0,
+    ))
+}
+
+/// The terminal menu's items: the pane items for `pane`, a pane in a tab, around the items for
+/// its terminal `record`.
+fn terminal_items(m: &Model, pane: Option<&str>, record: Option<&Terminal>) -> Vec<MenuItem> {
+    let world = m.world();
+    let on = |pane: &str, action: Action| vec![Action::FocusPane(pane.into()), action];
     let mut items = Vec::new();
-    if in_tab {
+    if let Some(pane) = pane {
         items.extend([
             MenuItem::new(
                 "Rename",
@@ -704,16 +724,17 @@ pub fn terminal_menu(m: &Model, pane: &str) -> Option<Menu> {
             MenuItem::new(
                 "Split right",
                 MenuIcon::SplitRight,
-                on(Action::PaneSplit(Split::Right)),
+                on(pane, Action::PaneSplit(Split::Right)),
             )
             .hint(Action::PaneSplit(Split::Right)),
             MenuItem::new(
                 "Split down",
                 MenuIcon::SplitDown,
-                on(Action::PaneSplit(Split::Down)),
+                on(pane, Action::PaneSplit(Split::Down)),
             )
             .hint(Action::PaneSplit(Split::Down)),
-            MenuItem::new("Zoom", MenuIcon::Zoom, on(Action::PaneZoom)).hint(Action::PaneZoom),
+            MenuItem::new("Zoom", MenuIcon::Zoom, on(pane, Action::PaneZoom))
+                .hint(Action::PaneZoom),
         ]);
     }
     if let Some(record) = record {
@@ -745,12 +766,11 @@ pub fn terminal_menu(m: &Model, pane: &str) -> Option<Menu> {
             ));
         }
     }
-    if in_tab {
+    if let Some(pane) = pane {
         items.push(
-            MenuItem::new("Close pane", MenuIcon::Close, on(Action::PaneClose))
+            MenuItem::new("Close pane", MenuIcon::Close, on(pane, Action::PaneClose))
                 .hint(Action::PaneClose),
         );
     }
-    // Herdr app's terminal menu default (`terminal_menu_spec`).
-    Some(Menu::new(MenuTarget::Pane(pane.to_owned()), items, 220.0))
+    items
 }

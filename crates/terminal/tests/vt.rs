@@ -678,9 +678,64 @@ fn links_are_urls_paths_and_hyperlinks_under_a_cell() {
     );
 
     // Hovering underlines it; leaving takes the underline away.
-    assert!(vt.hover(Some((25.0, 3.0 * 22.0 + 5.0))));
+    assert!(vt.hover(Some((25.0, 3.0 * 22.0 + 5.0)), None));
     assert_eq!(vt.snapshot().link, link.spans);
-    assert!(vt.hover(None));
+    assert!(vt.hover(None, None));
+    assert!(vt.snapshot().link.is_empty());
+}
+
+/// A word the caller found to be a live terminal's address is underlined as a link is, ahead of
+/// a link, for as long as it's the word under the pointer.
+#[test]
+fn a_hovered_terminal_address_is_underlined_before_a_link() {
+    let mut vt = Vt::new(&Config {
+        cols: 20,
+        rows: 3,
+        ..config()
+    });
+    vt.write(b"ran t12. see devbox.lan/t3:4 ok");
+    vt.snapshot();
+    let at = |col: f32, row: f32| Some(((col + 0.5) * 10.0, (row + 0.5) * 22.0));
+    assert!(vt.hover(at(5.0, 0.0), Some("t12".into())));
+    assert_eq!(
+        vt.snapshot().link,
+        [terminal::Span {
+            row: 0,
+            start: 4,
+            end: 6
+        }],
+        "the word, not its dot"
+    );
+    // `devbox.lan/t3` reads as a path too: the address wins, across the wrap.
+    assert_eq!(
+        vt.link_at_cell(1, 1).map(|l| l.target).as_deref(),
+        Some("devbox.lan/t3:4"),
+        "a path, with its line"
+    );
+    assert!(vt.hover(at(1.0, 1.0), Some("devbox.lan/t3".into())));
+    assert_eq!(
+        vt.snapshot().link,
+        [
+            terminal::Span {
+                row: 0,
+                start: 13,
+                end: 19
+            },
+            terminal::Span {
+                row: 1,
+                start: 0,
+                end: 5
+            }
+        ]
+    );
+    // Without the address it's the link, if there is one; a word that isn't the one named
+    // isn't underlined.
+    vt.hover(at(5.0, 0.0), Some("t9".into()));
+    assert!(vt.snapshot().link.is_empty());
+    // Output that moves another word under the pointer takes the underline away.
+    vt.hover(at(5.0, 0.0), Some("t12".into()));
+    assert!(!vt.snapshot().link.is_empty());
+    vt.write(b"\x1b[Hran t13");
     assert!(vt.snapshot().link.is_empty());
 }
 

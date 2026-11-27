@@ -549,6 +549,53 @@ fn the_terminal_menu_splits_zooms_routes_right_clicks_and_sends_sub_agents_back(
     assert_eq!(tb1.root.panes().len(), 2);
 }
 
+/// A right-click in the peek: the terminal menu for the peeked terminal, without the pane items,
+/// over the peek (`menu/main.js` `items`, a terminal outside a tab).
+#[test]
+fn the_peeks_terminal_menu_leaves_the_pane_items_out() {
+    let mut core = world();
+    let mut m = connected(&mut core);
+    assert_eq!(popups::peek_menu(&m), None, "no peek, no menu");
+    drive(&mut m, &mut core, Action::PeekMenu);
+    assert_eq!(*m.mode(), Mode::Normal);
+    // k2, a2's sub-agent, has no pane.
+    drive(&mut m, &mut core, Action::Peek("k2".into()));
+    drive(&mut m, &mut core, Action::PeekMenu);
+    let Mode::Popup(PopupState::Menu(menu)) = m.mode().clone() else {
+        panic!("{:?}", m.mode())
+    };
+    assert_eq!(menu.target, model::MenuTarget::Terminal("k2".into()));
+    assert_eq!(menu.width, 220.0);
+    let labels: Vec<&str> = menu.items.iter().map(|i| i.label.as_str()).collect();
+    assert_eq!(labels, ["Send right-clicks to pane", "Send back to a2"]);
+    assert_eq!(m.peeked(), Some("k2"), "the menu is over the peek");
+    press(&mut m, "escape");
+    assert_eq!(*m.mode(), Mode::Normal);
+    assert_eq!(m.peeked(), Some("k2"));
+
+    // Send back, with no pane to take away: its place labels and its keep go, as Herdr app's
+    // `terminal.park` does, and it keeps running.
+    let before = core.calls.len();
+    let fx = drive(&mut m, &mut core, Action::Park("k2".into()));
+    assert!(fx.iter().all(|e| !matches!(e, Effect::Toast(_))), "{fx:?}");
+    let calls = &core.calls[before..];
+    assert!(
+        calls
+            .iter()
+            .any(|c| matches!(c, Request::Label(l) if l.terminal == "k2"
+            && l.labels.get("herdr.space").map(String::as_str) == Some(""))),
+        "{calls:?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .any(|c| matches!(c, Request::Keep(k) if k.terminal == "k2" && !k.keep)),
+        "{calls:?}"
+    );
+    assert!(core.kills().is_empty());
+    assert_eq!(m.peeked(), Some("k2"));
+}
+
 #[test]
 fn settings_files_open_in_a_new_tab_running_the_editor() {
     let mut core = world();

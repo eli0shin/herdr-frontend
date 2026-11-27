@@ -1,7 +1,12 @@
 //! The link under a cell: an OSC 8 hyperlink, else a URL or file path found in the text by
 //! Ghostty's pattern ([`crate::links`]), over the soft-wrapped line the cell is on. Links are
 //! read from the rows the last snapshot showed, so a click opens what's on screen.
+//!
+//! While Cmd is held the hovered link is underlined; a word the caller found to be a live
+//! terminal's address ([`crate::links::word`]) is underlined first, as Cmd-click peeks it
+//! before opening a link.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use ghostty_vt_sys::*;
@@ -37,13 +42,13 @@ impl Vt {
         found_in(screen, col, row)
     }
 
-    /// Underlines the link at a pixel position while Cmd is held, or nothing with `None`. True
-    /// if what's underlined changed.
-    pub fn hover(&mut self, at: Option<(f32, f32)>) -> bool {
-        let cell = at.and_then(|(x, y)| self.cell_at(x, y));
-        let link = cell.and_then(|(col, row)| self.link_at_cell(col, row));
-        self.hovered = cell;
-        let spans = link.map(|l| l.spans).unwrap_or_default();
+    /// Underlines the link at a pixel position while Cmd is held, or nothing with `None`:
+    /// `address`, the word there when it names a live terminal, before any link. True if what's
+    /// underlined changed.
+    pub fn hover(&mut self, at: Option<(f32, f32)>, address: Option<String>) -> bool {
+        self.hovered = at.and_then(|(x, y)| self.cell_at(x, y));
+        self.hovered_address = address.filter(|_| self.hovered.is_some());
+        let spans = self.hovered_spans();
         let changed = spans != self.underlined;
         self.underlined = spans;
         changed
@@ -51,12 +56,25 @@ impl Vt {
 
     /// The hovered link, found again on rows just read: output may have moved it.
     pub(super) fn refresh_hover(&mut self) {
-        if let Some((col, row)) = self.hovered {
-            self.underlined = self
-                .link_at_cell(col, row)
-                .map(|l| l.spans)
-                .unwrap_or_default();
+        if self.hovered.is_some() {
+            self.underlined = self.hovered_spans();
         }
+    }
+
+    /// What's underlined at the hovered cell: the address word while it's still there, else the
+    /// link.
+    fn hovered_spans(&self) -> Vec<Span> {
+        let Some((col, row)) = self.hovered else {
+            return Vec::new();
+        };
+        let address = self.hovered_address.as_deref().and_then(|word| {
+            let line = Line::through(&self.shown, col, row)?;
+            let range = crate::links::word(&line.text, line.at)?;
+            (line.text[range.clone()] == *word).then(|| line.spans(range))
+        });
+        address
+            .or_else(|| self.link_at_cell(col, row).map(|l| l.spans))
+            .unwrap_or_default()
     }
 
     /// The OSC 8 hyperlink on a cell, and the run of cells on its row with the same URI.
@@ -105,58 +123,85 @@ impl Vt {
 
 /// A URL or path the pattern finds over the soft-wrapped line through `(col, row)`.
 fn found_in(screen: &[Arc<Row>], col: u16, row: u16) -> Option<Link> {
-    let row = usize::from(row);
-    let mut first = row;
-    while first > 0 && screen[first - 1].wrapped {
-        first -= 1;
-    }
-    let mut last = row;
-    while last + 1 < screen.len() && screen[last].wrapped {
-        last += 1;
-    }
-    // The line's text, and the cell each character starts in.
-    let mut text = String::new();
-    let mut places: Vec<(usize, u16, u16, u16)> = Vec::new();
-    let mut at = None;
-    for (y, r) in screen.iter().enumerate().take(last + 1).skip(first) {
-        for (x, cell) in r.cells.iter().enumerate() {
-            let x = x as u16;
-            if matches!(cell.width, Width::SpacerTail | Width::SpacerHead) {
-                if y == row && x == col && cell.width == Width::SpacerTail {
-                    at = places.last().map(|p| p.0);
+    let line = Line::through(screen, col, row)?;
+    let range = crate::links::find(&line.text, line.at)?;
+    Some(Link {
+        target: line.text[range.clone()].to_owned(),
+        hyperlink: false,
+        spans: line.spans(range),
+    })
+}
+
+/// The soft-wrapped line through a cell, as text, with the cell each character starts in.
+struct Line {
+    text: String,
+    /// `(byte, row, col, width)` for each character.
+    places: Vec<(usize, u16, u16, u16)>,
+    /// The byte of the cell's character.
+    at: usize,
+}
+
+impl Line {
+    fn through(screen: &[Arc<Row>], col: u16, row: u16) -> Option<Line> {
+        let row = usize::from(row);
+        if row >= screen.len() {
+            return None;
+        }
+        let mut first = row;
+        while first > 0 && screen[first - 1].wrapped {
+            first -= 1;
+        }
+        let mut last = row;
+        while last + 1 < screen.len() && screen[last].wrapped {
+            last += 1;
+        }
+        let mut text = String::new();
+        let mut places: Vec<(usize, u16, u16, u16)> = Vec::new();
+        let mut at = None;
+        for (y, r) in screen.iter().enumerate().take(last + 1).skip(first) {
+            for (x, cell) in r.cells.iter().enumerate() {
+                let x = x as u16;
+                if matches!(cell.width, Width::SpacerTail | Width::SpacerHead) {
+                    if y == row && x == col && cell.width == Width::SpacerTail {
+                        at = places.last().map(|p| p.0);
+                    }
+                    continue;
                 }
+                if y == row && x == col {
+                    at = Some(text.len());
+                }
+                let width = if cell.width == Width::Wide { 2 } else { 1 };
+                places.push((text.len(), y as u16, x, width));
+                match cell.text.as_str() {
+                    "" => text.push(' '),
+                    t => text.push_str(t),
+                }
+            }
+        }
+        Some(Line {
+            text,
+            places,
+            at: at?,
+        })
+    }
+
+    /// The cells a byte range of the line covers, one span per row.
+    fn spans(&self, range: Range<usize>) -> Vec<Span> {
+        let mut spans: Vec<Span> = Vec::new();
+        for &(byte, y, x, width) in &self.places {
+            if !range.contains(&byte) {
                 continue;
             }
-            if y == row && x == col {
-                at = Some(text.len());
+            let end = x + width - 1;
+            match spans.last_mut() {
+                Some(span) if span.row == y => span.end = end,
+                _ => spans.push(Span {
+                    row: y,
+                    start: x,
+                    end,
+                }),
             }
-            let width = if cell.width == Width::Wide { 2 } else { 1 };
-            places.push((text.len(), y as u16, x, width));
-            match cell.text.as_str() {
-                "" => text.push(' '),
-                t => text.push_str(t),
-            }
         }
+        spans
     }
-    let range = crate::links::find(&text, at?)?;
-    let mut spans: Vec<Span> = Vec::new();
-    for &(byte, y, x, width) in &places {
-        if !range.contains(&byte) {
-            continue;
-        }
-        let end = x + width - 1;
-        match spans.last_mut() {
-            Some(span) if span.row == y => span.end = end,
-            _ => spans.push(Span {
-                row: y,
-                start: x,
-                end,
-            }),
-        }
-    }
-    Some(Link {
-        target: text[range].to_owned(),
-        hyperlink: false,
-        spans,
-    })
 }

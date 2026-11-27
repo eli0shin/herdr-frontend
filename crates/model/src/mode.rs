@@ -151,6 +151,8 @@ pub enum MenuTarget {
     Tab(String),
     /// A pane's terminal, right-clicked.
     Pane(String),
+    /// The peek's terminal, right-clicked: its address.
+    Terminal(String),
     /// A machine in the Machines dialog.
     Machine(String),
 }

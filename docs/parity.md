@@ -44,12 +44,12 @@ Differences that come from the harness, not from either app:
 ## Summary
 
 Every item passes, differs on purpose, or was fixed here, except four gaps filed as their own
-tickets:
+tickets (043 is done since):
 
 - **040** dead-space sweep (§3, and its toast in §8);
 - **041** space names and branches from git checkouts (§3, and the space picker's branch matching);
 - **042** kitty graphics (§17);
-- **043** the peek's find bar, terminal menu and Cmd-hover address underline (§15, §10).
+- **043** the peek's find bar, terminal menu and Cmd-hover address underline (§15, §10): done.
 
 Fixed in this ticket: the lone tab pill (§1), the Agents list's icon colors (§2), the hollow
 cursor under popups (§1), `cmd-shift-l` (§1), the picker's spinner and the keys help's header
@@ -216,7 +216,7 @@ cursor under popups (§1), `cmd-shift-l` (§1), the picker's spinner and the key
 | Prompt dialog | Pass | `app/popups.rs::the_prompt_cancels_with_esc_and_saves_with_its_button`, `model/popups.rs::the_prompt_saves_trimmed_names_and_the_confirm_closes_the_space`; [`04-tabs--07-rename-prompt`](images/parity/04-tabs--07-rename-prompt.jpg) |
 | Confirm dialog | Pass | `app/popups.rs::closing_a_space_asks_and_cancel_or_confirm_answers` |
 | Tab menu | Pass | `model/tabs.rs::right_click_opens_the_tab_menu_with_its_items_and_key_hints`, `::the_tab_menu_runs_rename_new_tab_and_close_on_its_tab` |
-| Terminal menu | Pass | `app/popups.rs::menus_open_where_the_right_click_was_and_run_their_items`, `model/popups.rs::the_terminal_menu_splits_zooms_routes_right_clicks_and_sends_sub_agents_back`. Inside the peek: 043 (§15) |
+| Terminal menu | Pass | `app/popups.rs::menus_open_where_the_right_click_was_and_run_their_items`, `model/popups.rs::the_terminal_menu_splits_zooms_routes_right_clicks_and_sends_sub_agents_back`. Inside the peek, without the pane items (043, §15): `app/peek.rs::a_right_click_in_the_peek_opens_the_terminal_menu_without_pane_items`, `model/popups.rs::the_peeks_terminal_menu_leaves_the_pane_items_out` |
 | Keys help | Pass, Intentional, Fixed | `app/keymap.rs::the_keys_help_lists_the_bindings_filters_and_closes`; [`10-pickers--06-keys-help`](images/parity/10-pickers--06-keys-help.jpg). The header now reads "Keybinds" and Esc over the field, as the help mod's does (fixed). Rows show each command's title with its keys instead of raw command words, which fixes the limit the inventory notes (intentional) |
 | Welcome / What's new / Feedback frames | Intentional | Herdr app's product frames (its onboarding, release notes and feedback channel). herdr-frontend has none |
 
@@ -246,7 +246,7 @@ panel buttons ([`14-panels--01-a-shell-tab`](images/parity/14-panels--01-a-shell
 | Item | Verdict | Evidence |
 | --- | --- | --- |
 | Peek a terminal: 80% × 80% over a dimmed window, the 34 px bar, go to, keep, ✕, Esc to the terminal | Pass | `app/peek.rs::a_sub_agents_row_opens_the_peek_with_its_bar_and_terminal`, `::keys_go_to_the_peeked_terminal_and_esc_too`, `::keep_gives_it_a_tab_and_focuses_it`, `::go_to_shows_a_peeked_terminals_own_pane`, `::cmd_click_on_a_live_terminals_address_peeks_it`; [`15-peek--01-peek-explore`](images/parity/15-peek--01-peek-explore.jpg) (the window behind reads (19, 19, 19) in Herdr app and (20, 20, 20) here: dimmed 35% in both) |
-| Find bar, terminal menu and the Cmd-hover underline inside the peek | Follow-up (043) | `docs/review-and-peek.md` "Not yet": Cmd-f says "not yet", right-click opens no menu, and addresses aren't underlined |
+| Find bar, terminal menu and the Cmd-hover underline inside the peek | Pass (043) | Find: `app/peek.rs::cmd_f_in_the_peek_opens_its_find_bar`, `::a_peeked_terminals_find_bar_is_over_the_peek_not_its_pane`; e2e `15-peek` opens the bar and finds a word in both apps. Menu without the pane items: `app/peek.rs::a_right_click_in_the_peek_opens_the_terminal_menu_without_pane_items`, `model/popups.rs::the_peeks_terminal_menu_leaves_the_pane_items_out`. Cmd-hover underlines a live terminal's address ahead of a link, in panes and in the peek: `app/peek.rs::cmd_hover_underlines_a_live_terminals_address`, `terminal/tests/vt.rs::a_hovered_terminal_address_is_underlined_before_a_link` |
 
 ## §16 Copy mode
 

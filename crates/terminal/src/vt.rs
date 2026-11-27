@@ -229,8 +229,10 @@ pub struct Vt {
     finder: Option<find::Finder>,
     /// The viewport rows of the last snapshot, where links are looked up.
     shown: Vec<Arc<Row>>,
-    /// The cell under the pointer while Cmd is held, and the link there's cells.
+    /// The cell under the pointer while Cmd is held, the word there that names a live
+    /// terminal (if the caller found one), and the cells underlined.
     hovered: Option<(u16, u16)>,
+    hovered_address: Option<String>,
     underlined: Vec<Span>,
     /// Copy mode, while it runs.
     copying: Option<copy::Copying>,
@@ -355,6 +357,7 @@ impl Vt {
                 finder: None,
                 shown: Vec::new(),
                 hovered: None,
+                hovered_address: None,
                 underlined: Vec::new(),
                 copying: None,
             };

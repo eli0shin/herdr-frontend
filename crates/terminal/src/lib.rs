@@ -113,7 +113,7 @@ enum Request {
     FindNext {
         back: bool,
     },
-    Hover(Option<(f32, f32)>),
+    Hover(Option<(f32, f32)>, Option<String>),
     OpenLink {
         x: f32,
         y: f32,
@@ -289,9 +289,11 @@ impl Terminal {
     }
 
     /// The pointer, in device pixels from the grid's top left, while Cmd is held: the link
-    /// under it is underlined ([`Snapshot::link`]). `None` takes the underline away.
-    pub fn hover(&self, at: Option<(f32, f32)>) {
-        self.send(Request::Hover(at));
+    /// under it is underlined ([`Snapshot::link`]). `None` takes the underline away. `address`
+    /// is the word under it ([`links::word`]) when the caller found it names a live terminal:
+    /// that word is underlined rather than a link, for as long as it's still the word there.
+    pub fn hover(&self, at: Option<(f32, f32)>, address: Option<String>) {
+        self.send(Request::Hover(at, address));
     }
 
     /// Looks up the link at a pixel position: [`Output::Link`] if there is one.
@@ -564,7 +566,7 @@ impl Worker {
                 self.vt.find_next(back);
                 true
             }
-            Request::Hover(at) => self.vt.hover(at),
+            Request::Hover(at, address) => self.vt.hover(at, address),
             Request::OpenLink { x, y } => {
                 if let Some(link) = self.vt.link_at(x, y) {
                     self.out(Output::Link(link));

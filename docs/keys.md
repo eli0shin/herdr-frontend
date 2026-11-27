@@ -117,8 +117,8 @@ agent-jump bar (`docs/sidebar.md`), the machine popups (`docs/machines.md`) and 
 (above). The terminal's sends, paste, copy, paste-image, select all and copy mode run in the
 terminal that has the keyboard (`Model::keyboard_terminal`): the peeked one while a peek is open
 (`docs/review-and-peek.md`), else the focused pane's (`docs/research/terminal-rendering.md` §3).
-Find (`cmd-f`, the terminal's find bar, §2 "What herdr-frontend does (ticket 019)") is the one
-exception: it runs in the focused pane's terminal, and in the peek it says "not yet".
+So does find (`cmd-f`, the terminal's find bar, §2 "What herdr-frontend does (ticket 019)"): its
+bar opens over the peek while one is open, else over the focused pane.
 
 ## Keys help
 

@@ -6,7 +6,9 @@
 //! scrim        the whole window, dimmed; a press on it closes the peek
 //! └─ peek      80% × 80%, centered
 //!    ├─ bar    status glyph, icon, name, status word, "from <parent>", ↗ go to / ↗ keep, ✕
-//!    └─ area   the terminal, with a pane's handlers: keys (Esc too), mouse, wheel, drops
+//!    └─ area   the terminal, with a pane's handlers: keys (Esc too), mouse, wheel, drops,
+//!              right-clicks (the terminal menu, without the pane items); its find bar
+//!              (`cmd-f`) at the top right
 //! ```
 //!
 //! The terminal takes the keyboard while no popup does, and takes the size as the pane in use
@@ -56,6 +58,9 @@ pub fn view(s: &State, cx: &Cx<State>) -> Option<El> {
         Some(pane) => pane.view_as(PEEK_KEY, focused, &face, &s.look),
         None => el().key(PEEK_KEY).w_full().h_full().fill(background),
     };
+    let (vw, vh) = s.view_size();
+    // Inside the dialog's 1 pt border, until the area is laid out.
+    let area_w = s.peek_area_w().unwrap_or(vw * SHARE - 2.0);
     let area = el()
         .key("peek-area")
         .w_full()
@@ -64,10 +69,10 @@ pub fn view(s: &State, cx: &Cx<State>) -> Option<El> {
         .fill(background)
         .clip_soft(0.0)
         .on_layout_tx(|s: &mut State, rect, tx| s.peek_laid_out(rect, tx))
-        .child(pane_input(body, PEEK));
+        .child(pane_input(body, PEEK))
+        .children(crate::view::find::view(s, PEEK, &bar.address, area_w));
     // Herdr app's dialog frame, as the popups' (`view::overlay::frame`), but the terminal in
     // it takes the keyboard and its own close.
-    let (vw, vh) = s.view_size();
     let dialog = col()
         .key("peek")
         .w(vw * SHARE)
@@ -210,7 +215,7 @@ fn button(s: &State, key: &str, label: &str, action: Action) -> El {
 }
 
 /// The word under a point of a terminal's grid (device pixels from its top left), in the
-/// soft-wrapped line it's on as the snapshot shows it ([`model::peek::word`]), and the word's
+/// soft-wrapped line it's on as the snapshot shows it ([`terminal::links::word`]), and the word's
 /// bytes in that line.
 pub fn word_at(snapshot: &Snapshot, x: f32, y: f32) -> Option<(String, Range<usize>)> {
     if x < 0.0 || y < 0.0 || snapshot.cell_width == 0 || snapshot.cell_height == 0 {
@@ -251,7 +256,7 @@ pub fn word_at(snapshot: &Snapshot, x: f32, y: f32) -> Option<(String, Range<usi
             }
         }
     }
-    let range = model::peek::word(&line, at?)?;
+    let range = terminal::links::word(&line, at?)?;
     Some((line[range.clone()].to_owned(), range))
 }
 

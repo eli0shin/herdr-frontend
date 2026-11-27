@@ -1426,12 +1426,7 @@ impl State {
     /// A `terminal` key binding's action, or another command for a terminal's view.
     fn terminal_command(&mut self, address: &str, command: TerminalCommand) {
         if command == TerminalCommand::Action(TerminalAction::Search) {
-            // The peek has no find bar: a search there would have nothing to type in or close.
-            if self.model.peeked() == Some(address) {
-                self.not_yet(&Action::Terminal(TerminalAction::Search));
-            } else {
-                self.open_find(address);
-            }
+            self.open_find(address);
             return;
         }
         let Some(viewer) = self.viewers.get(address) else {
@@ -1464,10 +1459,21 @@ impl State {
         }
     }
 
-    /// `cmd-f`: the terminal's find bar opens with the keyboard in its field. Its query is
-    /// the one it had, selected on reopening so typing replaces it, and searched again.
+    /// The surface terminal `address` is in front on, as the pane handlers name it: [`PEEK`]
+    /// while it's peeked, else its pane.
+    fn surface_of(&self, address: &str) -> Option<String> {
+        if self.model.peeked() == Some(address) {
+            Some(PEEK.to_owned())
+        } else {
+            self.model.world().pane_of(address)
+        }
+    }
+
+    /// `cmd-f`: the terminal's find bar opens with the keyboard in its field, over the peek
+    /// while it's peeked, else over its pane. Its query is the one it had, selected on reopening
+    /// so typing replaces it, and searched again.
     fn open_find(&mut self, address: &str) {
-        let Some(pane) = self.model.world().pane_of(address) else {
+        let Some(pane) = self.surface_of(address) else {
             return;
         };
         let Some(viewer) = self.viewers.get_mut(address) else {
@@ -1528,8 +1534,8 @@ impl State {
             bar.open = false;
         }
         viewer.terminal.find("");
-        if let Some(pane) = self.model.world().pane_of(address) {
-            self.ui.focus_key = Some(pane_key(&pane));
+        if let Some(pane) = self.surface_of(address) {
+            self.ui.focus_key = Some(surface_key(&pane));
         }
         self.redraw = true;
         self.after_input(tx);
@@ -2439,6 +2445,11 @@ impl State {
         self.apply_ui(tx);
     }
 
+    /// The peek's terminal area's width, in view points, once it's laid out.
+    pub fn peek_area_w(&self) -> Option<f32> {
+        self.peek_area.map(|a| a.w)
+    }
+
     /// The terminal a pane handler's `pane` means: the pane's, or the peeked one for [`PEEK`].
     fn surface_address(&self, pane: &str) -> Option<String> {
         if pane == PEEK {
@@ -2901,7 +2912,7 @@ impl State {
         let in_use = d.phase == Phase::Down && self.use_pane(pane, &address, tx);
         if d.phase == Phase::Down && tx.button() == PointerButton::Primary && tx.mods().cmd {
             let (x, y) = self.grid_px(&address, d.x, d.y);
-            if let Some(target) = self.address_at(&address, x, y) {
+            if let Some((target, _)) = self.address_at(&address, x, y) {
                 self.press = None;
                 self.step(tx.clock(), Action::Peek(target));
                 self.pump(tx.clock());
@@ -2998,12 +3009,26 @@ impl State {
     }
 
     /// The live terminal whose address is under the pointer (device pixels from the grid's top
-    /// left) in terminal `source`'s text, as its last snapshot shows it.
-    fn address_at(&self, source: &str, x: f32, y: f32) -> Option<String> {
+    /// left) in terminal `source`'s text, as its last snapshot shows it, and the word naming it.
+    fn address_at(&self, source: &str, x: f32, y: f32) -> Option<(String, String)> {
         let snapshot = self.viewers.get(source)?.shown()?;
         let (word, _) = crate::view::peek::word_at(snapshot, x, y)?;
         let live = self.model.world().live().map(|t| t.address.as_str());
-        model::peek::terminal_address(&word, source, live)
+        let address = model::peek::terminal_address(&word, source, live)?;
+        Some((address, word))
+    }
+
+    /// Cmd held with the pointer at `(x, y)` over terminal `address`'s grid, or not: the link
+    /// or terminal address there is underlined, the address first, as Cmd-click peeks it before
+    /// opening a link. Without Cmd the underline goes.
+    fn hover_link(&mut self, address: &str, at: Option<(f32, f32)>) {
+        let word = at
+            .and_then(|(x, y)| self.address_at(address, x, y))
+            .map(|(_, word)| word);
+        if let Some(viewer) = self.viewers.get_mut(address) {
+            viewer.terminal.hover(at, word);
+            viewer.hovering_link = at.is_some();
+        }
     }
 
     /// The pointer moving over pane `pane` with no button held: a program tracking every
@@ -3018,21 +3043,16 @@ impl State {
         };
         let mods = tx.mods();
         let (x, y) = self.grid_px(&address, p.x, p.y);
-        if let Some((was, ..)) = &self.pointer
-            && *was != address
-            && let Some(viewer) = self.viewers.get_mut(was)
-            && viewer.hovering_link
+        if let Some((was, ..)) = self.pointer.clone()
+            && was != address
+            && self.viewers.get(&was).is_some_and(|v| v.hovering_link)
         {
-            viewer.terminal.hover(None);
-            viewer.hovering_link = false;
+            self.hover_link(&was, None);
         }
         self.pointer = Some((address.clone(), x, y));
         // With Cmd held the link under the pointer is underlined, until Cmd or the pointer goes.
-        if let Some(viewer) = self.viewers.get_mut(&address)
-            && (mods.cmd || viewer.hovering_link)
-        {
-            viewer.terminal.hover(mods.cmd.then_some((x, y)));
-            viewer.hovering_link = mods.cmd;
+        if mods.cmd || self.viewers.get(&address).is_some_and(|v| v.hovering_link) {
+            self.hover_link(&address, mods.cmd.then_some((x, y)));
         }
         if self.in_use() == Some(address.as_str())
             && let Some(viewer) = self.viewers.get(&address)
@@ -3058,11 +3078,8 @@ impl State {
         if self.pointer.as_ref().is_some_and(|(a, ..)| *a == address) {
             self.pointer = None;
         }
-        if let Some(viewer) = self.viewers.get_mut(&address)
-            && viewer.hovering_link
-        {
-            viewer.terminal.hover(None);
-            viewer.hovering_link = false;
+        if self.viewers.get(&address).is_some_and(|v| v.hovering_link) {
+            self.hover_link(&address, None);
             self.after_input(tx);
         }
     }
@@ -3070,16 +3087,13 @@ impl State {
     /// `App::on_modifiers`: Cmd pressed underlines the link under the pointer, as moving with it
     /// held does; let go, the underline goes.
     pub fn on_modifiers(s: &mut State, mods: rune::Mods, tx: &mut Tx) {
-        let cmd = mods.cmd;
-        let over = s.pointer.clone();
-        for viewer in s.viewers.values_mut() {
-            let here = over.as_ref().filter(|(a, ..)| *a == viewer.address);
-            if cmd && let Some((_, x, y)) = here {
-                viewer.terminal.hover(Some((*x, *y)));
-                viewer.hovering_link = true;
-            } else if viewer.hovering_link {
-                viewer.terminal.hover(None);
-                viewer.hovering_link = false;
+        let over = s.pointer.clone().filter(|_| mods.cmd);
+        let addresses: Vec<String> = s.viewers.keys().cloned().collect();
+        for address in addresses {
+            match &over {
+                Some((a, x, y)) if *a == address => s.hover_link(&address, Some((*x, *y))),
+                _ if s.viewers[&address].hovering_link => s.hover_link(&address, None),
+                _ => {}
             }
         }
         s.after_input(tx);
@@ -3205,7 +3219,7 @@ impl State {
 
     /// A right-click on pane `pane`: the program's, when its terminal is labelled to send
     /// right-clicks there (`herdr.right-click=program`) and it tracks the mouse, unless Shift is
-    /// held; otherwise the terminal's menu (ticket 026).
+    /// held; otherwise the terminal's menu (ticket 026), without the pane items in the peek.
     pub fn pane_right_click(&mut self, pane: &str, p: PointerEvent, tx: &mut Tx) {
         let Some(address) = self.surface_address(pane) else {
             return;
@@ -3236,8 +3250,10 @@ impl State {
                     });
                 }
             }
-            // The peek's terminal has no pane to make a menu for.
-            _ if pane == PEEK => {}
+            // The peek's terminal: its menu, with no pane items.
+            _ if pane == PEEK => {
+                self.step(tx.clock(), Action::PeekMenu);
+            }
             _ => {
                 self.step(tx.clock(), Action::TerminalMenu(pane.to_owned()));
             }

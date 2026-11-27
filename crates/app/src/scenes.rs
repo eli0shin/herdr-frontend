@@ -33,6 +33,8 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-sort-menu", shell_sort_menu),
     ("shell-agent-jump", shell_agent_jump),
     ("shell-peek", shell_peek),
+    ("shell-peek-find", shell_peek_find),
+    ("shell-peek-menu", shell_peek_menu),
     ("shell-agents-empty", shell_agents_empty),
     ("shell-alerts", shell_alerts),
     ("shell-palette", shell_palette),
@@ -205,6 +207,25 @@ fn shell_peek(s: &mut State) {
     shell_agents(s);
     s.step(0.0, model::Action::Peek("t20".into()));
     s.settle();
+}
+
+/// [`shell_peek`] with the peeked terminal's find bar open (`cmd-f`) on `sidebar`, the
+/// newest hit selected.
+fn shell_peek_find(s: &mut State) {
+    shell_peek(s);
+    s.step(0.0, model::Action::Terminal(model::TerminalAction::Search));
+    s.search("t20", "sidebar");
+    if let Some(viewer) = s.viewers.get("t20") {
+        viewer.terminal.find_next(false);
+    }
+    s.settle();
+}
+
+/// [`shell_peek`] with the terminal menu opened by a right-click in it: no pane items.
+fn shell_peek_menu(s: &mut State) {
+    shell_peek(s);
+    s.menu_at = Some((560.0, 300.0));
+    s.step(0.0, model::Action::PeekMenu);
 }
 
 /// The demo core, whose terminals report no status: the list says how agents show up.

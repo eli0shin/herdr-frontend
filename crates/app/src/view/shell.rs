@@ -142,7 +142,11 @@ fn main(s: &State, cx: &mut Cx<State>) -> El {
         };
         let bars = address.as_deref().map(|a| {
             let scrollbar = viewer.and_then(|v| scrollbar(s, v, a, rect.w, &face));
-            (scrollbar, crate::view::find::view(s, &pane, a, rect.w))
+            // A peeked terminal's find bar is over the peek.
+            let find = (s.model.peeked() != Some(a))
+                .then(|| crate::view::find::view(s, &pane, a, rect.w))
+                .flatten();
+            (scrollbar, find)
         });
         let (scrollbar, find) = bars.unwrap_or((None, None));
         el().absolute(rect.x, rect.y)

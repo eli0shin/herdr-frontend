@@ -433,6 +433,8 @@ pub enum Action {
     /// Right-click a pane's terminal (Shift+right-click when the program takes the mouse): the
     /// pane's id.
     TerminalMenu(String),
+    /// Right-click the peek's terminal: the terminal menu without the pane items.
+    PeekMenu,
 
     // What the popups run on what they list (§10). Ids are qualified.
     /// The space picker's Enter: show a space, on a terminal tab when its selected tab is an
@@ -582,6 +584,7 @@ impl Action {
             | Action::KeepPeek
             | Action::FoldSubagents(_)
             | Action::TerminalMenu(_)
+            | Action::PeekMenu
             | Action::OpenLink { .. }
             | Action::RearrangePane { .. }
             | Action::ResizeSplit { .. }

@@ -104,7 +104,7 @@ The new-space picker and the PR finder keep their mods' own matching:
 | Prompt | `f2`, `ctrl-g r`, `shift-f2`, the terminal menu's Rename | 380 wide dialog | "Rename tab" / "Rename space" / "Rename pane", a "Name" field holding the name, selected, and a hint ("empty: its number" / "empty: named after its folder" / "empty: unnamed"), Cancel and Save. A second rename closes it. | Saves the trimmed name; empty goes back to the automatic one (a pane: no name). |
 | Confirm | `ctrl-g x`, closing a space's last tab | 380 wide dialog | "Close space?", "<name> — N tabs, M terminals", Cancel and Confirm. | Closes the space and ends its terminals. |
 | Tab menu | right-click a tab | 200 wide menu | Rename, New tab, Close, each with its icon and key. | Runs the item. |
-| Terminal menu | right-click a pane | 220 wide menu | Rename, Split right, Split down, Zoom; "Send right-clicks to pane" or "Use Herdr right-click menu"; "Send back to <parent>" for a sub-agent kept in a pane; Close pane. Pane items are left out for a terminal outside a tab. | Runs the item on that pane. |
+| Terminal menu | right-click a pane, or the peek's terminal | 220 wide menu | Rename, Split right, Split down, Zoom; "Send right-clicks to pane" or "Use Herdr right-click menu"; "Send back to <parent>" for a sub-agent; Close pane. Pane items are left out for a terminal outside a tab, and always in the peek (`docs/review-and-peek.md`). | Runs the item on that pane, or the peeked terminal. |
 | Settings | `cmd-,`, `ctrl-g c` | 520 wide dialog | `settings.json`, `keys.json`, `programs.json` and the theme's file (when the theme came from the home's `themes/`, or the settings name one that isn't built in), each with its path; what is wrong with the files now; "Machines"; "Show the home folder". | Opens the file in a new tab running `$EDITOR`, else Neovim; the window follows the saved file. "Machines" opens the Machines dialog. The last row shows the home in Finder. |
 | Keys help | `cmd-/` | 640 × 520 dialog | `docs/keys.md` "Keys help". | — |
 | Sort menu | the sidebar's sort button | under that button, in the sidebar's own frame (`view::sidebar`) | The sorts, the current one checked. | Sorts the Agents list. |
@@ -118,7 +118,7 @@ Menus show each item's `global` key, as the keys help lists it (single keys befo
 "Send right-clicks to pane" sets the terminal's `herdr.right-click=program` label, which Herdr
 app reads too; "Use Herdr right-click menu" clears it. "Send back to <parent>" is
 `terminal.park`: the terminal's `herdr.space` and `herdr.tab` labels are cleared, then keep is
-turned off, then its pane goes; the terminal keeps running under its parent.
+turned off, then its pane goes (if it has one); the terminal keeps running under its parent.
 
 The settings dialog lists files instead of editing values: herdr-frontend is set up by files
 (`docs/settings.md`, `docs/keys.md`), and Herdr app's 880 pt settings window has no counterpart.
