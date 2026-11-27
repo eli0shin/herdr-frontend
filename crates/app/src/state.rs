@@ -201,6 +201,32 @@ struct Ui {
     paste_image: Vec<String>,
 }
 
+/// A divider being dragged: the sizes beside it before, put back if the drag is cancelled after
+/// it moved them.
+struct DividerDrag {
+    container: String,
+    index: usize,
+    before: Vec<(String, herdr_shared::Size)>,
+    moved: bool,
+}
+
+/// A pane's grip being dragged (`app:src/window/pane_drag.rs` `PaneDrag`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaneDrag {
+    pub pane: String,
+    /// The tab it started in: a drag ends if another tab shows.
+    tab: String,
+    /// Where the press was, in the tab area.
+    from: (f32, f32),
+    /// Past the 4 pt that make a press a drag.
+    moving: bool,
+    /// The pane under the pointer and where on it the pane would land.
+    pub target: Option<(String, model::Edge)>,
+}
+
+/// A grip press moves this far before it is a drag, in view points.
+const GRIP_SLOP: f32 = 4.0;
+
 /// The window's tab area, as laid out, in view points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Area {
@@ -287,6 +313,10 @@ pub struct State {
     press: Option<Press>,
     /// Trackpad scrolling not yet a whole line, in points.
     wheel: f32,
+    /// The pane whose top strip the pointer is over: its grip shows.
+    pub grip_hover: Option<String>,
+    pub pane_drag: Option<PaneDrag>,
+    divider_drag: Option<DividerDrag>,
 }
 
 impl Default for State {
@@ -390,6 +420,9 @@ impl State {
             keys_down: Vec::new(),
             press: None,
             wheel: 0.0,
+            grip_hover: None,
+            pane_drag: None,
+            divider_drag: None,
         };
         s.configure_all(config);
         s.window_sized(crate::SIZE.0, crate::SIZE.1);
@@ -1633,6 +1666,177 @@ impl State {
                 false
             }
             Ime::Select(_) | Ime::Enabled => false,
+        }
+    }
+
+    /// The pointer over the tab area (in its points), or gone from it: a movable pane whose top
+    /// [`model::geometry::GRIP_ROW`] points it is on shows its grip.
+    pub fn tab_area_pointer(&mut self, at: Option<(f32, f32)>, tx: &mut Tx) {
+        let row = model::geometry::GRIP_ROW;
+        let over = at.and_then(|(x, y)| {
+            self.model
+                .pane_rects()
+                .into_iter()
+                .find(|(pane, r)| {
+                    r.contains(x, y) && y < r.y + row.min(r.h) && self.model.pane_movable(pane)
+                })
+                .map(|(pane, _)| pane)
+        });
+        if over == self.grip_hover {
+            // Nothing to draw: most moves land here.
+            tx.live_only();
+            return;
+        }
+        self.grip_hover = over;
+    }
+
+    /// A divider of the shown tab dragged: it follows the pointer, writing the sizes as it goes
+    /// (each write waits for the one before it). `grab` is where along the split's axis, in the
+    /// tab area, the press was; a cancelled drag puts the sizes back.
+    pub fn divider_dragged(
+        &mut self,
+        container: &str,
+        index: usize,
+        phase: rune::Phase,
+        at: f32,
+        cancelled: bool,
+        tx: &mut Tx,
+    ) {
+        match phase {
+            rune::Phase::Down => {
+                let before = self
+                    .model
+                    .world()
+                    .node(container)
+                    .map(|n| {
+                        n.children()
+                            .iter()
+                            .filter(|c| !c.hidden())
+                            .skip(index)
+                            .take(2)
+                            .map(|c| {
+                                let size = c.size().unwrap_or(herdr_shared::Size::Weight(1.0));
+                                (c.id.clone(), size)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.divider_drag = Some(DividerDrag {
+                    container: container.to_owned(),
+                    index,
+                    before,
+                    moved: false,
+                });
+            }
+            rune::Phase::Move => {
+                if let Some(drag) = &mut self.divider_drag {
+                    drag.moved = true;
+                }
+                self.act(
+                    Action::DragDivider {
+                        container: container.to_owned(),
+                        index,
+                        at,
+                    },
+                    tx,
+                );
+            }
+            rune::Phase::Up => {
+                let drag = self.divider_drag.take();
+                // A press that never moved wrote nothing: a click leaves the sizes alone, and a
+                // cancel has nothing to put back.
+                if let Some(drag) =
+                    drag.filter(|d| d.moved && d.container == container && d.index == index)
+                {
+                    if cancelled {
+                        self.act(Action::ResizeSplit { sizes: drag.before }, tx);
+                    } else {
+                        self.act(
+                            Action::DragDivider {
+                                container: container.to_owned(),
+                                index,
+                                at,
+                            },
+                            tx,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A pane's grip dragged: past a few points it picks the pane under the pointer and where on
+    /// it the pane would land; the release moves it there (`app:src/window/pane_drag.rs`).
+    /// `at` is the pointer in the tab area.
+    pub fn grip_dragged(
+        &mut self,
+        pane: &str,
+        phase: rune::Phase,
+        at: (f32, f32),
+        cancelled: bool,
+        tx: &mut Tx,
+    ) {
+        let shown = self.model.shown_tab().map(|t| t.id.clone());
+        match phase {
+            rune::Phase::Down => {
+                self.pane_drag = match shown {
+                    Some(tab) if self.model.pane_movable(pane) => Some(PaneDrag {
+                        pane: pane.to_owned(),
+                        tab,
+                        from: at,
+                        moving: false,
+                        target: None,
+                    }),
+                    _ => None,
+                };
+            }
+            rune::Phase::Move => {
+                let rects = self.model.pane_rects();
+                let Some(drag) = self.pane_drag.as_mut() else {
+                    return;
+                };
+                if shown.as_ref() != Some(&drag.tab) {
+                    self.pane_drag = None;
+                    return;
+                }
+                let travel = (at.0 - drag.from.0).abs().max((at.1 - drag.from.1).abs());
+                if !drag.moving && travel < GRIP_SLOP {
+                    return;
+                }
+                drag.moving = true;
+                drag.target =
+                    rects
+                        .iter()
+                        .filter(|(id, _)| *id != drag.pane)
+                        .find_map(|(id, r)| {
+                            Some((id.clone(), model::geometry::drop_zone(*r, at.0, at.1)?))
+                        });
+            }
+            rune::Phase::Up => {
+                let Some(drag) = self.pane_drag.take() else {
+                    return;
+                };
+                if cancelled || !drag.moving || shown.as_ref() != Some(&drag.tab) {
+                    return;
+                }
+                let rects = self.model.pane_rects();
+                let target = rects
+                    .iter()
+                    .filter(|(id, _)| *id != drag.pane)
+                    .find_map(|(id, r)| {
+                        Some((id.clone(), model::geometry::drop_zone(*r, at.0, at.1)?))
+                    });
+                if let Some((target, edge)) = target {
+                    self.act(
+                        Action::RearrangePane {
+                            pane: drag.pane,
+                            target,
+                            edge,
+                        },
+                        tx,
+                    );
+                }
+            }
         }
     }
 

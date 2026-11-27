@@ -6,7 +6,7 @@ mod support;
 use herdr_proto::{CloseReason, ErrorKind, Reason, StatusState};
 use herdr_shared::{Axis, Kind, Layout, Node};
 use model::mode::{Confirmed, PopupState, Rename};
-use model::{Action, Direction, Effect, Event, Focus, Geometry, Mode, PopupAction, Rect, Split};
+use model::{Action, Effect, Event, Focus, Geometry, Mode, PopupAction, Rect, Split};
 use serde_json::json;
 use support::*;
 
@@ -629,18 +629,326 @@ fn focus_by_direction_prefers_the_pane_last_focused_along_the_edge() {
     assert_eq!(m.focused_pane().as_deref(), Some("a"));
 }
 
-#[test]
-fn neovim_panes_route_ctrl_hjkl_to_neovim_first() {
+/// `three_panes`, laid out 201 × 201 with a 1 pt gap: a is 100 wide, b and c 100 × 100.
+fn three_panes_laid_out() -> (Core, model::Model) {
     let mut core = three_panes();
+    let mut m = connected(&mut core);
+    drive(
+        &mut m,
+        &mut core,
+        Event::Geometry(Geometry {
+            area: Rect::new(0.0, 0.0, 201.0, 201.0),
+            gap: 1.0,
+            zoom: 1.0,
+        }),
+    );
+    (core, m)
+}
+
+fn with_editor(mut core: Core) -> Core {
     core.terminals
         .get_mut("ta")
         .unwrap()
         .labels
         .insert(model::EDITOR_LABEL.into(), "/tmp/nvim.sock".into());
+    core
+}
+
+fn weight(core: &Core, id: &str) -> Option<herdr_shared::Size> {
+    core.doc(None)
+        .tab("tb1")
+        .unwrap()
+        .root
+        .find(id)
+        .unwrap()
+        .size()
+}
+
+#[test]
+fn neovim_panes_hand_ctrl_hjkl_to_neovim_over_its_server() {
+    let mut core = with_editor(three_panes());
     let mut m = connected(&mut core);
     let fx = key(&mut m, &mut core, "ctrl-l", true);
-    assert!(fx.contains(&Effect::NotYet(Action::PaneNavigate(Direction::Right))));
+    assert_eq!(
+        core.execs(),
+        [(
+            [
+                "nvim",
+                "--server",
+                "/tmp/nvim.sock",
+                "--remote-send",
+                "<C-l>"
+            ]
+            .map(String::from)
+            .to_vec(),
+            None
+        )]
+    );
+    // Neovim took the key (it exited 0): the pane doesn't move, nothing else is said.
     assert_eq!(m.focused_pane().as_deref(), Some("a"));
+    assert!(
+        fx.iter()
+            .all(|e| !matches!(e, Effect::Toast(_) | Effect::NotYet(_)))
+    );
+    // Never through `hc keys`, nor any other call.
+    assert_eq!(core.calls.len(), 1);
+    key(&mut m, &mut core, "ctrl-j", true);
+    assert_eq!(core.execs()[1].0[4], "<C-j>");
+}
+
+#[test]
+fn neovim_at_its_edge_asks_for_the_pane_move_once_and_only_while_focused() {
+    let (mut core, mut m) = {
+        let mut core = with_editor(three_panes());
+        let m = connected(&mut core);
+        (core, m)
+    };
+    let label = model::NAVIGATOR_LABEL;
+    let edge = core.label_elsewhere("ta", label, "4242:1000:right");
+    drive(&mut m, &mut core, edge);
+    assert_eq!(
+        m.focused_pane().as_deref(),
+        Some("b"),
+        "the edge request moves"
+    );
+    // The same request again, as part of another change, is not a new one.
+    drive(&mut m, &mut core, Action::FocusPane("a".into()));
+    let again = core.label_elsewhere("ta", "other", "x");
+    drive(&mut m, &mut core, again);
+    assert_eq!(m.focused_pane().as_deref(), Some("a"));
+    // A request from a terminal that isn't focused is noted, never acted on, even once its
+    // pane is focused again.
+    let elsewhere = core.label_elsewhere("tc", label, "4242:2000:left");
+    drive(&mut m, &mut core, elsewhere);
+    assert_eq!(m.focused_pane().as_deref(), Some("a"));
+    drive(&mut m, &mut core, Action::FocusPane("c".into()));
+    let unrelated = core.label_elsewhere("tc", "other", "y");
+    drive(&mut m, &mut core, unrelated);
+    assert_eq!(m.focused_pane().as_deref(), Some("c"));
+    // Requests that aren't the form Neovim writes do nothing.
+    for bad in ["4242:3000:sideways", "right", "a:b:up", "1:2:up:3"] {
+        let event = core.label_elsewhere("tc", label, bad);
+        drive(&mut m, &mut core, event);
+        assert_eq!(m.focused_pane().as_deref(), Some("c"), "{bad:?}");
+    }
+    // One already set when the terminal first shows up is old: not replayed on connecting.
+    let mut core = with_editor(three_panes());
+    core.terminals
+        .get_mut("ta")
+        .unwrap()
+        .labels
+        .insert(label.into(), "1:1:right".into());
+    let m = connected(&mut core);
+    assert_eq!(m.focused_pane().as_deref(), Some("a"));
+}
+
+#[test]
+fn a_labeled_neovim_that_is_gone_loses_its_label_and_the_pane_moves() {
+    let mut core = with_editor(three_panes());
+    core.exec = exited(1);
+    let mut m = connected(&mut core);
+    key(&mut m, &mut core, "ctrl-l", true);
+    assert_eq!(m.focused_pane().as_deref(), Some("b"));
+    assert_eq!(core.terminals["ta"].label(model::EDITOR_LABEL), None);
+    // Without the label, the next Ctrl+H is a plain move.
+    key(&mut m, &mut core, "ctrl-h", true);
+    assert_eq!(m.focused_pane().as_deref(), Some("a"));
+    assert_eq!(core.execs().len(), 1);
+}
+
+#[test]
+fn nvim_that_cant_run_says_so_and_nothing_moves() {
+    for result in [
+        Err(error(
+            ErrorKind::Other("spawn_failed".into()),
+            "no such file",
+        )),
+        Ok(herdr_proto::methods::ExecResult {
+            timed_out: true,
+            ..Default::default()
+        }),
+    ] {
+        let mut core = with_editor(three_panes());
+        core.exec = result;
+        let mut m = connected(&mut core);
+        let fx = key(&mut m, &mut core, "ctrl-l", true);
+        let toast = fx.iter().find_map(|e| match e {
+            Effect::Toast(t) => Some(t.clone()),
+            _ => None,
+        });
+        let toast = toast.expect("an error toast");
+        assert_eq!(toast.level, model::Level::Error);
+        assert_eq!(toast.title, "Pane navigation failed");
+        assert!(
+            toast.body.starts_with("Could not run nvim: "),
+            "{}",
+            toast.body
+        );
+        assert_eq!(m.focused_pane().as_deref(), Some("a"));
+        assert!(core.terminals["ta"].label(model::EDITOR_LABEL).is_some());
+    }
+}
+
+#[test]
+fn a_remote_neovim_gets_its_keys_on_its_own_machine() {
+    let mut core = Core::new(doc(vec![]), vec![]);
+    core.docs.insert(
+        Some("devbox".into()),
+        (
+            doc(vec![space("sp9", vec![tab("tb9", vec![pane("p9", "t9")])])]),
+            1,
+        ),
+    );
+    let mut t = shell("devbox/t9", "/");
+    t.labels
+        .insert(model::EDITOR_LABEL.into(), "/run/nvim.sock".into());
+    core.terminals.insert(t.address.clone(), t);
+    let mut m = connected(&mut core);
+    let mut machine = herdr_proto::types::MachineView {
+        state: herdr_proto::types::MachineState::Connected,
+        ..Default::default()
+    };
+    machine.machine.name = "devbox".into();
+    drive(&mut m, &mut core, Event::Machines(vec![machine]));
+    assert_eq!(m.focused_pane().as_deref(), Some("devbox/p9"));
+    key(&mut m, &mut core, "ctrl-k", true);
+    assert_eq!(core.execs()[0].1.as_deref(), Some("devbox"));
+}
+
+#[test]
+fn a_keyboard_resize_moves_the_nearest_divider_forty_points() {
+    let (mut core, mut m) = three_panes_laid_out();
+    // a | col: the divider after a goes 40 right: a 140, the column 60.
+    key(&mut m, &mut core, "alt-shift-l", true);
+    assert_eq!(weight(&core, "a"), Some(herdr_shared::Size::Weight(1.4)));
+    assert_eq!(weight(&core, "col"), Some(herdr_shared::Size::Weight(0.6)));
+    // From the column's side, left moves the same divider left.
+    drive(&mut m, &mut core, Action::FocusPane("b".into()));
+    key(&mut m, &mut core, "alt-shift-h", true);
+    let a = match weight(&core, "a") {
+        Some(herdr_shared::Size::Weight(w)) => w,
+        other => panic!("{other:?}"),
+    };
+    assert!((a - 1.0).abs() < 1e-4, "{a}");
+    // b / c: down moves their divider down.
+    key(&mut m, &mut core, "alt-shift-j", true);
+    assert_eq!(weight(&core, "b"), Some(herdr_shared::Size::Weight(1.4)));
+    // a has nothing split above or below it: no write.
+    drive(&mut m, &mut core, Action::FocusPane("a".into()));
+    let version = core.version(None);
+    key(&mut m, &mut core, "alt-shift-j", true);
+    assert_eq!(core.version(None), version);
+    // Nor while zoomed.
+    drive(&mut m, &mut core, Action::PaneZoom);
+    key(&mut m, &mut core, "alt-shift-l", true);
+    assert_eq!(core.version(None), version);
+    assert!(m.dividers().is_empty(), "a zoomed tab draws no dividers");
+}
+
+#[test]
+fn dragging_a_divider_follows_the_pointer_and_writes_the_sizes() {
+    let (mut core, mut m) = three_panes_laid_out();
+    let dividers = m.dividers();
+    assert_eq!(dividers.len(), 2);
+    assert_eq!(
+        (dividers[0].container.as_str(), dividers[0].index),
+        ("tb1", 0)
+    );
+    // Move it to 50: a gets a quarter of the 200 it shares with the column.
+    drive(
+        &mut m,
+        &mut core,
+        Action::DragDivider {
+            container: "tb1".into(),
+            index: 0,
+            at: 50.0,
+        },
+    );
+    assert_eq!(weight(&core, "a"), Some(herdr_shared::Size::Weight(0.5)));
+    assert_eq!(weight(&core, "col"), Some(herdr_shared::Size::Weight(1.5)));
+    let rects = m.pane_rects();
+    assert_eq!(rects[0], ("a".into(), Rect::new(0.0, 0.0, 50.0, 201.0)));
+    // Where it already is: nothing to write.
+    let version = core.version(None);
+    drive(
+        &mut m,
+        &mut core,
+        Action::DragDivider {
+            container: "tb1".into(),
+            index: 0,
+            at: 50.0,
+        },
+    );
+    assert_eq!(core.version(None), version);
+}
+
+#[test]
+fn dropping_a_panes_grip_swaps_in_the_middle_and_places_beside_at_an_edge() {
+    let (mut core, mut m) = three_panes_laid_out();
+    let panes = |core: &Core| -> Vec<String> {
+        core.doc(None)
+            .tab("tb1")
+            .unwrap()
+            .root
+            .panes()
+            .iter()
+            .map(|n| n.id.clone())
+            .collect()
+    };
+    assert!(m.pane_movable("a"));
+    drive(
+        &mut m,
+        &mut core,
+        Action::RearrangePane {
+            pane: "a".into(),
+            target: "c".into(),
+            edge: model::Edge::Center,
+        },
+    );
+    assert_eq!(panes(&core), ["c", "b", "a"]);
+    assert_eq!(
+        m.focused_pane().as_deref(),
+        Some("a"),
+        "the moved pane is focused"
+    );
+    // b dropped on the bottom edge of c: below it, in a column with it.
+    drive(
+        &mut m,
+        &mut core,
+        Action::RearrangePane {
+            pane: "b".into(),
+            target: "c".into(),
+            edge: model::Edge::Bottom,
+        },
+    );
+    let doc = core.doc(None);
+    let root = &doc.tab("tb1").unwrap().root;
+    let parent = root.parent_of("b").unwrap();
+    assert_eq!(parent.axis(), Some(Axis::Column));
+    let ids: Vec<&str> = parent.children().iter().map(|n| n.id.as_str()).collect();
+    assert_eq!(ids, ["c", "b"]);
+    assert_eq!(m.focused_pane().as_deref(), Some("b"));
+    for pane in ["a", "b", "c"] {
+        assert_eq!(doc.address_of(pane), Some(format!("t{pane}").as_str()));
+    }
+    // Not while zoomed.
+    drive(&mut m, &mut core, Action::PaneZoom);
+    assert!(!m.pane_movable("b"));
+    let version = core.version(None);
+    drive(
+        &mut m,
+        &mut core,
+        Action::RearrangePane {
+            pane: "b".into(),
+            target: "a".into(),
+            edge: model::Edge::Center,
+        },
+    );
+    assert_eq!(core.version(None), version);
+    // Nor in a one-pane tab.
+    let mut core = three_tabs();
+    let m = connected(&mut core);
+    assert!(!m.pane_movable("p1"));
 }
 
 #[test]

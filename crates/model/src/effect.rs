@@ -2,7 +2,9 @@
 //! effect out (a call on the core connection's worker, a Rune focus move, a toast) and feeds the
 //! answers back as [`crate::Event`]s, as `rune::machine` transitions do.
 
-use herdr_proto::methods::{TerminalGet, TerminalKeep, TerminalKill, TerminalLabel, TerminalRun};
+use herdr_proto::methods::{
+    MachineExec, TerminalGet, TerminalKeep, TerminalKill, TerminalLabel, TerminalRun,
+};
 use herdr_shared::{Raise, Round};
 
 use crate::action::{Action, AppCommand, CopyAction, Popup, TerminalAction};
@@ -23,6 +25,8 @@ pub enum Request {
     Kill(TerminalKill),
     Keep(TerminalKeep),
     Label(TerminalLabel),
+    /// A command on a machine, without a terminal; answered with [`crate::Event::Executed`].
+    Exec(MachineExec),
 }
 
 /// A command for one terminal's view (its worker, selection and find bar).
@@ -94,7 +98,8 @@ pub enum Pick {
 /// One thing for the app to do.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
-    /// Make a call; answer with [`crate::Event::Reply`] carrying `token`.
+    /// Make a call; answer with [`crate::Event::Reply`] carrying `token` (an
+    /// [`Request::Exec`] with [`crate::Event::Executed`]).
     Call {
         token: Token,
         request: Request,

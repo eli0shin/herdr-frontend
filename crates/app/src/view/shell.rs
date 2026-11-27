@@ -5,7 +5,9 @@
 //! ├─ sidebar   366 pt: its 38 pt top row drags the window ("Agents"), the list below (later)
 //! └─ work column
 //!    ├─ tabs   38 pt: drags the window; the shown space's tab pills ([`super::tabs`])
-//!    └─ main   the shown tab's panes, bare, with a 1 pt gap that shows the border color
+//!    └─ main   the shown tab's panes, bare, with a 1 pt gap that shows the border color;
+//!              over them each divider's 6 pt handle, each pane's top-edge grip while the
+//!              pointer is on that edge, and a dragged pane's drop preview
 //! ```
 //!
 //! No title bar, no status row: terminals reach the window's bottom edge. A pane is its
@@ -20,7 +22,8 @@
 //! (`crate::view`) takes pastes Rune delivers and releases with nothing focused, for the focused
 //! pane.
 
-use rune::{Cx, El, PointerButton, TextStyle, col, el, row, text};
+use model::geometry::{self, GRIP_ROW};
+use rune::{Color, Cursor, Cx, Drag, El, PointerButton, TextStyle, col, el, row, text};
 
 use crate::State;
 use crate::config::programs::Program;
@@ -28,6 +31,12 @@ use crate::config::settings::UI_FONT_SIZE;
 use crate::config::theme::Rgba;
 use crate::state::{Status, pane_key};
 use crate::view::terminal::look::color;
+
+/// A divider's handle: wider than the 1 pt gap it sits on, to be easy to grab
+/// (`app:src/window.rs` `HANDLE`).
+pub const HANDLE: f32 = 6.0;
+/// A pane's grip: two rows of three dots in a rounded box, centered on its top edge.
+const GRIP: (f32, f32) = (28.0, 18.0);
 
 /// The sidebar's top row and the tab strip: 38 pt, 6 above the 29 pt tabs and 3 below.
 pub const BAR: f32 = 38.0;
@@ -144,7 +153,124 @@ fn main(s: &State, cx: &mut Cx<State>) -> El {
             .size(rect.w, rect.h)
             .child(pane_input(body, &pane))
     });
-    area.fill(c.border).children(panes)
+    let rects = s.model.pane_rects();
+    let grips = rects
+        .iter()
+        .filter(|(pane, _)| s.model.pane_movable(pane))
+        .filter_map(|(pane, rect)| grip(s, pane, *rect));
+    let preview = s
+        .pane_drag
+        .as_ref()
+        .and_then(|d| d.target.as_ref())
+        .and_then(|(target, edge)| {
+            let rect = rects.iter().find(|(id, _)| id == target)?.1;
+            let r = geometry::drop_rect(rect, *edge);
+            Some(
+                el().key("drop-preview")
+                    .absolute(r.x, r.y)
+                    .size(r.w, r.h)
+                    .fill(Color {
+                        a: 0.18,
+                        ..c.accent
+                    })
+                    .border(2.0, c.accent),
+            )
+        });
+    // Pointer input comes in view points, the panes' own (Rune's `zoom.rs`): drags need no
+    // conversion at any zoom.
+    // The tab area follows the pointer for the grips: as the panes' parent it never covers
+    // them, so every press on a terminal's top row still reaches the terminal.
+    area.fill(c.border)
+        .on_pointer_move_local(|s: &mut State, p, tx| s.tab_area_pointer(Some((p.x, p.y)), tx))
+        .on_hover_change(|s: &mut State, inside, tx| {
+            if !inside {
+                s.tab_area_pointer(None, tx);
+            }
+        })
+        .children(panes)
+        .children(s.model.dividers().into_iter().map(divider))
+        .children(grips)
+        .children(preview)
+}
+
+/// A divider's handle, centered on its gap: dragging it resizes the panes beside it.
+fn divider(d: geometry::Divider) -> El {
+    let row = d.axis == herdr_shared::Axis::Row;
+    let r = d.rect;
+    let (x, y, w, h) = if row {
+        let w = HANDLE.max(r.w);
+        (r.x + (r.w - w) / 2.0, r.y, w, r.h)
+    } else {
+        let h = HANDLE.max(r.h);
+        (r.x, r.y + (r.h - h) / 2.0, r.w, h)
+    };
+    // The divider's place along the axis when pressed; the pointer's travel moves it from there,
+    // so it doesn't jump to where in the handle the press was.
+    let start = if row { r.x } else { r.y };
+    let container = d.container.clone();
+    let index = d.index;
+    el().key(format!("divider-{}-{index}", container.replace('/', ":")))
+        .absolute(x, y)
+        .size(w, h)
+        .cursor(if row {
+            Cursor::ResizeColumn
+        } else {
+            Cursor::ResizeRow
+        })
+        .on_drag(move |s: &mut State, drag: &mut Drag, tx| {
+            if drag.phase == rune::Phase::Down {
+                drag.data = start;
+            }
+            let at = drag.data + if row { drag.dx } else { drag.dy };
+            s.divider_dragged(&container, index, drag.phase, at, drag.cancelled(), tx);
+        })
+}
+
+/// A movable pane's grip, at the center of its top edge, while the pointer is on that edge (its
+/// top [`GRIP_ROW`] points) or the grip is held: dragging it rearranges the panes
+/// (`app:src/window/pane_drag.rs`).
+fn grip(s: &State, pane: &str, rect: model::Rect) -> Option<El> {
+    let c = &s.chrome;
+    let held = s.pane_drag.as_ref().is_some_and(|d| d.pane == pane);
+    if !held && s.grip_hover.as_deref() != Some(pane) {
+        return None;
+    }
+    let (gx, gy) = (
+        rect.x + (rect.w - GRIP.0) / 2.0,
+        rect.y + (GRIP_ROW - GRIP.1) / 2.0,
+    );
+    let origin = (gx, gy);
+    let dragged = pane.to_owned();
+    let dot = if held { c.foreground } else { c.muted };
+    let dots = |key: &str| {
+        row()
+            .key(key.to_owned())
+            .gap(3.0)
+            .children((0..3).map(|_| el().size(2.0, 2.0).radius(1.0).fill(dot)))
+    };
+    let grip = col()
+        .key(format!("grip-{}", pane.replace('/', ":")))
+        .absolute(gx, gy)
+        .size(GRIP.0, GRIP.1)
+        .radius(4.0)
+        .fill(Color {
+            a: 0.85,
+            ..s.theme.background.map_or(c.canvas, color)
+        })
+        .hover(c.hover)
+        .center()
+        .gap(3.0)
+        .cursor(if held { Cursor::Grabbing } else { Cursor::Grab })
+        .child(dots("grip-top"))
+        .child(dots("grip-bottom"))
+        .on_drag(move |s: &mut State, drag: &mut Drag, tx| {
+            let at = (
+                origin.0 + drag.start_x + drag.dx,
+                origin.1 + drag.start_y + drag.dy,
+            );
+            s.grip_dragged(&dragged, drag.phase, at, drag.cancelled(), tx);
+        });
+    Some(grip)
 }
 
 /// A pane's body with the handlers that give its terminal the keyboard and the mouse.

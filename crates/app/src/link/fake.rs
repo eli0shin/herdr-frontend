@@ -5,7 +5,7 @@ use std::cell::{RefCell, RefMut};
 use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 
-use herdr_proto::methods::{DocGetResult, DocSetResult, TerminalAttach};
+use herdr_proto::methods::{DocGetResult, DocSetResult, ExecResult, TerminalAttach};
 use herdr_proto::{ErrorKind, Reason, RpcError, Terminal, TerminalState};
 use herdr_shared::Round;
 use model::{Event, Request, TerminalUpdate, Token};
@@ -35,6 +35,8 @@ pub struct FakeCore {
     pub puts: Vec<(String, Vec<Upload>)>,
     /// Documents written (`doc.set` that took).
     pub writes: usize,
+    /// What `machine.exec` answers; `None`: it exits 0 with no output.
+    pub exec: Option<Result<ExecResult, RpcError>>,
     connected: bool,
     news: VecDeque<News>,
     writers: BTreeMap<String, terminal::Writer>,
@@ -197,6 +199,7 @@ impl FakeCore {
                 self.changed(t.clone());
                 Ok(Box::new(t))
             }
+            Request::Exec(_) => unreachable!("answered with Event::Executed"),
             Request::Label(label) => {
                 let t = self
                     .terminals
@@ -232,6 +235,17 @@ impl Link for Fake {
     fn call(&mut self, token: Token, request: Request) {
         let mut core = self.core();
         core.calls.push(request.clone());
+        if let Request::Exec(_) = request {
+            let result = core.exec.clone().unwrap_or_else(|| {
+                Ok(ExecResult {
+                    code: Some(0),
+                    ..Default::default()
+                })
+            });
+            core.news
+                .push_back(News::Event(Event::Executed { token, result }));
+            return;
+        }
         let result = core.answer(&request);
         core.news
             .push_back(News::Event(Event::Reply { token, result }));

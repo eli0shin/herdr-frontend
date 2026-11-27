@@ -15,7 +15,9 @@ use herdr_client::{
     AttachStream, Connection, Error, MachineUpdate, MachineWatcher, POLL_EVERY, Pending,
     StreamControl, StreamItem, Supervisor, SupervisorOptions, Transport, Update,
 };
-use herdr_proto::methods::{DocGetResult, DocSetResult, RunResult, TerminalAttach, TerminalPut};
+use herdr_proto::methods::{
+    DocGetResult, DocSetResult, ExecResult, RunResult, TerminalAttach, TerminalPut,
+};
 use herdr_proto::{CloseReason, RpcError, Terminal};
 use herdr_shared::Round;
 use model::{Event, Request, TerminalUpdate, Token};
@@ -49,6 +51,7 @@ pub struct Live {
 enum CallAnswer {
     Run(Pending<RunResult>),
     Record(Pending<Terminal>),
+    Exec(Pending<ExecResult>),
 }
 
 enum DocAnswer {
@@ -160,15 +163,23 @@ impl Link for Live {
             }
         }
         self.calls.retain_mut(|(token, answer)| {
-            let result = match answer {
-                CallAnswer::Run(p) => p.try_take().map(|r| r.map(|r| Box::new(r.terminal))),
-                CallAnswer::Record(p) => p.try_take().map(|r| r.map(Box::new)),
+            let token = *token;
+            let event = match answer {
+                CallAnswer::Run(p) => p.try_take().map(|r| Event::Reply {
+                    token,
+                    result: r.map(|r| Box::new(r.terminal)).map_err(rpc),
+                }),
+                CallAnswer::Record(p) => p.try_take().map(|r| Event::Reply {
+                    token,
+                    result: r.map(Box::new).map_err(rpc),
+                }),
+                CallAnswer::Exec(p) => p.try_take().map(|r| Event::Executed {
+                    token,
+                    result: r.map_err(rpc),
+                }),
             };
-            let Some(result) = result else { return true };
-            news.push(News::Event(Event::Reply {
-                token: *token,
-                result: result.map_err(rpc),
-            }));
+            let Some(event) = event else { return true };
+            news.push(News::Event(event));
             false
         });
         self.docs.retain_mut(|(machine, answer)| {
@@ -211,9 +222,16 @@ impl Link for Live {
 
     fn call(&mut self, token: Token, request: Request) {
         let Some(connection) = self.connection() else {
-            self.ready.push(News::Event(Event::Reply {
-                token,
-                result: Err(unavailable("not connected")),
+            let error = unavailable("not connected");
+            self.ready.push(News::Event(match request {
+                Request::Exec(_) => Event::Executed {
+                    token,
+                    result: Err(error),
+                },
+                _ => Event::Reply {
+                    token,
+                    result: Err(error),
+                },
             }));
             return;
         };
@@ -223,6 +241,7 @@ impl Link for Live {
             Request::Kill(kill) => CallAnswer::Record(connection.call(kill)),
             Request::Keep(keep) => CallAnswer::Record(connection.call(keep)),
             Request::Label(label) => CallAnswer::Record(connection.call(label)),
+            Request::Exec(exec) => CallAnswer::Exec(connection.call(exec)),
         };
         self.calls.push((token, answer));
     }

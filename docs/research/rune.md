@@ -557,7 +557,7 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   (Rune's `Tx::clock`), passed with every input so deadlines never run on a stale time. Events
   are core news (`Connected`, `Lost`, `Terminals(TerminalUpdate)` built with
   `TerminalUpdate::from_changes`, `Machines`), replies (`DocRead`, `DocWritten`,
-  `Reply { token }`, `StreamClosed`), input (`Key { chord, terminal }`), and `Tick` when a
+  `Reply { token }`, `Executed { token }` for `machine.exec`, `StreamClosed`), input (`Key { chord, terminal }`), and `Tick` when a
   `WakeAt` comes due.
   `Effects` lists what to do (`Call` with a `Token`, `Doc` rounds, `Terminal` commands, `App`,
   `Focus`, `Toast`, `Alert`, `Pick`, `NotYet`, `WakeAt`, `SaveView`, `Answer`), plus `handled`:
@@ -590,11 +590,25 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   `tab.close`/`pane.close` close the popup or leave copy mode instead. `help::rows` builds the
   keys help from the keymap. List popups keep a query and a wrapping cursor; the feature that fills them reports
   `PopupRows` and resolves `Effect::Pick`. Prompts, confirms and the agent-jump bar resolve in the model.
-- **Not built here** (they return `Effect::NotYet`): Neovim-aware Ctrl+H/J/K/L where the editor
-  label is set, `pane.resize`, the review view, peek, the terminal menu, sub-agent folds, links and
-  pane drag. The tab menu is a `PopupState::Menu` (ticket 021) that the window doesn't draw yet. Writing
-  `herdr.seen` labels (`SeenTracker`) and drawing alerts are ticket 025's; the model keeps
-  `Attention` for displayed status and marks what the person looks at as seen.
+- **Panes** (`feature-inventory.md` §5, ticket 022). Splits, close, zoom (a one-pane tab doesn't
+  zoom; the pill says " Z"), `pane.go` (the most recently focused along the edge) and
+  `pane.swap` are layout intents or view changes. `pane.resize` moves the focused pane's nearest
+  divider along the direction's axis 40 pt, as dragging it would (`geometry::resize_divider`,
+  `geometry::drag_sizes`: either side keeps 24 pt and its `min`/`max`, a `px` side stays `px`,
+  two weighted sides share their weight). `Action::DragDivider` is the same drag from the mouse.
+  `Action::RearrangePane` drops a pane on another of its tab: the center swaps, an edge places
+  it beside (`Intent::MovePane`, Herdr app's `move_pane`); not in zoomed or one-pane tabs, nor
+  under `movable: false`. Ctrl+H/J/K/L on a terminal labeled `dotfiles.navigator.editor=<server>`
+  run `nvim --server <server> --remote-send <C-h>` with `machine.exec` on the terminal's machine
+  (2 s timeout). Exit 0: Neovim took it. Another exit: the Neovim is gone, so the label is cleared
+  and the pane moves if focus didn't. An exec error or timeout: an error toast. A fresh
+  `dotfiles.navigator=<n>:<n>:<dir>` label (Neovim at its edge) moves the pane once, only while
+  its terminal is focused; every value is noted on arrival, so none replays.
+- **Not built here** (they return `Effect::NotYet`): the review view, peek, the terminal menu,
+  sub-agent folds and links. The tab menu is a `PopupState::Menu` (ticket 021) that the window
+  doesn't draw yet. Writing `herdr.seen` labels (`SeenTracker`) and drawing alerts are ticket
+  025's; the model keeps `Attention` for displayed status and marks what the person looks at as
+  seen.
 
 ### The app shell as built
 
@@ -625,7 +639,12 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   corners, no title bar and no traffic lights. `Chrome { drag_regions: true }` makes only the
   38 pt sidebar top row and tab strip (`.window_drag()`) move it. The view is the sidebar
   placeholder (366 pt), the tab strip, and the tab area, where panes sit at the
-  model's `pane_rects` (`Geometry { gap: 1 }`) over a border-colored fill. The tab area's
+  model's `pane_rects` (`Geometry { gap: 1 }`) over a border-colored fill. Each divider has a
+  6 pt handle centered on its gap (`on_drag`, the resize cursor) that writes sizes as it moves; a
+  cancelled drag puts them back. A movable pane's 18 pt top strip shows a 28 × 18 grip while the
+  pointer is on it (`on_hover_change`, which takes no presses from the terminal); dragging it
+  4 pt picks the pane under the pointer and the drop zone (outer quarter: beside, middle: swap),
+  drawn as a tinted preview, and the release rearranges. The tab area's
   `on_layout_tx` reports the geometry; before the first layout it comes from the window size
   (`App::on_window_geometry`, `SIZE` headless).
 - **Input.** Every key goes through the keymap first (ticket 016, `docs/keys.md`). While

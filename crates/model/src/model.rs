@@ -9,7 +9,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use herdr_proto::methods::{
-    DocGetResult, DocSetResult, TerminalGet, TerminalKeep, TerminalKill, TerminalRun,
+    DocGetResult, DocSetResult, ExecResult, TerminalGet, TerminalKeep, TerminalKill, TerminalLabel,
+    TerminalRun,
 };
 use herdr_proto::types::MachineView;
 use herdr_proto::{Changes, CloseReason, RpcError, Terminal, TerminalSet};
@@ -19,7 +20,7 @@ use herdr_shared::{
     adoption, closed, labels, local, machine_of, qualify,
 };
 
-use crate::action::{Action, AppCommand};
+use crate::action::{Action, AppCommand, Direction};
 use crate::control::{Call, CallId, answer_call};
 use crate::effect::{Effect, Effects, Focus, Level, Request, TerminalCommand, Toast, Token};
 use crate::geometry::{self, Geometry, Rect};
@@ -31,8 +32,15 @@ use crate::world::{SpaceExt, World};
 /// Eli's label on the review terminal (`feature-inventory.md` §13): its tab stays out of the
 /// tab bar and tab keys.
 pub const REVIEW_LABEL: &str = "dotfiles.review";
-/// Eli's Neovim bridge label (§5): Ctrl+H/J/K/L go through Neovim first where it is set.
+/// Eli's Neovim bridge label (§5): Ctrl+H/J/K/L go through Neovim first where it is set. Its
+/// value is the Neovim's RPC server (`v:servername`).
 pub const EDITOR_LABEL: &str = "dotfiles.navigator.editor";
+/// Neovim's request to move to the next pane, written at a window edge: `<n>:<n>:<direction>`,
+/// unique on every press (`dot/home/.config/nvim/lua/herdr-app-navigator.lua`).
+pub const NAVIGATOR_LABEL: &str = "dotfiles.navigator";
+/// How long `nvim --remote-send` may take before the move counts as failed, in seconds
+/// (`cfg/mods/navigator-status/navigation.js`).
+pub const NAVIGATE_TIMEOUT: f64 = 2.0;
 /// How long a machine whose layout call failed waits before reading again, in seconds.
 pub const RETRY: f64 = 2.0;
 
@@ -136,6 +144,11 @@ pub enum Event {
         token: Token,
         result: Result<Box<Terminal>, RpcError>,
     },
+    /// The reply to an [`Effect::Call`] of [`Request::Exec`].
+    Executed {
+        token: Token,
+        result: Result<ExecResult, RpcError>,
+    },
     /// A pane's attach stream ended.
     StreamClosed {
         address: String,
@@ -207,6 +220,13 @@ pub(crate) enum Pending {
         pane: String,
         address: String,
     },
+    /// Ctrl+H/J/K/L handed to the Neovim in `address`, focused in `pane` of `tab` then.
+    Navigate {
+        address: String,
+        pane: String,
+        tab: Option<String>,
+        direction: Direction,
+    },
 }
 
 /// herdr-frontend's state.
@@ -230,6 +250,8 @@ pub struct Model {
     pub(crate) published_order: Option<Vec<String>>,
     /// Focused panes, most recent last, for `pane.go`.
     pub(crate) pane_history: Vec<String>,
+    /// Each live terminal's last [`NAVIGATOR_LABEL`], so a request is acted on once.
+    pub(crate) navigator: BTreeMap<String, Option<String>>,
     next_token: u64,
     pub(crate) pending: BTreeMap<Token, Pending>,
     /// Terminals with an adoption or closed-pane lookup under way.
@@ -274,6 +296,7 @@ impl Model {
             published_rows: None,
             published_order: None,
             pane_history: Vec::new(),
+            navigator: BTreeMap::new(),
             next_token: 0,
             pending: BTreeMap::new(),
             busy: BTreeSet::new(),
@@ -655,6 +678,7 @@ impl Model {
                 self.reported(machine, report, fx);
             }
             Event::Reply { token, result } => self.reply(token, result, fx),
+            Event::Executed { token, result } => self.executed(token, result, fx),
             Event::StreamClosed { address, reason } => {
                 if closed::stream_closed(&reason)
                     && let Some(pane) = self.world.pane_of(&address)
@@ -727,6 +751,7 @@ impl Model {
         let live: BTreeSet<&str> = self.world.live().map(|t| t.address.as_str()).collect();
         self.not_closed.retain(|a| !live.contains(a.as_str()));
         self.scan = true;
+        self.navigator_requests(update.resynced);
 
         // Attention: statuses and turns, what is on screen, and the alerts they raise.
         let visible: BTreeSet<String> = if self.window_active {
@@ -827,6 +852,85 @@ impl Model {
                     self.not_closed.insert(address);
                 }
             }
+            // Exec calls answer with `Event::Executed`.
+            Pending::Navigate { .. } => {}
+        }
+    }
+
+    /// `nvim --remote-send` came back (`cfg/mods/navigator-status/navigation.js` `navigate`):
+    /// Neovim took the key, or it couldn't run (an error toast), or the labeled Neovim is gone,
+    /// so its label is cleared and the pane moves, if focus hasn't moved meanwhile.
+    fn executed(&mut self, token: Token, result: Result<ExecResult, RpcError>, fx: &mut Effects) {
+        let Some(Pending::Navigate {
+            address,
+            pane,
+            tab,
+            direction,
+        }) = self.pending.remove(&token)
+        else {
+            return;
+        };
+        let failed = match result {
+            Err(error) => Some(error.message),
+            Ok(r) if r.timed_out => Some(format!(
+                "nvim took longer than {NAVIGATE_TIMEOUT} s and was stopped"
+            )),
+            Ok(r) if r.code == Some(0) => return,
+            Ok(_) => None,
+        };
+        if let Some(why) = failed {
+            fx.push(Effect::Toast(Toast::new(
+                Level::Error,
+                "Pane navigation failed",
+                format!("Could not run nvim: {why}"),
+            )));
+            return;
+        }
+        // Its Neovim died without releasing the terminal: forget it and move.
+        self.call(
+            fx,
+            Request::Label(TerminalLabel {
+                terminal: address.clone(),
+                labels: [(EDITOR_LABEL.to_owned(), String::new())].into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        let same = self.focused_pane().as_deref() == Some(pane.as_str())
+            && self.focused_terminal() == Some(address.as_str())
+            && self.shown_tab().map(|t| &t.id) == tab.as_ref();
+        if same {
+            self.go(direction);
+        }
+    }
+
+    /// Neovim asks for a pane move by writing a fresh [`NAVIGATOR_LABEL`] at a window edge. A
+    /// request is acted on once, only while its terminal is focused; every one is noted as seen
+    /// on arrival, so coming back to a terminal (or connecting again) never replays an old one
+    /// (`cfg/mods/navigator-status/navigation.js` `onTerminalsChanged`).
+    fn navigator_requests(&mut self, resynced: bool) {
+        let focused = self.focused_terminal().map(str::to_owned);
+        let world = &self.world;
+        self.navigator.retain(|a, _| world.is_live(a));
+        let mut go = None;
+        for t in world.live() {
+            let token = t
+                .label(NAVIGATOR_LABEL)
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned);
+            let Some(previous) = self.navigator.insert(t.address.clone(), token.clone()) else {
+                continue;
+            };
+            if resynced || token.is_none() || token == previous {
+                continue;
+            }
+            if focused.as_deref() != Some(t.address.as_str()) {
+                continue;
+            }
+            go = token.as_deref().and_then(navigator_direction).or(go);
+        }
+        if let Some(direction) = go {
+            self.go(direction);
         }
     }
 
@@ -1254,6 +1358,18 @@ impl Model {
     }
 }
 
+/// The direction of a [`NAVIGATOR_LABEL`] request: `<digits>:<digits>:<direction>`.
+fn navigator_direction(token: &str) -> Option<Direction> {
+    let mut parts = token.split(':');
+    let digits =
+        |p: Option<&str>| p.is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    if !digits(parts.next()) || !digits(parts.next()) {
+        return None;
+    }
+    let direction = Direction::parse(parts.next()?)?;
+    parts.next().is_none().then_some(direction)
+}
+
 /// The toast for an edit or launch the layout can't take.
 fn unavailable(layout: &Layout) -> Toast {
     let why = match layout {
@@ -1269,7 +1385,9 @@ fn intent_machine(intent: &Intent) -> Option<&str> {
     let id = match intent {
         Intent::NewSpace { space, .. } | Intent::NewTab { space, .. } => space,
         Intent::Split { target, .. } => target,
-        Intent::RemovePane { pane } | Intent::SwapPanes { pane, .. } => pane,
+        Intent::RemovePane { pane }
+        | Intent::SwapPanes { pane, .. }
+        | Intent::MovePane { pane, .. } => pane,
         Intent::CloseTab { tab } | Intent::RenameTab { tab, .. } | Intent::MoveTab { tab, .. } => {
             tab
         }

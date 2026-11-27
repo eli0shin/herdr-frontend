@@ -29,4 +29,4 @@ pub use document::{
 pub use intent::{Adopt, Intent, Placement};
 pub use labels::{SeenTracker, SeenWrite};
 pub use mirror::{EditError, Layout, Mirror, Report, Round};
-pub use tree::{Closed, Slot};
+pub use tree::{Closed, Side, Slot};

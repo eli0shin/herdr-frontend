@@ -5,10 +5,22 @@
 //! gap between split panes (`feature-inventory.md` §1). The renderer lays panes out with the same
 //! rules, so a direction picked here matches what is drawn.
 
-use herdr_shared::{Node, Size};
+use herdr_shared::{Axis, Node, Size};
 use serde_json::Value;
 
-use crate::action::Direction;
+use crate::action::{Direction, Edge};
+
+/// How far a keyboard resize moves a divider, in points at zoom 1 (`pane.resize`'s default, as
+/// in the TUI).
+pub const RESIZE_STEP: f32 = 40.0;
+
+/// The least a divider drag leaves either pane beside it, in points at zoom 1
+/// (`app:src/window.rs` `drag_to`).
+pub const DRAG_MIN: f32 = 24.0;
+
+/// The top strip of a pane that shows its drag grip on hover, in points at zoom 1
+/// (`app:src/window/pane_drag.rs` `STRIP`).
+pub const GRIP_ROW: f32 = 18.0;
 
 /// A rectangle in logical pixels.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -30,6 +42,10 @@ impl Rect {
 
     pub fn bottom(&self) -> f32 {
         self.y + self.h
+    }
+
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.x && x < self.right() && y >= self.y && y < self.bottom()
     }
 }
 
@@ -128,16 +144,25 @@ pub fn shares(children: &[&Node], available: f32, zoom: f32) -> Vec<f32> {
 /// room; a stack shows its active child (else its first).
 pub fn blocks(node: &Node, geometry: &Geometry) -> Vec<(String, Rect)> {
     let mut out = Vec::new();
-    place(node, geometry.area, geometry, &mut out);
+    place(node, geometry.area, geometry, &mut out, false);
     out
 }
 
-fn place(node: &Node, rect: Rect, g: &Geometry, out: &mut Vec<(String, Rect)>) {
+/// Every visible node under `node`, containers included, and its rectangle, in tree order.
+pub fn nodes(node: &Node, geometry: &Geometry) -> Vec<(String, Rect)> {
+    let mut out = Vec::new();
+    place(node, geometry.area, geometry, &mut out, true);
+    out
+}
+
+fn place(node: &Node, rect: Rect, g: &Geometry, out: &mut Vec<(String, Rect)>, all: bool) {
     if node.hidden() {
         return;
     }
-    if node.content().is_some() {
+    if all || node.content().is_some() {
         out.push((node.id.clone(), rect));
+    }
+    if node.content().is_some() {
         return;
     }
     if let Some(axis) = node.axis() {
@@ -152,7 +177,7 @@ fn place(node: &Node, rect: Rect, g: &Geometry, out: &mut Vec<(String, Rect)>) {
             } else {
                 Rect::new(rect.x, at, rect.w, span)
             };
-            place(child, child_rect, g, out);
+            place(child, child_rect, g, out, all);
             at += span + g.gap;
         }
         return;
@@ -163,7 +188,176 @@ fn place(node: &Node, rect: Rect, g: &Geometry, out: &mut Vec<(String, Rect)>) {
         .and_then(|id| children.iter().find(|c| c.id == id))
         .or(children.first());
     if let Some(child) = shown {
-        place(child, rect, g, out);
+        place(child, rect, g, out, all);
+    }
+}
+
+/// A split's divider: the gap between its `index`th and next shown children.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Divider {
+    pub container: String,
+    pub index: usize,
+    pub axis: Axis,
+    /// The gap, in the tab area.
+    pub rect: Rect,
+}
+
+/// The dividers of every resizable split under `node`, in tree order.
+pub fn dividers(node: &Node, geometry: &Geometry) -> Vec<Divider> {
+    let rects = nodes(node, geometry);
+    let rect_of = |id: &str| rects.iter().find(|(n, _)| n == id).map(|(_, r)| *r);
+    let mut out = Vec::new();
+    for n in node.walk() {
+        let (Some(axis), Some(own)) = (n.axis(), rect_of(&n.id)) else {
+            continue;
+        };
+        if !n.resizable() {
+            continue;
+        }
+        let shown: Vec<&Node> = n.children().iter().filter(|c| !c.hidden()).collect();
+        for (index, pair) in shown.windows(2).enumerate() {
+            let (Some(a), Some(b)) = (rect_of(&pair[0].id), rect_of(&pair[1].id)) else {
+                continue;
+            };
+            let rect = match axis {
+                Axis::Row => Rect::new(a.right(), own.y, b.x - a.right(), own.h),
+                Axis::Column => Rect::new(own.x, a.bottom(), own.w, b.y - a.bottom()),
+            };
+            out.push(Divider {
+                container: n.id.clone(),
+                index,
+                axis,
+                rect,
+            });
+        }
+    }
+    out
+}
+
+/// The sizes a divider drag to `at` (the pointer along the split's axis, in the tab area) gives
+/// the two children beside it: either keeps [`DRAG_MIN`] and its own `min` and `max`, a `px`
+/// child stays `px`, two weighted ones share their weight (`app:src/window.rs` `drag_to`).
+/// `None` when the split can't be dragged, or is too squeezed to.
+pub fn drag_sizes(
+    root: &Node,
+    container: &str,
+    index: usize,
+    at: f32,
+    geometry: &Geometry,
+) -> Option<Vec<(String, Size)>> {
+    let node = root.find(container)?;
+    let axis = node.axis()?;
+    if !node.resizable() {
+        return None;
+    }
+    let shown: Vec<&Node> = node.children().iter().filter(|c| !c.hidden()).collect();
+    let (a, b) = (shown.get(index)?, shown.get(index + 1)?);
+    let rects = nodes(root, geometry);
+    let rect_of = |id: &str| rects.iter().find(|(n, _)| n == id).map(|(_, r)| *r);
+    let (ra, rb) = (rect_of(&a.id)?, rect_of(&b.id)?);
+    let (start, la, lb) = match axis {
+        Axis::Row => (ra.x, ra.w, rb.w),
+        Axis::Column => (ra.y, ra.h, rb.h),
+    };
+    // Measured on screen; sizes are stored as designed (unzoomed).
+    let zoom = geometry.zoom.max(f32::EPSILON);
+    let (la, lb, start, at) = (la / zoom, lb / zoom, start / zoom, at / zoom);
+    let total = la + lb;
+    if total <= 2.0 * DRAG_MIN {
+        return None;
+    }
+    let mut new_a = (at - start).clamp(DRAG_MIN, total - DRAG_MIN);
+    if let Some(min) = number(a, "min") {
+        new_a = new_a.max(min);
+    }
+    if let Some(max) = number(a, "max") {
+        new_a = new_a.min(max);
+    }
+    let new_a = new_a.min(total - DRAG_MIN);
+    Some(match (a.size(), b.size()) {
+        (Some(Size::Px(_)), _) => vec![(a.id.clone(), Size::Px(new_a.round()))],
+        (_, Some(Size::Px(_))) => vec![(b.id.clone(), Size::Px((total - new_a).round()))],
+        (wa, wb) => {
+            let w = |s: Option<Size>| match s {
+                Some(Size::Weight(w)) => w,
+                _ => 1.0,
+            };
+            let sum = w(wa) + w(wb);
+            vec![
+                (a.id.clone(), Size::Weight(sum * new_a / total)),
+                (b.id.clone(), Size::Weight(sum * (total - new_a) / total)),
+            ]
+        }
+    })
+}
+
+/// The divider a keyboard resize of `pane` toward `direction` moves: the nearest split along
+/// that axis above the pane, its divider after the pane (before it, for the last child). The
+/// divider moves in `direction` whichever side of it the pane is on, as tmux does
+/// (`app:src/window.rs` `resize_pane`). `None` when nothing is split that way.
+pub fn resize_divider(root: &Node, pane: &str, direction: Direction) -> Option<(String, usize)> {
+    let (axis, forward) = match direction {
+        Direction::Left => (Axis::Row, false),
+        Direction::Right => (Axis::Row, true),
+        Direction::Up => (Axis::Column, false),
+        Direction::Down => (Axis::Column, true),
+    };
+    let path = root.path_to(pane)?;
+    for i in (0..path.len().saturating_sub(1)).rev() {
+        let Some(node) = root.find(&path[i]) else {
+            continue;
+        };
+        if node.axis() != Some(axis) || !node.resizable() {
+            continue;
+        }
+        let shown: Vec<&Node> = node.children().iter().filter(|c| !c.hidden()).collect();
+        if shown.len() < 2 {
+            continue;
+        }
+        let Some(at) = shown.iter().position(|c| c.id == path[i + 1]) else {
+            continue;
+        };
+        let index = if forward {
+            if at + 1 < shown.len() { at } else { at - 1 }
+        } else {
+            at.saturating_sub(1)
+        };
+        return Some((node.id.clone(), index));
+    }
+    None
+}
+
+/// Where a pane dragged to `(x, y)` lands on a pane at `rect`: the outer quarter nearest an edge
+/// places it beside, the middle swaps. `None` outside (`app:src/window/pane_drag.rs`
+/// `drop_zone`).
+pub fn drop_zone(rect: Rect, x: f32, y: f32) -> Option<Edge> {
+    if !rect.contains(x, y) || rect.w <= 0.0 || rect.h <= 0.0 {
+        return None;
+    }
+    let fx = (x - rect.x) / rect.w;
+    let fy = (y - rect.y) / rect.h;
+    let (distance, edge) = [
+        (fx, Edge::Left),
+        (1.0 - fx, Edge::Right),
+        (fy, Edge::Top),
+        (1.0 - fy, Edge::Bottom),
+    ]
+    .into_iter()
+    .min_by(|a, b| a.0.total_cmp(&b.0))
+    .expect("four edges");
+    Some(if distance < 0.25 { edge } else { Edge::Center })
+}
+
+/// What a drop on `rect` at `edge` covers: the half beside, or the whole pane for a swap. For
+/// the preview drawn under the pointer.
+pub fn drop_rect(rect: Rect, edge: Edge) -> Rect {
+    let (hw, hh) = (rect.w / 2.0, rect.h / 2.0);
+    match edge {
+        Edge::Center => rect,
+        Edge::Left => Rect::new(rect.x, rect.y, hw, rect.h),
+        Edge::Right => Rect::new(rect.x + hw, rect.y, hw, rect.h),
+        Edge::Top => Rect::new(rect.x, rect.y, rect.w, hh),
+        Edge::Bottom => Rect::new(rect.x, rect.y + hh, rect.w, hh),
     }
 }
 
@@ -386,6 +580,139 @@ mod tests {
             go(&layout, "a", Direction::Right, &[]).as_deref(),
             Some("c")
         );
+    }
+
+    fn geometry(w: f32, h: f32) -> Geometry {
+        Geometry {
+            area: Rect::new(0.0, 0.0, w, h),
+            gap: 1.0,
+            zoom: 1.0,
+        }
+    }
+
+    /// a | (b / c), 201 × 201: a and the column are 100 wide.
+    fn three_tree() -> Node {
+        Node::container(
+            "r",
+            Axis::Row,
+            vec![
+                pane("a"),
+                Node::container("col", Axis::Column, vec![pane("b"), pane("c")]),
+            ],
+        )
+    }
+
+    #[test]
+    fn dividers_sit_in_the_gaps_of_resizable_splits() {
+        let root = three_tree();
+        let d = dividers(&root, &geometry(201.0, 201.0));
+        assert_eq!(
+            d,
+            [
+                Divider {
+                    container: "r".into(),
+                    index: 0,
+                    axis: Axis::Row,
+                    rect: Rect::new(100.0, 0.0, 1.0, 201.0),
+                },
+                Divider {
+                    container: "col".into(),
+                    index: 0,
+                    axis: Axis::Column,
+                    rect: Rect::new(101.0, 100.0, 100.0, 1.0),
+                },
+            ]
+        );
+        let mut fixed = three_tree();
+        fixed.extra.insert("resizable".into(), json!(false));
+        assert_eq!(dividers(&fixed, &geometry(201.0, 201.0)).len(), 1);
+    }
+
+    #[test]
+    fn a_divider_drag_shares_weight_and_keeps_px_and_the_minimum() {
+        let root = three_tree();
+        let g = geometry(201.0, 201.0);
+        // To 150: a takes 150 of the 200 the two share.
+        assert_eq!(
+            drag_sizes(&root, "r", 0, 150.0, &g),
+            Some(vec![
+                ("a".into(), Size::Weight(1.5)),
+                ("col".into(), Size::Weight(0.5)),
+            ])
+        );
+        // Past the end: each keeps 24.
+        let sizes = drag_sizes(&root, "r", 0, 500.0, &g).unwrap();
+        assert_eq!(sizes[1], ("col".into(), Size::Weight(2.0 * 24.0 / 200.0)));
+        // A px side stays px.
+        let mut px = three_tree();
+        px.find_mut("col").unwrap().set_size(Some(Size::Px(100.0)));
+        assert_eq!(
+            drag_sizes(&px, "r", 0, 60.0, &g),
+            Some(vec![("col".into(), Size::Px(140.0))])
+        );
+        // a's own max holds (laid out at its max, a and the column share 180).
+        let mut max = three_tree();
+        max.find_mut("a")
+            .unwrap()
+            .extra
+            .insert("max".into(), json!(80));
+        let sizes = drag_sizes(&max, "r", 0, 150.0, &g).unwrap();
+        assert_eq!(sizes[0], ("a".into(), Size::Weight(2.0 * 80.0 / 180.0)));
+        // Too squeezed, or not a split: nothing.
+        assert_eq!(drag_sizes(&root, "r", 0, 20.0, &geometry(40.0, 40.0)), None);
+        assert_eq!(drag_sizes(&root, "a", 0, 20.0, &g), None);
+        assert_eq!(drag_sizes(&root, "r", 1, 20.0, &g), None);
+    }
+
+    #[test]
+    fn a_divider_drag_measures_in_unzoomed_points() {
+        let root = three_tree();
+        let mut g = geometry(402.0, 402.0);
+        g.zoom = 2.0;
+        g.gap = 2.0;
+        let sizes = drag_sizes(&root, "r", 0, 300.0, &g).unwrap();
+        assert_eq!(sizes[0], ("a".into(), Size::Weight(1.5)));
+    }
+
+    #[test]
+    fn a_keyboard_resize_moves_the_nearest_divider_along_its_axis() {
+        let root = three_tree();
+        let at = |pane, d| resize_divider(&root, pane, d);
+        assert_eq!(at("a", Direction::Right), Some(("r".into(), 0)));
+        assert_eq!(at("a", Direction::Left), Some(("r".into(), 0)));
+        assert_eq!(at("b", Direction::Left), Some(("r".into(), 0)));
+        assert_eq!(at("b", Direction::Down), Some(("col".into(), 0)));
+        assert_eq!(at("c", Direction::Down), Some(("col".into(), 0)));
+        assert_eq!(
+            at("a", Direction::Down),
+            None,
+            "a has nothing above or below"
+        );
+        assert_eq!(at("gone", Direction::Down), None);
+    }
+
+    #[test]
+    fn drops_beside_in_the_outer_quarter_and_swap_in_the_middle() {
+        let r = Rect::new(100.0, 200.0, 800.0, 400.0);
+        for (x, y, edge) in [
+            (500.0, 400.0, Some(Edge::Center)),
+            (110.0, 400.0, Some(Edge::Left)),
+            (890.0, 400.0, Some(Edge::Right)),
+            (500.0, 210.0, Some(Edge::Top)),
+            (500.0, 590.0, Some(Edge::Bottom)),
+            (99.0, 400.0, None),
+        ] {
+            assert_eq!(drop_zone(r, x, y), edge, "{x}, {y}");
+        }
+        assert_eq!(
+            drop_rect(r, Edge::Right),
+            Rect::new(500.0, 200.0, 400.0, 400.0)
+        );
+        assert_eq!(
+            drop_rect(r, Edge::Top),
+            Rect::new(100.0, 200.0, 800.0, 200.0)
+        );
+        assert_eq!(drop_rect(r, Edge::Center), r);
     }
 
     #[test]
