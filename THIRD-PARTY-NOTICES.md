@@ -45,6 +45,7 @@ changed where its design differs. Each carries a notice saying so.
 | `crates/herdr-shared/src/attention.rs` | `src/model.rs` `status`, `alert`, `alert_for`, `priority` |
 | `crates/herdr-shared/src/labels.rs` | `src/window.rs` `share_seen`; `docs/labels.md` |
 | `crates/terminal/src/links.rs` | `src/links.rs` `word` and its link pattern (itself Ghostty's, below) |
+| `crates/model/src/links.rs` | `src/links.rs` `has_scheme`, `decode_file_url_path` |
 | `crates/model/src/geometry.rs` | `src/window/pane_size.rs` `shares`, `block_bounds`; `src/window.rs` `nearest`, `drag_to`, `resize_pane`; `src/window/pane_drag.rs` |
 | `crates/model/src/actions.rs` | `src/window.rs` `resize_pane`; `src/model.rs` `move_pane` |
 | `crates/model/src/checkouts.rs` | `src/window.rs` `track_folders`, `folder_info`, `recheck` |
@@ -57,6 +58,7 @@ changed where its design differs. Each carries a notice saying so.
 | `crates/app/src/control.rs` | `src/control.rs` (the control socket, `parse_args`) |
 | `crates/app/src/config/programs.rs` | `src/programs.rs` (the program table and how a terminal's program is resolved) |
 | `crates/app/src/config/theme.rs` | `src/settings.rs` (the theme format and the colors derived from it) |
+| `crates/app/src/keys.rs` | `src/terminal.rs` `map_key` (the shifted-character table and key mapping) |
 | `crates/app/src/view/terminal/scrollbar.rs` | `src/terminal.rs` `scrollbar_thumb` |
 
 Other files cite Herdr app's source (`app:` paths) only for behavior, file formats or constants

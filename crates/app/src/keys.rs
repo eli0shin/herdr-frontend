@@ -1,3 +1,8 @@
+// Portions of this file are ported from Herdr app (https://github.com/herdrdev/herdr-app at
+// v0.1.18, 9a9ae13d998e6ed74c76e8eb13bdeb2e1420f50c), licensed under the Apache License 2.0
+// (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend. See
+// THIRD-PARTY-NOTICES.md.
+
 //! A Rune key event as a terminal key event: the physical key, every modifier, the modifiers
 //! the layout used up making the text, the unshifted character, and press, repeat or release
 //! (`docs/research/terminal-rendering.md` §3, "Keys"). The terminal's worker encodes it for the
