@@ -519,8 +519,8 @@ send it to 200×120. After a reconnect, the focused pane of the window in front 
 and takes the size again. And three hardenings: a click in the pane in use takes the size back
 once another viewer has moved it; DATA from a viewer not in use first reports the grid it should
 hold; and on a stream without `automatic_input`, only the viewer in use sends its replies (as
-DATA). `crates/herdr-client/tests/multi_viewer.rs` checks the core's side of these rules with two
-framed connections on an isolated core.
+DATA), while no other viewer has moved its grid. `crates/herdr-client/tests/multi_viewer.rs`
+checks the core's side of these rules with two framed connections on an isolated core.
 
 ### What herdr-app does that causes wrong sizes
 

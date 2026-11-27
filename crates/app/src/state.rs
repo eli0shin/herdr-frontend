@@ -19,7 +19,8 @@
 //! - DATA from any other viewer (a paste into a window in the background) first reports the grid
 //!   it should hold, so the core never applies a stale one.
 //! - The engine's replies to queries go as AUTOMATIC_INPUT, which takes nothing, where the stream
-//!   carries it; where it doesn't, only the terminal in use answers, as DATA.
+//!   carries it; where it doesn't, only the terminal in use answers, as DATA, and only while no
+//!   other viewer has moved its grid.
 //! - Each terminal is drawn at the core's grid (its record's `cols` × `rows`, which `size` events
 //!   keep current), never the pane's: a pane bigger than it shows the background around it, a
 //!   smaller one clips it.
@@ -1700,12 +1701,12 @@ impl State {
             );
             if vt != viewer.vt {
                 // Only a change counts: a size event for a RESIZE just sent may not be in yet.
-                if (vt.0, vt.1) != (viewer.vt.0, viewer.vt.1)
-                    && viewer
+                // Each one decides afresh, so a late event for an older RESIZE is undone by the
+                // event for the grid told last.
+                if (vt.0, vt.1) != (viewer.vt.0, viewer.vt.1) {
+                    viewer.moved = viewer
                         .told_grid
-                        .is_some_and(|g| (g.columns, g.rows) != (vt.0, vt.1))
-                {
-                    viewer.moved = true;
+                        .is_some_and(|g| (g.columns, g.rows) != (vt.0, vt.1));
                 }
                 viewer.vt = vt;
                 viewer.terminal.resize(vt.0, vt.1, vt.2, vt.3);
@@ -1838,16 +1839,18 @@ impl State {
 
     /// A reply the terminal engine made to the program's query (rule 9): AUTOMATIC_INPUT, which
     /// never takes the size, on a stream that carries it. On one that doesn't (a machine whose
-    /// core predates it), only the terminal in use answers, as DATA: it holds the size already,
-    /// and from any other viewer the reply would take it, and contradict the leader's own reply
-    /// (a mode-2048 report at another grid).
+    /// core predates it), the reply would go as DATA, which takes the size. So only the terminal
+    /// in use answers, and only while the core still holds it at the grid this window told:
+    /// once another viewer moved it, a reply (the mode-2048 report its resize brings) would take
+    /// the size back with no real use, and contradict the leader's own reply. Such replies are
+    /// dropped.
     fn send_reply(&mut self, address: &str, bytes: Vec<u8>) {
         let Some(viewer) = self.viewers.get(address) else {
             return;
         };
         if viewer.automatic_input {
             self.link.send(address, Out::Automatic(bytes));
-        } else if self.in_use.as_deref() == Some(address) {
+        } else if self.in_use.as_deref() == Some(address) && !viewer.moved {
             self.send_data(address, bytes);
         }
     }
@@ -1857,7 +1860,8 @@ impl State {
     /// that isn't in use (a paste into a window in the background, a file landing after a
     /// `terminal.put`) reports first the grid it should hold: its pane's, or the core's own for
     /// a terminal no shown pane draws, which leaves the size where it is. The terminal in use
-    /// told its grid already ([`State::fit`]).
+    /// told its grid already ([`State::fit`]). Either way the core then holds the grid told
+    /// last, so the viewer is no longer `moved`.
     fn send_data(&mut self, address: &str, bytes: Vec<u8>) {
         let in_use = self.in_use.as_deref() == Some(address);
         let told = self.viewers.get(address).and_then(|v| v.told_grid);
@@ -1874,10 +1878,12 @@ impl State {
             );
             if let Some(viewer) = self.viewers.get_mut(address) {
                 viewer.told_grid = Some(grid);
-                viewer.moved = false;
             }
         }
         self.link.send(address, Out::Input(bytes));
+        if let Some(viewer) = self.viewers.get_mut(address) {
+            viewer.moved = false;
+        }
     }
 
     /// The grid a terminal should have when this window takes its size: its shown pane's, or

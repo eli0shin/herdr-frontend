@@ -25,7 +25,7 @@ What herdr-frontend does (`crates/app/src/state.rs`):
 | A click in the pane in use after another viewer moved its grid | RESIZE, which takes the size back. Herdr app does the same on a mouse-down. |
 | Typing in the pane in use | DATA. The core applies the grid told last. |
 | DATA from a pane that isn't in use (a drop or paste into a window in the background, a file landing after `terminal.put`) | RESIZE first, with its pane's grid, or with the core's grid when no shown pane draws it. That way the core never applies a stale grid. |
-| The terminal engine answers the program's query | AUTOMATIC_INPUT when the stream confirmed it (`hello.features` and the attach reply). If the stream didn't, only the pane in use answers, as DATA. Other panes drop the reply, because as DATA it would take the size. |
+| The terminal engine answers the program's query | AUTOMATIC_INPUT when the stream confirmed it (`hello.features` and the attach reply). If the stream didn't, only the pane in use answers, as DATA, and only while no other viewer has moved its grid. Every other reply is dropped, because as DATA it would take the size. |
 
 Every terminal is drawn at the core's grid, which the record's `cols` × `rows` keep current from
 `size` events. The pane's own grid isn't used. When another viewer holds the size, a pane bigger
