@@ -28,6 +28,10 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-prefix", shell_prefix),
     ("shell-not-yet", shell_not_yet),
     ("shell-tabs", shell_tabs),
+    ("shell-agents", shell_agents),
+    ("shell-agents-grouped", shell_agents_grouped),
+    ("shell-sort-menu", shell_sort_menu),
+    ("shell-agents-empty", shell_agents_empty),
 ];
 
 /// The app on the demo core ([`fixtures::demo_core`]): the sidebar, the tab strip with `work`
@@ -104,6 +108,51 @@ fn shell_tabs(s: &mut State) {
     s.settle();
     s.step(0.0, model::Action::PaneZoom);
     s.settle();
+}
+
+/// The agents core ([`fixtures::agents_core`]) in the priority view, a Pi worker focused, so its
+/// orchestration is open; each agent's last change a while ago.
+fn shell_agents(s: &mut State) {
+    let now = crate::state::wall_ms();
+    let minutes = |m: u64| now - m * 60_000;
+    for (address, state, at) in [
+        ("t10", "working", minutes(12)),
+        ("t11", "blocked", minutes(3)),
+        ("t12", "idle", minutes(120)),
+        ("t13", "working", minutes(25)),
+        ("t14", "idle", minutes(40)),
+        ("t15", "idle", minutes(3 * 24 * 60)),
+    ] {
+        s.agents.changed.insert(
+            address.into(),
+            model::agents::Changed {
+                s: state.into(),
+                at,
+            },
+        );
+    }
+    s.connect(Box::new(fixtures::agents_core()));
+    s.settle();
+    s.step(0.0, model::Action::FocusAgent("t13".into()));
+    s.settle();
+}
+
+/// [`shell_agents`] grouped by space.
+fn shell_agents_grouped(s: &mut State) {
+    s.set_sort(model::agents::Sort::Grouped);
+    shell_agents(s);
+}
+
+/// [`shell_agents`] with the sort menu open.
+fn shell_sort_menu(s: &mut State) {
+    shell_agents(s);
+    s.step(0.0, model::Action::Open(model::Popup::SortMenu));
+    s.settle();
+}
+
+/// The demo core, whose terminals report no status: the list says how agents show up.
+fn shell_agents_empty(s: &mut State) {
+    shell(s);
 }
 
 /// `fixture` alone in a focused pane: what the Ghostty pixel diff compares, at Ghostty's

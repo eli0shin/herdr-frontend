@@ -35,10 +35,11 @@ use std::time::Duration;
 use ghostty_vt_sys::{GHOSTTY_KEY_C, GHOSTTY_KEY_V};
 use herdr_proto::Display;
 use herdr_proto::methods::TerminalAttach;
+use model::agents::{self, Sort, Tracker};
 use model::mode::{PopupState, Rename};
 use model::{
-    Action, AppCommand, CopyAction, Effect, Event, Focus, Input, Level, Model, Popup, PopupAction,
-    TerminalAction, TerminalCommand, Toast, View,
+    Action, AppCommand, CopyAction, Effect, Event, Focus, Input, Level, Model, Pick, Popup,
+    PopupAction, TerminalAction, TerminalCommand, Toast, View,
 };
 use rune::{
     ClipboardContent, Drag, Family, ImageCache, Ime, KeyEvent, Phase, PointerButton, PointerEvent,
@@ -59,6 +60,7 @@ use crate::home::{Home, VIEW};
 use crate::keyfile::{self, Loaded, Watcher};
 use crate::keys::KeyInfo;
 use crate::link::{Link, News, Offline, Out, Upload};
+use crate::shared::{self, Shared};
 use crate::toast::{self, Toasts};
 use crate::view::terminal::TerminalPane;
 use crate::view::terminal::font::{Face, Font};
@@ -72,9 +74,6 @@ pub const TERMINAL_POINTS: f32 = 14.0;
 
 /// Lines of scrollback a terminal's first paint brings, as Herdr app asks.
 pub const HISTORY: u64 = 2000;
-
-/// The sidebar's width: what Eli's saved layout shows (`feature-inventory.md` §1).
-pub const SIDEBAR: f32 = 366.0;
 
 /// Ghostty's resize coalescing: RESIZE goes at most this often while a pane changes size.
 pub const RESIZE_EVERY: f64 = 0.025;
@@ -227,6 +226,22 @@ pub struct GripDrag {
 /// A grip press moves this far before it is a drag, in view points.
 const GRIP_SLOP: f32 = 4.0;
 
+/// The sidebar: its width (200 to 600 pt) and whether `cmd-b` hid it. Kept in the shared state.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sidebar {
+    pub width: f32,
+    pub hidden: bool,
+    /// The width a divider drag started from.
+    dragged_from: Option<f32>,
+}
+
+impl Sidebar {
+    /// Its width on screen, `None` while hidden.
+    pub fn shown(&self) -> Option<f32> {
+        (!self.hidden).then_some(self.width)
+    }
+}
+
 /// The window's tab area, as laid out, in view points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Area {
@@ -266,8 +281,17 @@ pub struct State {
     /// Program icons, rasterized per path and size in device pixels.
     images: Option<ImageCache>,
     icons: RefCell<BTreeMap<(String, u32), rune::Image>>,
-    /// The sidebar's width, or `None` when it's hidden.
-    pub sidebar: Option<f32>,
+    pub sidebar: Sidebar,
+    /// The app-local shared state (`shared.json` in the home).
+    pub shared: Shared,
+    /// What the Agents list keeps between builds: times, folds, the held done agent.
+    pub agents: Tracker,
+    /// The Agents list as last built.
+    pub list: agents::List,
+    /// Something the list reads changed: build it again at the end of the pump.
+    agents_stale: bool,
+    /// When the list's times next refresh (app clock).
+    agents_refresh_at: f64,
     /// The font at the display scale the last frame drew at.
     face: RefCell<Option<Face>>,
     scale: f32,
@@ -336,6 +360,13 @@ pub fn tab_key(id: &str) -> String {
     format!("tab-{}", id.replace('/', ":"))
 }
 
+/// The wall clock, in ms since the epoch: the Agents list's times.
+pub fn wall_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
 /// The person's home folder, for the model's names and new spaces.
 fn user_home() -> String {
     std::env::var("HOME").unwrap_or_default()
@@ -374,6 +405,21 @@ impl State {
             Some(_) => Config::load(&sources, None),
             None => Config::default(),
         };
+        // The shared state and the list's times, imported from Herdr app's home on the first run.
+        let herdr_app = home.as_ref().and(sources.herdr_app.as_deref());
+        let (shared, loaded) = Shared::load(home.as_ref().map(|h| h.dir()), herdr_app);
+        let (times, times_imported) = shared::load_times(home.as_ref().map(|h| h.dir()), herdr_app);
+        if loaded == shared::Loaded::Imported {
+            shared::save(home.as_ref(), &shared);
+        }
+        if times_imported && let Some(home) = &home {
+            home.save(shared::TIMES, shared::times_json(&times));
+        }
+        let sidebar = Sidebar {
+            width: shared.sidebar_px(),
+            hidden: shared.sidebar_hidden(),
+            dragged_from: None,
+        };
         let mut s = State {
             model,
             link,
@@ -394,7 +440,12 @@ impl State {
             own_writes: Vec::new(),
             images: None,
             icons: RefCell::new(BTreeMap::new()),
-            sidebar: Some(SIDEBAR),
+            sidebar,
+            shared,
+            agents: Tracker::with_times(times),
+            list: agents::List::default(),
+            agents_stale: true,
+            agents_refresh_at: 0.0,
             face: RefCell::new(None),
             scale: 2.0,
             area: None,
@@ -599,6 +650,24 @@ impl State {
         Some(image)
     }
 
+    /// A panel glyph (`assets/ui/<name>.svg`) rasterized for `size` points at `scale`. `None`
+    /// before setup, or for a name there is none of.
+    pub fn ui_icon(&self, name: &str, size: f32, scale: f32) -> Option<rune::Image> {
+        let images = self.images.as_ref()?;
+        let bytes = crate::view::sidebar::glyph(name)?;
+        let px = (size * scale).ceil() as u32;
+        let image = self
+            .icons
+            .borrow_mut()
+            .entry((format!("ui:{name}"), px))
+            .or_insert_with(|| images.svg(bytes, size, scale))
+            .clone();
+        if self.synchronous {
+            let _ = image.wait();
+        }
+        Some(image)
+    }
+
     /// The window's size, in window points, before its first layout: the panes' first frame is
     /// laid out for the tab area it leaves (Rune reports where elements are only after a frame).
     pub fn window_sized(&mut self, w: f32, h: f32) {
@@ -615,7 +684,7 @@ impl State {
         let area = model::Rect::new(
             0.0,
             0.0,
-            (w / k - self.sidebar.unwrap_or(0.0)).max(0.0),
+            (w / k - self.sidebar.shown().unwrap_or(0.0)).max(0.0),
             (h / k - crate::view::shell::BAR).max(0.0),
         );
         self.step(
@@ -670,6 +739,7 @@ impl State {
         self.now = self.now.max(now);
         let before = self.model.mode().clone();
         let effects = self.model.step(self.now, input);
+        self.agents_stale = true;
         let handled = effects.handled;
         for effect in effects {
             self.carry_out(effect);
@@ -698,6 +768,19 @@ impl State {
                 let rows = crate::view::help::shown(self, list).len();
                 if rows != list.rows {
                     self.step(self.now, Event::PopupRows(rows));
+                }
+            }
+            // The sort menu hangs under the sidebar's sort button: with the sidebar hidden there
+            // is nothing to open it under. It opens on the current sort.
+            model::Mode::Popup(PopupState::List(list)) if list.popup == Popup::SortMenu => {
+                if self.sidebar.hidden {
+                    self.step(self.now, Action::Popup(PopupAction::Close));
+                } else if list.rows != Sort::ALL.len() {
+                    self.step(self.now, Event::PopupRows(Sort::ALL.len()));
+                    let at = Sort::ALL.iter().position(|s| *s == self.shared.sort());
+                    for _ in 0..at.unwrap_or(0) {
+                        self.step(self.now, Action::Popup(PopupAction::Down));
+                    }
                 }
             }
             model::Mode::Popup(state) => {
@@ -760,6 +843,16 @@ impl State {
                     control.answer(id, reply);
                 }
             }
+            Effect::Pick {
+                popup: Popup::SortMenu,
+                how: Pick::Choose,
+                cursor,
+                ..
+            } => {
+                if let Some(sort) = Sort::ALL.get(cursor) {
+                    self.set_sort(*sort);
+                }
+            }
             // The help has nothing to pick; the other list popups come with their tickets (and
             // close before a pick, `State::mode_changed`). Alerts are ticket 025's.
             Effect::Pick { .. } | Effect::Alert(_) => {}
@@ -774,10 +867,12 @@ impl State {
                 self.ui.window.push(command)
             }
             AppCommand::ToggleSidebar => {
-                self.sidebar = match self.sidebar {
-                    Some(_) => None,
-                    None => Some(SIDEBAR),
-                };
+                self.sidebar.hidden = !self.sidebar.hidden;
+                let sort_menu = self.model.mode().popup().and_then(PopupState::popup);
+                if self.sidebar.hidden && sort_menu == Some(Popup::SortMenu) {
+                    self.step(self.now, Action::Popup(PopupAction::Close));
+                }
+                self.share(shared::SIDEBAR_HIDDEN_KEY, json!(self.sidebar.hidden));
                 self.redraw = true;
             }
             AppCommand::Reset => {
@@ -950,7 +1045,109 @@ impl State {
         changed |= self.keep_viewers();
         changed |= self.fit(now);
         changed |= self.drain_terminals();
+        changed |= self.refresh_agents(now);
         changed | std::mem::take(&mut self.redraw)
+    }
+
+    /// Builds the Agents list again when something it reads changed or its times are due, and
+    /// publishes what changed: the order to the model, the order and space colors to the shared
+    /// state, the times to the home. True when the list on screen changed.
+    fn refresh_agents(&mut self, now: f64) -> bool {
+        if now >= self.agents_refresh_at {
+            self.agents_stale = true;
+        }
+        if !self.agents_stale {
+            return false;
+        }
+        self.agents_stale = false;
+        let hidden = self.shared.hidden_machines();
+        let colors = self.shared.space_colors();
+        let sort_value = self.shared.str(agents::SORT_KEY).map(str::to_owned);
+        let programs = &self.config.programs;
+        let program = |t: &herdr_proto::Terminal| {
+            let p = programs.of_terminal(t);
+            agents::Program {
+                key: p.key,
+                name: p.name,
+                agent: p.agent,
+            }
+        };
+        let input = agents::Input {
+            sort: self.shared.sort(),
+            sort_value: sort_value.as_deref(),
+            hidden_machines: &hidden,
+            space_colors: &colors,
+            now_ms: wall_ms(),
+            program: &program,
+            peeked: None,
+        };
+        let list = self.agents.build(&self.model, &input);
+        if let Some(kept) = &list.space_colors {
+            self.share(agents::SPACE_COLORS_KEY, json!(kept));
+        }
+        if self.model.listed() && self.shared.get(agents::ORDER_KEY) != Some(&list.published) {
+            self.share(agents::ORDER_KEY, list.published.clone());
+        }
+        if std::mem::take(&mut self.agents.dirty)
+            && let Some(home) = &self.home
+        {
+            home.save(shared::TIMES, shared::times_json(&self.agents.changed));
+        }
+        let publish = list.rows_order != self.list.rows_order || list.nav != self.list.nav;
+        let changed = list != self.list;
+        self.list = list;
+        if publish {
+            let (rows, order) = (self.list.rows_order.clone(), self.list.nav.clone());
+            self.step(self.now, Event::AgentOrder { rows, order });
+            // Publishing changes nothing the list reads.
+            self.agents_stale = false;
+        }
+        // The times say minutes: build again in 30 s while the sidebar shows them.
+        if !self.sidebar.hidden {
+            self.agents_refresh_at = now + agents::REFRESH_EVERY;
+            self.wake_at(self.agents_refresh_at);
+        } else {
+            self.agents_refresh_at = f64::INFINITY;
+        }
+        changed
+    }
+
+    /// Sets a shared key and saves the file when it changed.
+    pub fn share(&mut self, key: &str, value: Value) {
+        if self.shared.set(key, value) {
+            shared::save(self.home.as_ref(), &self.shared);
+            self.agents_stale = true;
+        }
+    }
+
+    /// The sort menu's pick: shared `agents.sort`.
+    pub fn set_sort(&mut self, sort: Sort) {
+        self.share(agents::SORT_KEY, json!(sort.as_str()));
+        self.redraw = true;
+    }
+
+    /// Folds or unfolds an agent's sub-agents.
+    pub fn fold(&mut self, address: &str, tx: &mut Tx) {
+        self.agents.toggle_fold(address);
+        self.agents_stale = true;
+        self.pump(tx.clock());
+        self.apply_ui(tx);
+    }
+
+    /// A drag of the sidebar's edge: its width follows the pointer between 200 and 600 pt, and
+    /// is kept when the drag ends (put back when it's cancelled).
+    pub fn drag_sidebar(&mut self, drag: &rune::Drag) {
+        let from = *self.sidebar.dragged_from.get_or_insert(self.sidebar.width);
+        match drag.phase {
+            rune::Phase::Up if drag.cancelled() => self.sidebar.width = from,
+            _ => self.sidebar.width = shared::clamp_sidebar(from + drag.dx),
+        }
+        if drag.phase == rune::Phase::Up {
+            self.sidebar.dragged_from = None;
+            let width = self.sidebar.width;
+            self.share(shared::SIDEBAR_PX_KEY, json!(width));
+        }
+        self.redraw = true;
     }
 
     /// Runs the requests the control socket took (`ls`, `status`, `do`) through the model, and
@@ -968,6 +1165,7 @@ impl State {
             return false;
         };
         let probes = control.take_probes();
+        self.agents_stale = true;
         for effect in fx.list {
             self.carry_out(effect);
         }

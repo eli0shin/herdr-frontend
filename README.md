@@ -50,11 +50,13 @@ just bindings     # regenerate the libghostty-vt bindings (`--check` fails on a 
 
 `just run` connects with `hc connect`, as Herdr app does: the core `HC_SESSION` names, or your
 default one. It reads the shared layout and never writes it except for edits it makes itself
-(adopting a labeled terminal, say). Its own files (this window's view and place, and its
-`settings.json`, themes, programs and fonts) live in `$HERDR_FRONTEND_HOME`, else
-`~/.config/herdr-frontend`. With no settings it looks like Eli's Herdr app: arctic, Operator Mono
-Book Herdr 17 pt (found in Herdr app's `fonts/`, else JetBrains Mono), zoom 1.1; edits apply
-while it runs. `docs/settings.md` lists every key. `--snap`, `--tree` and `--script` never connect
+(adopting a labeled terminal, say). Its own files (this window's view and place, the Agents
+list's shared state, and its `settings.json`, themes, programs and fonts) live in
+`$HERDR_FRONTEND_HOME`, else `~/.config/herdr-frontend`. With no settings it looks like Eli's
+Herdr app: arctic, Operator Mono Book Herdr 17 pt (found in Herdr app's `fonts/`, else JetBrains
+Mono), zoom 1.1; edits apply while it runs. `docs/settings.md` lists every key. On its first run
+it imports Herdr app's shared state (agent sort, space colors, machine filter, sidebar width)
+without touching Herdr app's files (`docs/sidebar.md`). `--snap`, `--tree` and `--script` never connect
 to a core and read no settings. Release builds keep those three flags too (Rune's `tooling`
 feature).
 

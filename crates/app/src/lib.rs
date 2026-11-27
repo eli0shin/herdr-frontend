@@ -14,6 +14,7 @@ pub mod keyfile;
 pub mod keys;
 pub mod link;
 mod scenes;
+pub mod shared;
 pub mod state;
 pub mod toast;
 pub mod view;
@@ -122,6 +123,11 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let popup = match s.model.mode() {
         model::Mode::Popup(model::PopupState::List(list)) if list.popup == model::Popup::Help => {
             Some(view::help::view(s, list))
+        }
+        model::Mode::Popup(model::PopupState::List(list))
+            if list.popup == model::Popup::SortMenu && s.sidebar.shown().is_some() =>
+        {
+            Some(view::sidebar::sort_menu(s, list, cx))
         }
         _ => None,
     };

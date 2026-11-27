@@ -337,6 +337,11 @@ impl Model {
         self.now
     }
 
+    /// Connected, with the core's full listing in: what's missing from the terminals is gone.
+    pub fn listed(&self) -> bool {
+        self.connected && self.listed
+    }
+
     pub fn home(&self) -> &str {
         &self.home
     }

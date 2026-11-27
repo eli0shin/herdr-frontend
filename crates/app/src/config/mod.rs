@@ -44,7 +44,9 @@ pub const WATCH_EVERY: Duration = Duration::from_millis(500);
 pub struct Sources {
     pub home: Option<PathBuf>,
     /// Herdr app's home (`$HERDR_APP_HOME`, else `$XDG_CONFIG_HOME/herdr-app`, else
-    /// `~/.config/herdr-app`): only its `fonts/` is read, never written.
+    /// `~/.config/herdr-app`): read only, never written. Its `fonts/`, and on a home's first run
+    /// its `shared.json`, its layout's sidebar state and the `eli-agents` store
+    /// ([`crate::shared`]).
     pub herdr_app: Option<PathBuf>,
 }
 

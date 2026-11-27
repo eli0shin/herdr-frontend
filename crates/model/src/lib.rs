@@ -1,6 +1,7 @@
 //! herdr-frontend's app state as pure logic, with no I/O and no Rune types
 //! (`docs/research/rune.md` §8, `docs/plan.md`).
 //!
+//! - [`agents`]: the Agents list Eli's `eli-agents` mod builds: sections, rows, order.
 //! - [`world`]: machines, spaces, tabs and pane trees from each machine's `Mirror`, plus the
 //!   core's terminal records. Shared with Herdr app.
 //! - [`view`]: this screen's own state (focus, zoom, selected tabs, settled tabs, recents, seen,
@@ -19,6 +20,7 @@
 
 pub mod action;
 mod actions;
+pub mod agents;
 pub mod control;
 pub mod effect;
 pub mod geometry;

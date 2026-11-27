@@ -637,9 +637,9 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   for the repaint.
 - **Window.** Borderless (`WindowOptions::borderless`): AppKit's borderless style has square
   corners, no title bar and no traffic lights. `Chrome { drag_regions: true }` makes only the
-  38 pt sidebar top row and tab strip (`.window_drag()`) move it. The view is the sidebar
-  placeholder (366 pt), the tab strip, and the tab area, where panes sit at the
-  model's `pane_rects` (`Geometry { gap: 1 }`) over a border-colored fill. Each divider has a
+  38 pt sidebar top row and tab strip (`.window_drag()`) move it. The view is the Agents
+  sidebar (366 pt by default, `docs/sidebar.md`), the tab strip, and the tab area, where panes
+  sit at the model's `pane_rects` (`Geometry { gap: 1 }`) over a border-colored fill. Each divider has a
   6 pt handle centered on its gap (`on_drag`, the resize cursor) that writes sizes as it moves; a
   cancelled drag puts them back. A movable pane's 18 pt top strip shows a 28 × 18 grip while the
   pointer is on it. The tab area, the panes' parent, follows the pointer for this, so only the
@@ -672,8 +672,9 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   actions and for popups the window doesn't draw yet). The keys help (`cmd-/`) is the one popup
   the window draws so far.
 - **Home** (`$HERDR_FRONTEND_HOME`, else `$XDG_CONFIG_HOME/herdr-frontend`, else
-  `~/.config/herdr-frontend`): `keys.json` (the key file), `view.json` (the model's saved view) and `window.json` (position,
-  physical size, maximized, full screen, display). Writes go through a saver thread, written
+  `~/.config/herdr-frontend`): `keys.json` (the key file), `view.json` (the model's saved view), `window.json` (position,
+  physical size, maximized, full screen, display), and `shared.json` and `agents.json` (the
+  app-local shared state and the Agents list's times, `docs/sidebar.md`). Writes go through a saver thread, written
   whole and renamed; close and quit write at once. A saved place whose display is gone opens
   centered.
 - **Look and settings** (ticket 017, `docs/settings.md`). `config::Config` is what the home's

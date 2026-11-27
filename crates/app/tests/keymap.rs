@@ -15,7 +15,19 @@ use herdr_frontend::{SIZE, State, app};
 use model::{Mode, Popup, PopupState};
 use rune::{ElementInfo, Env, Key, KeyEvent, Mods, PhysicalKeyCode, Runtime};
 
+/// Points Herdr app's home at a folder that isn't there, once, before any test reads it: a
+/// home's first run imports nothing from the real one.
+fn no_herdr_app() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let none = std::env::temp_dir().join("herdr-frontend-keymap-no-herdr-app");
+        // SAFETY: set once, before any thread of this test binary reads it.
+        unsafe { std::env::set_var("HERDR_APP_HOME", none) };
+    });
+}
+
 fn runtime_with(home: Option<Home>) -> (Runtime<State>, Fake) {
+    no_herdr_app();
     let fake = demo_core();
     let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
     if home.is_some() {
