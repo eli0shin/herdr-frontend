@@ -246,16 +246,19 @@ fn a_row_click_focuses_its_agent_and_a_sub_agent_click_peeks() {
     click(&mut rt, "ag-t15");
     assert_eq!(rt.state.model.active_space().unwrap().id, "sp-3");
 
-    // A sub-agent has no pane: its click asks for a peek, which comes with ticket 029.
+    // A sub-agent has no pane: its click peeks it, and its row is raised.
     click(&mut rt, "sub-t20");
     assert_eq!(
         rt.state.model.focused_terminal(),
         Some("t15"),
         "focus stays"
     );
-    let last = rt.state.toasts.shown.last().expect("a toast");
-    assert_eq!(last.toast.title, "Not yet");
-    assert!(last.toast.body.contains("peek"), "{}", last.toast.body);
+    assert_eq!(rt.state.model.peeked(), Some("t20"));
+    let raised = rt.state.list.rows.iter().any(|r| match r {
+        Row::Sub(sub) => sub.address == "t20" && sub.on,
+        _ => false,
+    });
+    assert!(raised, "the peeked row is raised");
 }
 
 #[test]

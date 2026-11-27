@@ -628,12 +628,14 @@ fn the_listing_names_every_served_command_with_its_arguments() {
             "tab.rename",
             "pane.close",
             "agent.focus",
+            "terminal.peek",
             "layout.switch",
         ]
     );
     assert_eq!(
         listing[6],
         json!({"name": "agent.focus", "args": [{"name": "terminal", "required": true}],
-               "about": "Show an agent: focus its pane, showing its tab and space."})
+               "about": "Show an agent: focus its pane, showing its tab and space. One without \
+                         a pane (a sub-agent) is peeked instead."})
     );
 }

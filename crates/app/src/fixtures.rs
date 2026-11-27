@@ -389,6 +389,12 @@ pub fn agents_core() -> crate::link::Fake {
         for t in ["t10", "t11", "t12", "t13", "t14", "t15"] {
             core.screens.insert(t.into(), b"$ ".to_vec());
         }
+        // What a peek at the explore sub-agent shows.
+        core.screens.insert(
+            "t20".into(),
+            b"Exploring crates/app/src/view\r\n  read 12 files, found the sidebar in sidebar.rs\r\n"
+                .to_vec(),
+        );
     }
     fake
 }

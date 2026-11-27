@@ -310,6 +310,8 @@ pub struct State {
     face: RefCell<Option<Face>>,
     scale: f32,
     area: Option<Area>,
+    /// The peek's terminal area, as laid out, in view points.
+    peek_area: Option<Area>,
     /// The window's size in window points, as last reported.
     window_points: (f32, f32),
     window_active: bool,
@@ -384,6 +386,22 @@ pub fn pane_key(id: &str) -> String {
     format!("pane-{}", id.replace('/', ":"))
 }
 
+/// What the pane handlers take in place of a pane id for the peek's terminal (no pane id has an
+/// `@`).
+pub const PEEK: &str = "@peek";
+
+/// The peek's terminal element key: what has the keyboard while the peek does.
+pub const PEEK_KEY: &str = "peek-terminal";
+
+/// The element key of a pane, or of the peek's terminal for [`PEEK`].
+pub fn surface_key(pane: &str) -> String {
+    if pane == PEEK {
+        PEEK_KEY.to_owned()
+    } else {
+        pane_key(pane)
+    }
+}
+
 /// A tab pill's element key, as [`pane_key`].
 pub fn tab_key(id: &str) -> String {
     format!("tab-{}", id.replace('/', ":"))
@@ -424,6 +442,7 @@ impl State {
             .and_then(|text| View::from_json(&text).ok())
             .unwrap_or_default();
         let mut model = Model::with_view(user_home(), view);
+        model.set_shell(std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()));
         let mut toasts = Toasts::default();
         let mut keys_read = None;
         let mut keys_problem = None;
@@ -487,6 +506,7 @@ impl State {
             face: RefCell::new(None),
             scale: 2.0,
             area: None,
+            peek_area: None,
             window_points: crate::SIZE,
             window_active: true,
             in_use: None,
@@ -1240,6 +1260,7 @@ impl State {
             Some(Focus::Popup) => {
                 tx.focus_when_shown(crate::view::popup::focus_key(self.model.mode()), false)
             }
+            Some(Focus::Peek) => tx.focus_when_shown(PEEK_KEY, false),
             Some(Focus::None) | None => {}
         }
         for command in std::mem::take(&mut self.ui.window) {
@@ -1347,7 +1368,7 @@ impl State {
             space_colors: &colors,
             now_ms: wall_ms(),
             program: &program,
-            peeked: None,
+            peeked: self.model.peeked(),
         };
         let list = self.agents.build(&self.model, &input);
         if let Some(kept) = &list.space_colors {
@@ -1587,6 +1608,17 @@ impl State {
     fn keep_viewers(&mut self) -> bool {
         let mut changed = false;
         let focused = self.model.focused_pane();
+        let peeked = self.model.peeked().map(str::to_owned);
+        if let Some(address) = &peeked
+            && !self.viewers.contains_key(address)
+            && let Some(record) = self.model.world().terminal(address)
+        {
+            let (cols, rows) = (record.cols.max(1), record.rows.max(1));
+            let mut viewer = self.viewer(address, cols, rows);
+            viewer.key = PEEK_KEY.to_owned();
+            self.viewers.insert(address.clone(), viewer);
+            changed = true;
+        }
         for (pane, _, address) in self.shown_panes() {
             let Some(address) = address else { continue };
             let Some(record) = self.model.world().terminal(&address) else {
@@ -1604,7 +1636,8 @@ impl State {
             let active = self.window_active;
             let viewer = self.viewers.get_mut(&address).expect("made above");
             let key = pane_key(&pane);
-            let has_focus = active && focused.as_deref() == Some(pane.as_str());
+            // Behind the peek, the focused pane doesn't show focus.
+            let has_focus = active && peeked.is_none() && focused.as_deref() == Some(pane.as_str());
             if viewer.key != key || viewer.focused != has_focus {
                 viewer.key = key;
                 viewer.focused = has_focus;
@@ -1619,7 +1652,9 @@ impl State {
         let gone: Vec<String> = self
             .viewers
             .keys()
-            .filter(|a| world.pane_of(a).is_none() || !world.is_live(a))
+            .filter(|a| {
+                (world.pane_of(a).is_none() && peeked.as_ref() != Some(*a)) || !world.is_live(a)
+            })
             .cloned()
             .collect();
         for address in gone {
@@ -1758,7 +1793,7 @@ impl State {
 
         let in_use = self
             .window_active
-            .then(|| self.model.focused_terminal().map(str::to_owned))
+            .then(|| self.model.keyboard_terminal().map(str::to_owned))
             .flatten()
             .filter(|a| {
                 self.viewers
@@ -1781,15 +1816,7 @@ impl State {
         let Some(address) = self.in_use.clone() else {
             return false;
         };
-        if self.area.is_none() {
-            return false;
-        }
-        let Some(rect) = self
-            .shown_panes()
-            .into_iter()
-            .find(|(_, _, a)| a.as_deref() == Some(address.as_str()))
-            .map(|(_, rect, _)| rect)
-        else {
+        let Some(rect) = self.rect_of(&address) else {
             return false;
         };
         let grid = self.grid_for(rect);
@@ -1929,16 +1956,10 @@ impl State {
         }
     }
 
-    /// The grid a terminal should have when this window takes its size: its shown pane's, or
-    /// the core's when no laid-out pane draws it.
+    /// The grid a terminal should have when this window takes its size: the peek's or its shown
+    /// pane's, or the core's when nothing laid out draws it.
     fn grid_to_hold(&self, address: &str) -> Option<GridSize> {
-        let pane = self.area.and_then(|_| {
-            self.shown_panes()
-                .into_iter()
-                .find(|(_, _, a)| a.as_deref() == Some(address))
-                .map(|(_, rect, _)| rect)
-        });
-        match pane {
+        match self.rect_of(address) {
             Some(rect) => Some(self.grid_for(rect)),
             None => self.model.world().terminal(address).map(|t| GridSize {
                 columns: t.cols.max(1),
@@ -2050,16 +2071,44 @@ impl State {
         self.apply_ui(tx);
     }
 
+    /// The peek's terminal area was laid out: the peeked terminal's grid, while it is in use.
+    pub fn peek_laid_out(&mut self, rect: [f32; 4], tx: &mut Tx) {
+        let area = Area {
+            w: rect[2],
+            h: rect[3],
+        };
+        if self.peek_area == Some(area) && self.scale == tx.scale() {
+            tx.live_only();
+            return;
+        }
+        self.peek_area = Some(area);
+        self.scale = tx.scale();
+        self.pump(tx.clock());
+        self.apply_ui(tx);
+    }
+
+    /// The terminal a pane handler's `pane` means: the pane's, or the peeked one for [`PEEK`].
+    fn surface_address(&self, pane: &str) -> Option<String> {
+        if pane == PEEK {
+            self.model.peeked().map(str::to_owned)
+        } else {
+            self.model.world().address_of(pane).map(str::to_owned)
+        }
+    }
+
     /// A pane took or lost the keyboard: the model follows a click into another pane.
     pub fn pane_focus(&mut self, pane: &str, gained: bool, tx: &mut Tx) {
         if !gained {
             // Rune discards a composition when focus moves; the pane left behind must not keep
             // drawing it, or treat its keys as part of it.
-            if let Some(address) = self.model.world().address_of(pane).map(str::to_owned)
+            if let Some(address) = self.surface_address(pane)
                 && let Some(viewer) = self.viewers.get_mut(&address)
             {
                 viewer.set_preedit(None);
             }
+            return;
+        }
+        if pane == PEEK {
             return;
         }
         if self.model.focused_pane().as_deref() != Some(pane) {
@@ -2069,12 +2118,26 @@ impl State {
         }
     }
 
+    /// Where a terminal is drawn, laid out, in view points: the peek's area for the peeked one,
+    /// else its pane's place in the tab area.
+    fn rect_of(&self, address: &str) -> Option<model::Rect> {
+        if self.model.peeked() == Some(address) {
+            let area = self.peek_area?;
+            return Some(model::Rect::new(0.0, 0.0, area.w, area.h));
+        }
+        self.area?;
+        self.shown_panes()
+            .into_iter()
+            .find(|(_, _, a)| a.as_deref() == Some(address))
+            .map(|(_, rect, _)| rect)
+    }
+
     /// Makes pane `pane` the one in use before input it didn't get through the keyboard (a
     /// click, a drop): focused, so the window's in-use terminal takes its size first. True when
     /// its terminal is the one in use: only then may it send the program DATA, which would
     /// otherwise apply this viewer's stale size (`herdr-core-protocol.md` §4).
     fn use_pane(&mut self, pane: &str, address: &str, tx: &mut Tx) -> bool {
-        if self.model.focused_pane().as_deref() != Some(pane) {
+        if pane != PEEK && self.model.focused_pane().as_deref() != Some(pane) {
             self.step(tx.clock(), Action::FocusPane(pane.to_owned()));
         }
         self.reclaim(address);
@@ -2100,7 +2163,7 @@ impl State {
     /// A key pressed in pane `pane`: it goes to its terminal. False for keys it leaves (chords
     /// with Cmd).
     pub fn typed(&mut self, pane: &str, ev: &KeyEvent, tx: &mut Tx) -> bool {
-        let address = self.model.world().address_of(pane).map(str::to_owned);
+        let address = self.surface_address(pane);
         let composing = address
             .as_ref()
             .and_then(|a| self.viewers.get(a))
@@ -2112,7 +2175,7 @@ impl State {
         let Some(key) = keys::encode(ev, info) else {
             return false;
         };
-        if self.model.focused_pane().as_deref() != Some(pane) {
+        if pane != PEEK && self.model.focused_pane().as_deref() != Some(pane) {
             self.step(tx.clock(), Action::FocusPane(pane.to_owned()));
         }
         let Some(address) = address else {
@@ -2138,7 +2201,7 @@ impl State {
         let Some(key) = keys::encode(ev, info) else {
             return false;
         };
-        let Some(address) = self.model.world().address_of(pane).map(str::to_owned) else {
+        let Some(address) = self.surface_address(pane) else {
             return false;
         };
         let down = (address.clone(), key.key);
@@ -2162,9 +2225,9 @@ impl State {
         self.apply_ui(tx);
     }
 
-    /// The terminal the keyboard is in: the focused pane's.
+    /// The terminal the keyboard is in: the peeked one, else the focused pane's.
     fn typing_into(&self) -> Option<String> {
-        let address = self.model.focused_terminal()?;
+        let address = self.model.keyboard_terminal()?;
         self.viewers
             .contains_key(address)
             .then(|| address.to_owned())
@@ -2410,7 +2473,7 @@ impl State {
         let Some(focused) = tx.focused() else {
             return false;
         };
-        let terminal = focused.starts_with("pane-");
+        let terminal = focused.starts_with("pane-") || focused == PEEK_KEY;
         let target = crate::view::popup::focus_key(s.model.mode());
         let in_field = focused == crate::view::overlay::FIELD;
         let handled = s.keymap_key(ev, terminal, tx);
@@ -2433,7 +2496,7 @@ impl State {
         if tx.focused().is_some() {
             return false;
         }
-        let pane = s.model.focused_pane();
+        let pane = s.keyboard_surface();
         if s.keymap_key(ev, pane.is_some(), tx) {
             return true;
         }
@@ -2441,14 +2504,24 @@ impl State {
         if s.model.mode().holds_keyboard() {
             return false;
         }
-        let Some(pane) = pane.or_else(|| s.model.focused_pane()) else {
+        let Some(pane) = s.keyboard_surface() else {
             return false;
         };
         let typed = s.typed(&pane, ev, tx);
         if typed {
-            tx.focus(pane_key(&pane), false);
+            tx.focus(surface_key(&pane), false);
         }
         typed
+    }
+
+    /// What the keyboard types into, as a pane handler names it: [`PEEK`] while the peek is
+    /// open, else the focused pane.
+    pub fn keyboard_surface(&self) -> Option<String> {
+        if self.model.peeked().is_some() {
+            Some(PEEK.to_owned())
+        } else {
+            self.model.focused_pane()
+        }
     }
 
     /// The pointer in device pixels from the grid's top left, from points in the pane.
@@ -2467,12 +2540,23 @@ impl State {
     /// A mouse button pressed, dragged or let go over pane `pane` (`El::on_drag`). A program
     /// that tracks the mouse gets it, unless Shift is held; otherwise the primary button
     /// selects (Shift extends, Alt makes a block) and the middle one pastes. Letting go of a
-    /// selection copies it (`copy_on_select`).
+    /// selection copies it (`copy_on_select`). Cmd-click on a live terminal's address in the
+    /// text peeks it, and goes no further.
     pub fn pane_drag(&mut self, pane: &str, d: &Drag, tx: &mut Tx) {
-        let Some(address) = self.model.world().address_of(pane).map(str::to_owned) else {
+        let Some(address) = self.surface_address(pane) else {
             return;
         };
         let in_use = d.phase == Phase::Down && self.use_pane(pane, &address, tx);
+        if d.phase == Phase::Down && tx.button() == PointerButton::Primary && tx.mods().cmd {
+            let (x, y) = self.grid_px(&address, d.x, d.y);
+            if let Some(target) = self.address_at(&address, x, y) {
+                self.press = None;
+                self.step(tx.clock(), Action::Peek(target));
+                self.pump(tx.clock());
+                self.apply_ui(tx);
+                return;
+            }
+        }
         let Some(viewer) = self.viewers.get(&address) else {
             return;
         };
@@ -2553,6 +2637,15 @@ impl State {
         self.after_input(tx);
     }
 
+    /// The live terminal whose address is under the pointer (device pixels from the grid's top
+    /// left) in terminal `source`'s text, as its last snapshot shows it.
+    fn address_at(&self, source: &str, x: f32, y: f32) -> Option<String> {
+        let snapshot = self.viewers.get(source)?.shown()?;
+        let (word, _) = crate::view::peek::word_at(snapshot, x, y)?;
+        let live = self.model.world().live().map(|t| t.address.as_str());
+        model::peek::terminal_address(&word, source, live)
+    }
+
     /// The pointer moving over pane `pane` with no button held: a program tracking every
     /// motion (mode 1003) hears it.
     pub fn pane_hover(&mut self, pane: &str, p: PointerEvent, tx: &mut Tx) {
@@ -2560,7 +2653,7 @@ impl State {
         if self.press.is_some() {
             return;
         }
-        let Some(address) = self.model.world().address_of(pane).map(str::to_owned) else {
+        let Some(address) = self.surface_address(pane) else {
             return;
         };
         let mods = tx.mods();
@@ -2588,7 +2681,7 @@ impl State {
     /// the terminal in use sends the program anything: over another pane the wheel moves the
     /// scrollback alone.
     pub fn pane_wheel(&mut self, pane: &str, ev: &WheelEvent, tx: &mut Tx) -> bool {
-        let Some(address) = self.model.world().address_of(pane).map(str::to_owned) else {
+        let Some(address) = self.surface_address(pane) else {
             return false;
         };
         // macOS turns Shift with a notched wheel into horizontal scrolling.
@@ -2669,7 +2762,7 @@ impl State {
     /// right-clicks there (`herdr.right-click=program`) and it tracks the mouse, unless Shift is
     /// held; otherwise the terminal's menu (ticket 026).
     pub fn pane_right_click(&mut self, pane: &str, p: PointerEvent, tx: &mut Tx) {
-        let Some(address) = self.model.world().address_of(pane).map(str::to_owned) else {
+        let Some(address) = self.surface_address(pane) else {
             return;
         };
         let to_program = self
@@ -2698,6 +2791,8 @@ impl State {
                     });
                 }
             }
+            // The peek's terminal has no pane to make a menu for.
+            _ if pane == PEEK => {}
             _ => {
                 self.step(tx.clock(), Action::TerminalMenu(pane.to_owned()));
             }
@@ -2710,7 +2805,7 @@ impl State {
     /// in use, and the paste goes anyway, as in Herdr app: the person asked for it. It takes
     /// the pane's grid with it ([`State::send_data`]), so the core doesn't apply a stale one.
     pub fn pane_dropped(&mut self, pane: &str, paths: &[PathBuf], tx: &mut Tx) {
-        if let Some(address) = self.model.world().address_of(pane).map(str::to_owned) {
+        if let Some(address) = self.surface_address(pane) {
             self.use_pane(pane, &address, tx);
             self.drop_files(&address, paths.to_vec());
         }

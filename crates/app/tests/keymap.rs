@@ -213,8 +213,8 @@ fn with_nothing_focused_the_window_reads_the_keymap_once_then_types() {
 #[test]
 fn unbuilt_actions_show_a_not_yet_toast_that_goes() {
     let (mut rt, _) = runtime();
-    ch(&mut rt, "⌘", 'r');
-    assert_eq!(toast_titles(&rt), ["Not yet: review isn't built yet"]);
+    ch(&mut rt, "⌘", 'h');
+    assert_eq!(toast_titles(&rt), ["Not yet: app.hide isn't built yet"]);
     frames(&mut rt, 1);
     let shown = &rt.state.toasts.shown[0];
     let card = element(&rt, &format!("toast-{}", shown.id)).expect("the toast card");

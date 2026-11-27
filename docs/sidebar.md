@@ -34,8 +34,9 @@ state in `crates/app/src/state.rs`. `crates/app/tests/sidebar.rs` and the `shell
   contains `@` or equals the program. A Pi session's name comes from its title (`π - <name> -
   <folder>`). A bare tab number shows only when two rows in a space would otherwise read the same;
   otherwise the program's name stands in.
-- **Sub-agents** (core `parent`) nest under their agent with tree lines. Clicking one asks for a
-  peek, which ticket 029 builds. The agent's icon or chevron folds them.
+- **Sub-agents** (core `parent`) nest under their agent with tree lines. Clicking one peeks it
+  (`docs/review-and-peek.md`); its row is raised while the peek shows it. The agent's icon or
+  chevron folds them.
 - **Pi orchestrations** (`dotfiles.pi_pr_watch`, trusted only while the terminal runs Pi).
   Workers nest under their orchestrator, which shows them only while it or one of them has
   focus. A working or blocked worker lifts its orchestrator; a done one doesn't. A worker whose

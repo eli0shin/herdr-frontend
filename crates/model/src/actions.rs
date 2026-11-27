@@ -22,6 +22,7 @@ impl Model {
             Action::App(command) => fx.push(Effect::App(command)),
             Action::Open(popup) => self.open(popup, fx),
             Action::CopyMode => self.copy_mode(fx),
+            Action::Review => self.review(fx),
             Action::TabNew => self.new_tab(None, fx),
             Action::NewTabIn(space) => {
                 if self.world.space(&space).is_some() {
@@ -165,7 +166,7 @@ impl Model {
                 self.rearrange(&pane, &target, edge, fx)
             }
             Action::Terminal(command) => {
-                if let Some(address) = self.focused_terminal().map(str::to_owned) {
+                if let Some(address) = self.keyboard_terminal().map(str::to_owned) {
                     fx.push(Effect::Terminal {
                         address,
                         command: TerminalCommand::Action(command),
@@ -240,10 +241,10 @@ impl Model {
             }
             Action::EditFile(path) => self.edit_file(&path, fx),
             Action::RenamePaneOf(pane) => self.rename(Rename::Pane(pane)),
-            Action::Review
-            | Action::Peek(_)
-            | Action::FoldSubagents(_)
-            | Action::OpenLink { .. } => fx.push(Effect::NotYet(action)),
+            Action::Peek(address) => self.open_peek(&address, fx),
+            Action::ClosePeek => self.peek = None,
+            Action::KeepPeek => self.keep_peeked(fx),
+            Action::FoldSubagents(_) | Action::OpenLink { .. } => fx.push(Effect::NotYet(action)),
         }
     }
 
@@ -262,6 +263,25 @@ impl Model {
     /// terminal's folder, or the space's own when it isn't the shown one. With no space, a new
     /// space on this machine.
     fn new_tab(&mut self, space: Option<&str>, fx: &mut Effects) {
+        self.new_tab_running(space, "", Vec::new(), fx);
+    }
+
+    /// [`Model::new_tab`] named `name` (empty: by its number), running `argv` (empty: the login
+    /// shell) inside the login shell of the space's machine ([`crate::shell`]): herdr-app's
+    /// `tab.new {space, name, argv}`.
+    pub(crate) fn new_tab_running(
+        &mut self,
+        space: Option<&str>,
+        name: &str,
+        argv: Vec<String>,
+        fx: &mut Effects,
+    ) {
+        let shell = self.shell.clone();
+        let wrap = |argv: Vec<String>, machine: Option<&str>| match (argv.is_empty(), machine) {
+            (true, _) => argv,
+            (false, Some(_)) => crate::shell::remote(argv),
+            (false, None) => crate::shell::login(&shell, argv),
+        };
         let shown = self.active_space().map(|s| s.id.clone());
         let space = match space {
             Some(id) => self.world.space(id),
@@ -277,25 +297,27 @@ impl Model {
                 name: String::new(),
                 folder: folder.clone(),
                 tab: fresh_id_on("tb", None),
-                tab_name: String::new(),
+                tab_name: name.to_owned(),
                 pane: fresh_id_on("p", None),
                 focus: true,
             };
-            self.launch(None, &folder, launch, Vec::new(), None, fx);
+            self.launch(None, &folder, launch, wrap(argv, None), None, fx);
             return;
         };
         let machine = machine_of(&space.id).map(str::to_owned);
         let m = machine.as_deref();
+        let argv = wrap(argv, m);
         let launch = Launch::Tab {
             space: space.id.clone(),
             tab: fresh_id_on("tb", m),
+            name: name.to_owned(),
             pane: fresh_id_on("p", m),
             after: self
                 .view
                 .selected_tab(&self.world, space)
                 .map(|t| t.id.clone()),
         };
-        self.launch(machine, &folder, launch, Vec::new(), None, fx);
+        self.launch(machine, &folder, launch, argv, None, fx);
     }
 
     /// `space.new` from the window: a space on `machine` (this computer for `None`), shown at
@@ -352,6 +374,7 @@ impl Model {
                 Launch::Tab {
                     space,
                     tab: fresh_id_on("tb", None),
+                    name: String::new(),
                     pane: fresh_id_on("p", None),
                     after,
                 }
@@ -520,7 +543,7 @@ impl Model {
             Some(pane) => {
                 self.view.focus_pane(&self.world, &pane);
             }
-            None => fx.push(Effect::NotYet(Action::Peek(address.to_owned()))),
+            None => self.open_peek(address, fx),
         }
     }
 
@@ -874,7 +897,7 @@ impl Model {
 
     /// `ctrl-g [`: copy mode in the focused terminal. With none, a warning, as the mod does.
     fn copy_mode(&mut self, fx: &mut Effects) {
-        let Some(address) = self.focused_terminal().map(str::to_owned) else {
+        let Some(address) = self.keyboard_terminal().map(str::to_owned) else {
             fx.push(Effect::Toast(Toast::new(
                 Level::Warning,
                 "Copy mode",

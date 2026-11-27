@@ -604,9 +604,10 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   and the pane moves if focus didn't. An exec error or timeout: an error toast. A fresh
   `dotfiles.navigator=<n>:<n>:<dir>` label (Neovim at its edge) moves the pane once, only while
   its terminal is focused; every value is noted on arrival, so none replays.
-- **Not built here** (they return `Effect::NotYet`): the review view, peek, the terminal menu,
-  sub-agent folds and links. The tab menu is a `PopupState::Menu` (ticket 021) that the window
-  doesn't draw yet.
+- **Review and peek** (`docs/review-and-peek.md`, ticket 029). `cmd-r` is `model::review`; the
+  peek is `Model::peek`, a terminal shown over the window that has the keyboard while no popup
+  does, without moving the focused pane.
+- **Not built here** (they return `Effect::NotYet`): sub-agent folds and links.
 - **Attention** (ticket 025, `docs/attention.md`). The model keeps `Attention` for displayed
   status, marks what the person looks at as seen, and shares it as `herdr.seen` through a
   `SeenTracker` after every step. An alert is `Effect::Alert`; the app shows

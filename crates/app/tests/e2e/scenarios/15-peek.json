@@ -1,9 +1,9 @@
 {
   "title": "Peek",
   "inventory": "§15",
-  "notes": "Peeking the explore sub-agent, which has no pane.",
+  "notes": "Peeking the explore sub-agent, which has no pane. Esc is the terminal's, so closing goes by cmd-w (tab.close closes the peek, not the tab behind it).",
   "steps": [
     {"name": "peek explore", "do": "terminal.peek", "args": {"terminal": "{{t:explore}}"}},
-    {"name": "close the peek", "keys": "escape", "herdr-app": {"do": "overlay.close"}}
+    {"name": "close the peek", "keys": "cmd-w", "herdr-app": {"do": "overlay.close"}}
   ]
 }

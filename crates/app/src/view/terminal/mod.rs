@@ -70,6 +70,12 @@ impl TerminalPane {
     /// The pane: the terminal's background, the grid at its top left after the padding, and the
     /// cursor.
     pub fn view(&self, face: &Face, look: &Look) -> El {
+        self.view_as(&self.key, self.focused, face, look)
+    }
+
+    /// [`TerminalPane::view`] under another key, showing focus or not: the same terminal drawn
+    /// a second time, as the peek draws one whose pane is on screen too.
+    pub fn view_as(&self, key: &str, focused: bool, face: &Face, look: &Look) -> El {
         let snapshot = &self.snapshot;
         let (cell_w, cell_h) = face.cell_pt();
         let (rows, atlas, spill) = {
@@ -97,7 +103,7 @@ impl TerminalPane {
             screen = screen.grid_caret(place.col, place.row);
         }
         let s = face.scale;
-        el().key(self.key.clone())
+        el().key(key.to_owned())
             .w_full()
             .h_full()
             .fill(color(snapshot.colors.background))
@@ -108,15 +114,15 @@ impl TerminalPane {
                     .child(screen)
                     .children(spill_view(&spill, face, grid_w, grid_h))
                     .children(atlas.iter().map(|(row, cell)| cell.view(*row, face)))
-                    .children(cursor::overlay(snapshot, self.focused, face, look))
-                    .children(self.ime(face)),
+                    .children(cursor::overlay(snapshot, focused, face, look))
+                    .children(self.ime(focused, face)),
             )
     }
 
     /// The input method's caret at the cursor's cell while the pane has the keyboard, with what
     /// it's composing drawn over the cell.
-    fn ime(&self, face: &Face) -> Option<El> {
-        if !self.focused {
+    fn ime(&self, focused: bool, face: &Face) -> Option<El> {
+        if !focused {
             return None;
         }
         let snapshot = &self.snapshot;

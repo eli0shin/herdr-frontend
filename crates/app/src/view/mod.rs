@@ -8,6 +8,7 @@ pub mod list;
 pub mod menu;
 pub mod overlay;
 pub mod palette;
+pub mod peek;
 pub mod picker;
 pub mod popup;
 pub mod settings;

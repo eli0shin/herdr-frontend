@@ -320,22 +320,14 @@ fn past_36_rows_the_first_letter_waits_for_the_second() {
     };
     publish(&mut m, &many[..11]);
     press(&mut m, "ctrl-;", true);
-    let fx = press(&mut m, "a", true);
-    assert!(
-        fx.list
-            .contains(&Effect::NotYet(Action::Peek("z10".into()))),
-        "11 rows: one letter"
-    );
+    press(&mut m, "a", true);
+    assert_eq!(m.peeked(), Some("z10"), "11 rows: one letter");
     publish(&mut m, &many);
     press(&mut m, "ctrl-;", true);
     press(&mut m, "a", true);
     assert!(matches!(m.mode(), Mode::Popup(PopupState::Jump(j)) if j.typed == "a"));
-    let fx = press(&mut m, "s", true);
-    assert!(
-        fx.list
-            .contains(&Effect::NotYet(Action::Peek("z11".into()))),
-        "as: the twelfth row"
-    );
+    press(&mut m, "s", true);
+    assert_eq!(m.peeked(), Some("z11"), "as: the twelfth row");
     assert_eq!(*m.mode(), Mode::Normal);
 }
 
@@ -755,10 +747,7 @@ fn a_saved_remote_space_gone_by_the_time_its_machine_loads_leaves_the_screen_whe
 fn unbuilt_features_say_not_yet() {
     let mut core = agents();
     let mut m = connected(&mut core);
-    let fx = press(&mut m, "cmd-r", true);
-    assert!(fx.list.contains(&Effect::NotYet(Action::Review)));
     for action in [
-        Action::Peek("a2".into()),
         Action::FoldSubagents("a2".into()),
         Action::OpenLink {
             pane: "p1".into(),

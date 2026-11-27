@@ -118,7 +118,14 @@ pub const COMMANDS: &[Command] = &[
     Command {
         name: "agent.focus",
         args: &[req("terminal")],
-        about: "Show an agent: focus its pane, showing its tab and space.",
+        about: "Show an agent: focus its pane, showing its tab and space. One without a pane \
+                (a sub-agent) is peeked instead.",
+    },
+    Command {
+        name: "terminal.peek",
+        args: &[req("terminal")],
+        about: "Peek at a running terminal: show it over the window, with keep-as-tab and \
+                close, without moving focus.",
     },
     Command {
         name: "layout.switch",
@@ -337,7 +344,7 @@ impl Model {
     /// (`app:src/window.rs` `control`), less what only the window knows (`zoom`, `font_size`,
     /// `ui_font_size` and file errors), which the app adds.
     pub fn status(&self) -> Map<String, Value> {
-        let overlays: Vec<&str> = match &self.mode {
+        let mut overlays: Vec<&str> = match &self.mode {
             Mode::Popup(PopupState::List(list)) => vec![list.popup.as_str()],
             Mode::Popup(PopupState::Jump(_)) => vec![Popup::AgentJump.as_str()],
             Mode::Popup(PopupState::Prompt(_)) => vec!["prompt"],
@@ -346,6 +353,10 @@ impl Model {
             Mode::Copy(_) => vec!["copy-mode"],
             Mode::Normal | Mode::Prefix { .. } => vec![],
         };
+        // Herdr app's id for the peek's dialog, under any popup opened over it.
+        if self.peek.is_some() {
+            overlays.insert(0, "terminal-peek");
+        }
         let errors: Vec<String> = self
             .world
             .machines()
@@ -454,6 +465,15 @@ impl Model {
                 let terminal = arg(a, "terminal").unwrap_or_default().to_owned();
                 if self.world.is_live(&terminal) {
                     self.focus_agent(&terminal, fx);
+                    Ok(ok())
+                } else {
+                    Err(format!("no running terminal {terminal:?}"))
+                }
+            }
+            "terminal.peek" => {
+                let terminal = arg(a, "terminal").unwrap_or_default().to_owned();
+                if self.world.is_live(&terminal) {
+                    self.open_peek(&terminal, fx);
                     Ok(ok())
                 } else {
                     Err(format!("no running terminal {terminal:?}"))

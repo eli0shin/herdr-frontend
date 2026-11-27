@@ -86,7 +86,8 @@ the palette, the pickers, the prompt and confirm dialogs, the menus, the setting
 (`docs/popups.md`), the sidebar's sort menu and the agent-jump bar (`docs/sidebar.md`); the
 new-space folder picker, the PR finder and the machine filter still say "not yet". The
 terminal's sends, paste, copy and paste-image run
-in the focused terminal (`docs/research/terminal-rendering.md` §3); find and select all say "not
+in the terminal that has the keyboard: the peeked one while a peek is open
+(`docs/review-and-peek.md`), else the focused pane's (`docs/research/terminal-rendering.md` §3); find and select all say "not
 yet" until ticket 019.
 
 ## Keys help
