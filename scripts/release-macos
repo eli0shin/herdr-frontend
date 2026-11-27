@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+# Builds the release download: the universal herdr-frontend.app (scripts/bundle-macos --universal)
+# in a .dmg, with a SHA-256 file beside it, in <out-dir> (default target/dist). The release
+# artifacts workflow runs it on a macOS runner; `just package` runs it here. docs/release.md
+# "Artifacts" has the whole flow.
+#
+# Signing comes from the environment, under the release secrets' names:
+#   DEVELOPMENT_ID_CERTIFICATE_BASE64    the Developer ID Application certificate and key, a .p12
+#   DEVELOPMENT_ID_CERTIFICATE_PASSWORD  the .p12's password
+#   DEVELOPER_ID_APPLICATION_IDENTITY    "Developer ID Application: <name> (<team ID>)"
+#   APPLE_TEAM_ID                        the 10-character team ID
+#   NOTARY_APPLE_ID                      the Apple ID notarytool signs in with
+#   NOTARY_APP_SPECIFIC_PASSWORD         an app-specific password for that Apple ID
+# With all six, the app and the .dmg are signed with the Developer ID (hardened runtime, secure
+# timestamp), notarized and stapled. With none, the app is signed ad hoc, still with the hardened
+# runtime, and the .dmg isn't signed: the app runs the same, but Gatekeeper stops a downloaded copy. Some but not all of them
+# is an error. RELEASE_SKIP_NOTARIZE=1 signs with the Developer ID and skips notarization
+# (scripts/release-signing-dry-run).
+#
+# Prints the .dmg's and the SHA-256 file's paths. On GitHub Actions it also writes `dmg`, `sha256`
+# and `signing` (notarized, ad-hoc, or signed-not-notarized) to $GITHUB_OUTPUT.
+set -euo pipefail
+
+[[ $(uname -s) == Darwin ]] || { echo 'release-macos needs macOS.' >&2; exit 1; }
+cd "$(dirname "$0")/.."
+
+fail() {
+    echo "release-macos: $*" >&2
+    exit 1
+}
+step() { echo "release-macos: $*" >&2; }
+
+out=${1:-target/dist}
+version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+[[ -n $version ]] || fail 'no version in Cargo.toml'
+name=herdr-frontend-$version-macos
+entitlements=assets/macos/herdr-frontend.entitlements
+
+# --- Which signing -----------------------------------------------------------------------------
+
+secrets=(
+    DEVELOPMENT_ID_CERTIFICATE_BASE64
+    DEVELOPMENT_ID_CERTIFICATE_PASSWORD
+    DEVELOPER_ID_APPLICATION_IDENTITY
+    APPLE_TEAM_ID
+    NOTARY_APPLE_ID
+    NOTARY_APP_SPECIFIC_PASSWORD
+)
+present=() missing=()
+for secret in "${secrets[@]}"; do
+    if [[ -n ${!secret:-} ]]; then present+=("$secret"); else missing+=("$secret"); fi
+done
+if ((${#present[@]} == 0)); then
+    signing=ad-hoc
+elif ((${#missing[@]} == 0)); then
+    signing=notarized
+    [[ ${RELEASE_SKIP_NOTARIZE:-0} == 1 ]] && signing=signed-not-notarized
+else
+    fail "only some signing secrets are set; missing: ${missing[*]} (scripts/bootstrap-release-secrets sets them all)"
+fi
+step "signing: $signing"
+
+# --- The Developer ID in a temporary keychain --------------------------------------------------
+
+tmp=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/herdr-frontend-release.XXXXXX")
+keychain=$tmp/signing.keychain-db
+keychain_created=0
+search_list=()
+search_list_changed=0
+mount=$tmp/mount
+mounted=0
+cleanup() {
+    if ((mounted)); then
+        hdiutil detach "$mount" -quiet || hdiutil detach "$mount" -force -quiet || true
+    fi
+    if ((search_list_changed)); then
+        security list-keychains -d user -s "${search_list[@]}" >/dev/null 2>&1 || true
+    fi
+    if ((keychain_created)); then
+        security delete-keychain "$keychain" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$tmp"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+identity=-
+profile=herdr-frontend-notary
+if [[ $signing != ad-hoc ]]; then
+    identity=$DEVELOPER_ID_APPLICATION_IDENTITY
+    [[ $APPLE_TEAM_ID =~ ^[A-Z0-9]{10}$ ]] || fail 'APPLE_TEAM_ID is not a 10-character team ID'
+    [[ $identity == "Developer ID Application: "*" ($APPLE_TEAM_ID)" ]] ||
+        fail "DEVELOPER_ID_APPLICATION_IDENTITY must be \"Developer ID Application: <name> ($APPLE_TEAM_ID)\""
+
+    step 'importing the Developer ID into a temporary keychain'
+    keychain_password=$(openssl rand -base64 32)
+    security create-keychain -p "$keychain_password" "$keychain"
+    keychain_created=1
+    security set-keychain-settings -lut 7200 "$keychain"
+    security unlock-keychain -p "$keychain_password" "$keychain"
+    # codesign looks up the certificate chain through the search list, so the keychain joins it
+    # until the script exits.
+    while IFS= read -r entry; do
+        entry=${entry#"${entry%%[![:space:]]*}"}
+        [[ -n $entry ]] && search_list+=("${entry//\"/}")
+    done < <(security list-keychains -d user)
+    security list-keychains -d user -s "$keychain" "${search_list[@]}"
+    search_list_changed=1
+
+    printf '%s' "$DEVELOPMENT_ID_CERTIFICATE_BASE64" | base64 --decode >"$tmp/certificate.p12" ||
+        fail 'DEVELOPMENT_ID_CERTIFICATE_BASE64 is not base64'
+    security import "$tmp/certificate.p12" -k "$keychain" -f pkcs12 \
+        -P "$DEVELOPMENT_ID_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null ||
+        fail 'the certificate did not import: check DEVELOPMENT_ID_CERTIFICATE_PASSWORD'
+    rm -f "$tmp/certificate.p12"
+    security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+    # A real Developer ID must be valid (-v: trusted and unexpired). The dry run's self-signed
+    # certificate never is, so it only has to be there.
+    if [[ $signing == notarized ]]; then
+        security find-identity -v -p codesigning "$keychain" | grep -Fq "\"$identity\"" ||
+            fail "the certificate holds no valid code-signing identity \"$identity\""
+    else
+        security find-identity -p codesigning "$keychain" | grep -Fq "\"$identity\"" ||
+            fail "the certificate holds no code-signing identity \"$identity\""
+    fi
+
+    if [[ $signing == notarized ]]; then
+        step 'checking the notary credentials'
+        xcrun notarytool store-credentials "$profile" --keychain "$keychain" \
+            --apple-id "$NOTARY_APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$NOTARY_APP_SPECIFIC_PASSWORD" >/dev/null ||
+            fail 'notarytool rejected NOTARY_APPLE_ID, APPLE_TEAM_ID or NOTARY_APP_SPECIFIC_PASSWORD'
+    fi
+fi
+
+# Signs with the Developer ID (secure timestamp) or ad hoc (no timestamp).
+sign() {
+    if [[ $identity == - ]]; then
+        codesign --force --sign - --timestamp=none "$@"
+    else
+        codesign --force --sign "$identity" --keychain "$keychain" --timestamp "$@"
+    fi
+}
+
+# Submits one file to the notary service and waits for its verdict; on Accepted, staples it.
+# notarytool sometimes crashes mid-upload (SIGBUS) with no verdict, so that is retried once.
+notarize() {
+    local file=$1 json status id
+    for attempt in 1 2; do
+        step "notarizing $(basename "$file") (attempt $attempt)"
+        json=$(xcrun notarytool submit "$file" --keychain-profile "$profile" --keychain "$keychain" \
+            --wait --timeout 1h --output-format json) || step "notarytool exited $?"
+        status=$(plutil -extract status raw -o - - <<<"$json" 2>/dev/null || true)
+        id=$(plutil -extract id raw -o - - <<<"$json" 2>/dev/null || true)
+        step "notarytool: ${id:-no submission} ${status:-no verdict}"
+        if [[ -n $id && -n $status ]]; then
+            # The log lists the problems on a rejection, and warnings even on acceptance.
+            xcrun notarytool log "$id" --keychain-profile "$profile" --keychain "$keychain" >&2 || true
+        fi
+        case $status in
+            Accepted)
+                xcrun stapler staple "$file" >&2
+                xcrun stapler validate "$file" >&2
+                return 0
+                ;;
+            Invalid | Rejected) fail "the notary service rejected $(basename "$file")" ;;
+        esac
+    done
+    fail "notarization of $(basename "$file") got no verdict"
+}
+
+# --- The app -----------------------------------------------------------------------------------
+
+app=$(scripts/bundle-macos --universal)
+mkdir -p "$out"
+rm -rf "${out:?}/$name" "$out/$name.dmg" "$out/$name.dmg.sha256"
+stage=$out/$name
+mkdir -p "$stage"
+ditto "$app" "$stage/herdr-frontend.app"
+app=$stage/herdr-frontend.app
+
+step "signing herdr-frontend.app ($identity)"
+xattr -cr "$app"
+sign --options runtime --entitlements "$entitlements" "$app"
+codesign --verify --deep --strict --verbose=2 "$app"
+details=$(codesign -d --verbose=4 "$app" 2>&1)
+grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]*\(.*runtime' <<<"$details" || fail 'the app is not signed with the hardened runtime'
+if [[ $identity != - ]]; then
+    grep -Fxq "Authority=$identity" <<<"$details" || fail "the app is not signed by $identity"
+fi
+
+if [[ $signing == notarized ]]; then
+    grep -Fxq "TeamIdentifier=$APPLE_TEAM_ID" <<<"$details" || fail "the app is not signed for team $APPLE_TEAM_ID"
+    ditto -c -k --keepParent "$app" "$tmp/herdr-frontend.zip"
+    notarize "$tmp/herdr-frontend.zip"
+    # The zip only carried the app to the notary service; the ticket is stapled to the app.
+    xcrun stapler staple "$app" >&2
+    xcrun stapler validate "$app" >&2
+    spctl --assess --type execute --verbose=4 "$app"
+fi
+
+# --- The .dmg ----------------------------------------------------------------------------------
+
+# The app beside an Applications link, to drag it into.
+ln -s /Applications "$stage/Applications"
+dmg=$out/$name.dmg
+step "creating $dmg"
+hdiutil create -volname herdr-frontend -srcfolder "$stage" -format UDZO -ov "$dmg" >&2
+rm -rf "$stage"
+if [[ $identity != - ]]; then
+    sign "$dmg"
+    codesign --verify --strict --verbose=2 "$dmg"
+fi
+if [[ $signing == notarized ]]; then
+    notarize "$dmg"
+    spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
+fi
+
+# What's inside, as a download would open it.
+hdiutil verify "$dmg" >&2
+mkdir -p "$mount"
+hdiutil attach "$dmg" -readonly -nobrowse -noautoopen -mountpoint "$mount" >/dev/null
+mounted=1
+inside=$mount/herdr-frontend.app
+[[ $(readlink "$mount/Applications") == /Applications ]] || fail 'the .dmg has no Applications link'
+codesign --verify --deep --strict "$inside"
+for arch in arm64 x86_64; do
+    lipo "$inside/Contents/MacOS/herdr-frontend" -verify_arch "$arch" || fail "the app has no $arch slice"
+done
+for file in LICENSE THIRD-PARTY-NOTICES.md licenses; do
+    [[ -e $inside/Contents/Resources/$file ]] || fail "the app has no Resources/$file"
+done
+if [[ $signing == notarized ]]; then
+    xcrun stapler validate "$inside" >&2
+fi
+reported=$("$inside/Contents/MacOS/herdr-frontend" --version)
+[[ $reported == "herdr-frontend $version" ]] || fail "the app reports \"$reported\", not $version"
+hdiutil detach "$mount" -quiet
+mounted=0
+
+(cd "$out" && shasum -a 256 "$name.dmg" >"$name.dmg.sha256")
+step "$(cat "$out/$name.dmg.sha256")"
+
+if [[ -n ${GITHUB_OUTPUT:-} ]]; then
+    {
+        echo "dmg=$dmg"
+        echo "sha256=$out/$name.dmg.sha256"
+        echo "signing=$signing"
+    } >>"$GITHUB_OUTPUT"
+fi
+echo "$dmg"
+echo "$out/$name.dmg.sha256"

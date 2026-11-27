@@ -11,12 +11,23 @@ Status: under construction. See `docs/` for research and the plan.
 
 ## Install
 
+Each [GitHub Release](https://github.com/eli0shin/herdr-frontend/releases) has
+`herdr-frontend-<version>-macos.dmg`, one app for Apple silicon and Intel, notarized by Apple (the
+release notes say so when it isn't). Open it, drag herdr-frontend into Applications, and link the
+command:
+
+```sh
+ln -sfn /Applications/herdr-frontend.app/Contents/MacOS/herdr-frontend ~/.local/bin/herdr-frontend
+```
+
+From a checkout:
+
 ```sh
 just install
 ```
 
-This builds the release profile, bundles `herdr-frontend.app` (the binary, its icon and an
-`Info.plist`, signed ad hoc) and installs it to `~/Applications`. It also links the
+This builds the release profile, bundles `herdr-frontend.app` (the binary, its icon, an
+`Info.plist` and the license files, signed ad hoc) and installs it to `~/Applications`. It also links the
 `herdr-frontend` command (the window, and its `ls | do | status` CLI, `docs/cli.md`) into
 `~/.local/bin`, which must be on your `PATH`. `HERDR_FRONTEND_APP_DIR` and `HERDR_FRONTEND_BIN_DIR`
 move either place. Run it again to update: it swaps the bundle, so a running window keeps going
@@ -41,6 +52,7 @@ just run          # open the window on your herdr-core
 just test         # pin check, fmt, clippy, tests and bindings check, as CI runs them
 just snap [scene] # render a scene headless to target/snap/<scene>.png
 just bundle       # build target/release/herdr-frontend.app (`just install` installs it)
+just package      # build the release .dmg, universal, in target/dist/ (docs/release.md)
 just icon         # regenerate assets/icon/herdr-frontend.icns from its SVG (needs ImageMagick)
 just e2e          # the full app and Herdr app through every scenario, screenshots side by side
 just ghostty-diff # compare the terminal renderer with Ghostty.app (opens Ghostty windows)
@@ -81,8 +93,9 @@ Rune is pinned to one `dev` rev in `Cargo.toml`; bump it as `docs/research/rune.
 
 Releases are versioned with Changesets, which needs [Bun](https://bun.sh): each user-visible PR
 adds a changeset (`bun install` once, then `bunx changeset`), and merging the "chore: version
-packages" PR tags the version and creates its GitHub Release. `herdr-frontend --version` prints
-it. `docs/release.md` has the whole flow.
+packages" PR tags the version and creates its GitHub Release, and a macOS runner builds, signs,
+notarizes and uploads its .dmg. `herdr-frontend --version` prints it. `docs/release.md` has the
+whole flow.
 
 ## License
 

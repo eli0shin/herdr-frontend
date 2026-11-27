@@ -45,6 +45,14 @@ ghostty-diff *screens:
 bundle:
     scripts/bundle-macos
 
+# Build the release download, target/dist/herdr-frontend-<version>-macos.dmg and .sha256 (universal; docs/release.md).
+package:
+    scripts/release-macos
+
+# Run `just package`'s Developer ID signing with a throwaway self-signed identity, into target/dist-dry-run/.
+package-dry-run:
+    scripts/release-signing-dry-run
+
 # Install herdr-frontend.app to ~/Applications and the herdr-frontend command to ~/.local/bin.
 install:
     scripts/install-macos
