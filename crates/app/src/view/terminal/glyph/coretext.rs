@@ -7,16 +7,21 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
-use objc2_core_foundation::{CFData, CFRange, CFRetained, CFString, CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{CFArray, CFData, CFRetained, CFString, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGColorSpace, CGContext, kCGColorSpaceLinearGray, kCGColorSpaceSRGB,
 };
 use objc2_core_text::{
-    CTFont, CTFontManagerCreateFontDescriptorFromData, CTFontOrientation, CTFontSymbolicTraits,
+    CTFont, CTFontDescriptor, CTFontManagerCreateFontDescriptorFromData,
+    CTFontManagerCreateFontDescriptorsFromData, CTFontOrientation, CTFontSymbolicTraits,
+    kCTFontNameAttribute,
 };
 use terminal::Metrics;
 
+use skrifa::MetadataProvider;
+
 use super::constraint::{self, Constraint, GlyphBox};
+use super::discovery;
 use super::{Presentation, SYMBOLS_NERD_FONT};
 use crate::view::terminal::font::{Face, FaceKey};
 
@@ -49,12 +54,39 @@ thread_local! {
     static FACES: RefCell<HashMap<FaceKey, Faces>> = RefCell::new(HashMap::new());
 }
 
-/// A font from a font file's bytes at `px` pixels.
-fn from_data(data: &[u8], px: f64) -> Option<CFRetained<CTFont>> {
-    let data = CFData::from_bytes(data);
-    // SAFETY: CoreText calls on live objects.
+/// Face `index` of a font file's bytes (a collection holds several) at `px` pixels.
+fn from_data(data: &[u8], index: u32, px: f64) -> Option<CFRetained<CTFont>> {
+    let bytes = CFData::from_bytes(data);
+    // SAFETY: CoreText calls on live objects; the array holds font descriptors, and their name
+    // attribute is a string.
     unsafe {
-        let descriptor = CTFontManagerCreateFontDescriptorFromData(&data)?;
+        // The single-descriptor call takes a collection's first face only, and the array call
+        // lists a variable font's named instances (JetBrains Mono's starts with Thin). So a
+        // single font takes the first, which is its default instance, and a collection's face is
+        // picked by its PostScript name.
+        let single = || CTFontManagerCreateFontDescriptorFromData(&bytes);
+        let descriptor = if data.starts_with(b"ttcf") {
+            let name = skrifa::FontRef::from_index(data, index)
+                .ok()
+                .and_then(|f| {
+                    f.localized_strings(skrifa::string::StringId::POSTSCRIPT_NAME)
+                        .english_or_first()
+                })
+                .map(|n| n.to_string());
+            let descriptors = CFRetained::cast_unchecked::<CFArray<CTFontDescriptor>>(
+                CTFontManagerCreateFontDescriptorsFromData(&bytes),
+            );
+            name.and_then(|name| {
+                descriptors.iter().find(|d| {
+                    d.attribute(kCTFontNameAttribute)
+                        .and_then(|n| n.downcast::<CFString>().ok())
+                        .is_some_and(|n| n.to_string() == name)
+                })
+            })
+            .or_else(single)
+        } else {
+            single()
+        }?;
         Some(CTFont::with_font_descriptor(
             &descriptor,
             px,
@@ -64,7 +96,7 @@ fn from_data(data: &[u8], px: f64) -> Option<CFRetained<CTFont>> {
 }
 
 /// The glyph `font` has for `c`, if any.
-fn glyph(font: &CTFont, c: char) -> Option<u16> {
+pub(super) fn glyph(font: &CTFont, c: char) -> Option<u16> {
     let mut units = [0u16; 2];
     let encoded = c.encode_utf16(&mut units);
     let n = encoded.len();
@@ -88,14 +120,14 @@ fn is_color(font: &CTFont) -> bool {
 impl Faces {
     fn new(face: &Face) -> Option<Faces> {
         let px = face.pixels();
-        let primary = from_data(face.regular_data(), px)?;
-        let nerd = from_data(SYMBOLS_NERD_FONT, px)?;
+        let primary = from_data(face.regular_data(), face.index(), px)?;
+        let nerd = from_data(SYMBOLS_NERD_FONT, 0, px)?;
         let name = CFString::from_static_str("AppleColorEmoji");
         // SAFETY: a CoreText constructor.
         let emoji = unsafe { CTFont::with_name(&name, px, std::ptr::null()) };
         let emoji = is_color(&emoji).then_some(emoji);
         let backup = face.backup().and_then(|data| {
-            let found = from_data(data, px)?;
+            let found = from_data(data, 0, px)?;
             let scale = scale_factor(face, &found);
             // SAFETY: a CoreText constructor from a live font.
             Some(unsafe { found.copy_with_attributes(px * scale, std::ptr::null(), None) })
@@ -109,8 +141,7 @@ impl Faces {
         })
     }
 
-    /// `CodepointResolver.getIndex`, after the terminal font itself: the face for `c` in
-    /// `presentation`.
+    /// `CodepointResolver.getIndex`: the face for `c` in `presentation`.
     fn resolve(
         &mut self,
         face: &Face,
@@ -123,6 +154,13 @@ impl Faces {
             Presentation::Text => false,
             Presentation::Default => super::is_emoji_presentation(c),
         };
+        // The terminal font comes first, in any presentation unless one is asked for: it isn't a
+        // fallback face (`Entry.hasCodepoint`). It's here for the glyphs Ghostty constrains.
+        if presentation != Presentation::Emoji
+            && let Some(g) = glyph(&self.primary, c)
+        {
+            return Some((self.primary.clone(), g));
+        }
         if !emoji_wanted
             && let Some(backup) = &self.backup
             && let Some(g) = glyph(backup, c)
@@ -155,17 +193,13 @@ impl Faces {
         glyph(&self.nerd, c).map(|g| (self.nerd.clone(), g))
     }
 
-    /// CoreText's fallback for `c`, resized so its ideograph width matches the terminal font's.
+    /// The first face Ghostty's discovery finds for `c` ([`discovery`]) that has it in the
+    /// wanted presentation, resized so its ideograph width matches the terminal font's.
     fn discover(&mut self, face: &Face, c: char, emoji: bool) -> Option<(CFRetained<CTFont>, u16)> {
-        let text = CFString::from_str(&c.to_string());
-        let len = c.len_utf16() as isize;
-        // SAFETY: CoreText calls on live objects; the range is the whole string.
-        let found = unsafe { self.primary.for_string(&text, CFRange::new(0, len)) };
-        glyph(&found, c)?;
-        if !emoji && is_color(&found) {
-            // A color font for a text request is left for the any-presentation pass.
-            return None;
-        }
+        let found = discovery::candidates(&self.primary, c, f64::from(face.points))
+            .into_iter()
+            // A fallback face has to have `c` in the presentation asked for (`Entry.hasCodepoint`).
+            .find(|f| is_color(f) == emoji && glyph(f, c).is_some())?;
         // SAFETY: CoreText getters on a live font.
         let name = unsafe { found.post_script_name() }.to_string();
         let font = match self.fallbacks.iter().find(|(n, _)| *n == name) {
@@ -384,20 +418,19 @@ fn rasterize(
         );
     }
     let data = if color {
-        // BGRA premultiplied (little-endian ARGB) to RGBA with straight alpha.
+        // BGRA premultiplied (little-endian ARGB) to RGBA with straight alpha, as Ghostty's shader
+        // sees it.
         buf.as_chunks::<4>()
             .0
             .iter()
             .flat_map(|p| {
                 let a = p[3];
-                let un = |v: u8| {
-                    if a == 0 {
-                        0
-                    } else {
-                        ((u16::from(v) * 255 + u16::from(a) / 2) / u16::from(a)).min(255) as u8
-                    }
-                };
-                [un(p[2]), un(p[1]), un(p[0]), a]
+                [
+                    ghostty_straight(p[2], a),
+                    ghostty_straight(p[1], a),
+                    ghostty_straight(p[0], a),
+                    a,
+                ]
             })
             .collect()
     } else {
@@ -414,6 +447,33 @@ fn rasterize(
         color,
         data,
     })
+}
+
+/// The straight color Ghostty blends for a color glyph's premultiplied channel `v` at alpha `a`.
+/// Its color atlas is an sRGB texture (`Metal.zig` `initAtlasTexture`), so sampling decodes the
+/// premultiplied value, and with native blending its shader divides out the alpha and encodes
+/// again (`shaders.metal` `ATLAS_COLOR`): `encode(decode(v) / a)`. Where the glyph is partly
+/// covered, that's darker than `v / a`, and it's what Ghostty shows.
+fn ghostty_straight(v: u8, a: u8) -> u8 {
+    if a == 0 {
+        return 0;
+    }
+    let decode = |v: f64| {
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let encode = |v: f64| {
+        if v <= 0.0031308 {
+            v * 12.92
+        } else {
+            v.powf(1.0 / 2.4) * 1.055 - 0.055
+        }
+    };
+    let linear = decode(f64::from(v) / 255.0) / (f64::from(a) / 255.0);
+    (encode(linear.min(1.0)) * 255.0).round() as u8
 }
 
 #[cfg(test)]
@@ -436,6 +496,46 @@ mod tests {
         assert!(r.width as i32 + r.x <= 2 * m.cell_width as i32);
         assert!(r.width >= 2 * m.cell_width - 4, "{}", r.width);
         assert_eq!(r.data.len(), (r.width * r.height * 4) as usize);
+    }
+
+    #[test]
+    fn a_collections_face_is_the_one_at_its_index() {
+        // Menlo ships as one collection: regular, bold, italic, bold italic.
+        let Ok(data) = std::fs::read("/System/Library/Fonts/Menlo.ttc") else {
+            return;
+        };
+        let names: Vec<String> = (0..4)
+            .map(|i| {
+                let font = from_data(&data, i, 28.0).expect("a face at the index");
+                // SAFETY: a CoreText getter on a live font.
+                unsafe { font.post_script_name() }.to_string()
+            })
+            .collect();
+        assert_eq!(names[0], "Menlo-Regular");
+        assert!(names[1..].iter().all(|n| n != "Menlo-Regular"), "{names:?}");
+    }
+
+    #[test]
+    fn a_variable_font_loads_its_default_instance() {
+        use crate::view::terminal::font::{JETBRAINS_MONO, JETBRAINS_MONO_ITALIC};
+        let name = |data: &[u8]| {
+            let font = from_data(data, 0, 28.0).expect("a face");
+            // SAFETY: a CoreText getter on a live font.
+            unsafe { font.post_script_name() }.to_string()
+        };
+        // Not its first named instance, Thin.
+        assert_eq!(name(JETBRAINS_MONO), "JetBrainsMono-Regular");
+        assert_eq!(name(JETBRAINS_MONO_ITALIC), "JetBrainsMono-Italic");
+    }
+
+    #[test]
+    fn a_partly_covered_color_pixel_darkens_as_in_ghosttys_shader() {
+        // Opaque and empty pixels keep their color.
+        assert_eq!(ghostty_straight(200, 255), 200);
+        assert_eq!(ghostty_straight(0, 0), 0);
+        // Half covered white is premultiplied 128: Ghostty decodes it to 0.216, divides by 0.5
+        // and encodes 0.430 as 175, not 255.
+        assert_eq!(ghostty_straight(128, 128), 175);
     }
 
     #[test]

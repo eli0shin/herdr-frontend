@@ -137,6 +137,16 @@ fn the_neovim_checklist_draws_as_ghostty_does() {
         .collect();
     assert!(curl.len() > 3, "{:?}", warning.boxes);
     assert!(curl.iter().any(|(_, c)| c.a < 1.0), "antialiased");
+    // Its lower half reaches into the next row, which fills its background: the view draws it
+    // over the grid, as Ghostty draws every background first.
+    assert!(
+        warning
+            .spill
+            .iter()
+            .any(|(_, c)| (c.r - yellow.r).abs() < 1e-4 && (c.g - yellow.g).abs() < 1e-4),
+        "{:?}",
+        warning.spill
+    );
 
     // The statusline: Powerline separators are sprites, the icons come from the Symbols Nerd
     // Font through the atlas (on macOS).
@@ -150,6 +160,7 @@ fn the_neovim_checklist_draws_as_ghostty_does() {
 
     // The cursor is in the cmdline, after what's typed.
     let rt = runtime("terminal-nvim-checklist", (680.0, 555.0));
+    assert_eq!(element(&rt, "pane-1/#0/spill").rect[..2], [0.0, 0.0]);
     let cursor = element(&rt, "pane-1/#0/cursor");
     assert_eq!(cursor.rect[1], 29.0 * CELL.1);
     assert_eq!(cursor.rect[0], 12.0 * CELL.0, "after \":%s/nam/name\"");

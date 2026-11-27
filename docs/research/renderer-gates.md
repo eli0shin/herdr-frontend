@@ -1,17 +1,18 @@
 # Renderer gates: `rune::grid` against Ghostty
 
 Ticket `012-terminal-renderer-mvp-on-rune-grid`, with gate 1 and the fidelity work measured in
-ticket `018-terminal-rendering-fidelity-for-neovim`. Measured 2026-11-26 on an Apple M1 Pro (8 cores),
-macOS 27, built-in 2x display, against Rune `4918969f` and Ghostty.app 1.4.0. The font is
-JetBrains Mono 2.304 at 14 pt, the face Ghostty embeds, so both apps use the same file. Its cell is
-17 × 37 px at 2x. This doc answers the four gates in
+ticket `018-terminal-rendering-fidelity-for-neovim`, and the Neovim checklist and glyph atlas in
+ticket `037-ghostty-diffs-for-the-neovim-checklist-and-glyph-atlas`. Measured 2026-11-26 on an
+Apple M1 Pro (8 cores), macOS 27, built-in 2x display, against Rune `4918969f` and Ghostty.app
+1.4.0. The font is JetBrains Mono 2.304 at 14 pt, the face Ghostty embeds, so both apps use the
+same file. Its cell is 17 × 37 px at 2x. This doc answers the four gates in
 [`terminal-rendering.md` §2](terminal-rendering.md#where-the-renderer-draws) and stage 4 of §8.
 
 ## Recommendation
 
 **Stay on `rune::grid`.** Nothing measured here argues for the custom `Compositor` pass:
 
-- **Gate 1 (glyph placement) passes.** Over 2,700 text cells on three screens, our glyphs' ink sits
+- **Gate 1 (glyph placement) passes.** Over 3,100 text cells on four screens, our glyphs' ink sits
   0.1 px left of Ghostty's and level with it (within 0.005 px), with the same ink weight (ratio
   1.000). No text pixel is off by more than 64 of 255.
 - **Gate 3 (many panes) passes** with room to spare. The worst case, a screen's worth of new text
@@ -54,6 +55,8 @@ The renderer lives in `crates/app/src/view/terminal/`:
     column.
   - Underline (single and double), strikethrough and overline are boxes at Ghostty's positions
     and thicknesses.
+  - The part of a sprite below the row, an undercurl's lower half, is kept apart. The pane draws
+    it over the grid, so it isn't hidden under the next row's background fill.
   - `RowCache` hands an unchanged row (the same snapshot `Arc`) back as the same `Rc<GridRow>`. A
     new face, look or default color clears it.
 - `sprite/`: Ghostty's sprite face (ticket 018; see [Fidelity](#fidelity)). The character stays
@@ -66,7 +69,8 @@ The renderer lives in `crates/app/src/view/terminal/`:
   cursor-text color (the terminal's background by default). The grid's accessibility caret
   follows the cursor.
 - `mod.rs`: `TerminalPane`, which draws one snapshot at its own grid (the terminal's, not the
-  pane's) over the terminal's background. The grid hugs the pane's top left, after an optional
+  pane's) over the terminal's background, with the rows' sprite spill, the atlas cells and the
+  cursor over it. The grid hugs the pane's top left, after an optional
   padding. That's Ghostty's `window-padding-balance = false`, and it's the "pin to top" Eli wants
   (`feature-inventory.md` §1, "Terminal grid centering"). A caller that wants balanced padding
   computes it with `terminal::Size` and passes it in.
@@ -104,7 +108,12 @@ decorations, sprite boxes and cursor shapes.
 2. Our renderer draws the recorded bytes at Ghostty's grid (`--snap --scene screen-file`), and
    `pixel-diff` compares the two cell by cell. It replays the bytes to tell what each cell holds,
    so it reports text, box lines, other sprites, pinned cells and backgrounds apart. For text it
-   also measures where each cell's ink sits.
+   also measures where each cell's ink sits. `--region NAME=COL,ROW,COLS,ROWS` reports a block of
+   cells on its own; `ghostty-diff` names the checklist's split, float, statusline and cmdline
+   that way.
+
+`scripts/ghostty-diff --reuse` keeps the last Ghostty captures and only draws and compares ours
+again, so a renderer fix can be checked without opening Ghostty.
 
 Ghostty runs the programs live rather than replaying the committed fixtures. Under a tiling
 window manager its grid is whatever the window gets, and Neovim's output only replays correctly
@@ -118,18 +127,25 @@ Limits:
 - It shows a Ghostty window for about three seconds per screen. It types and clicks nothing.
 - It's macOS at 2x only, with JetBrains Mono at 14 pt. Eli's Operator Mono Book Herdr isn't
   installed system-wide, so Ghostty can't load it with a clean config.
+- Converting the capture from Display P3 back to sRGB can move a color by a level. Neovim's
+  statusline grey `#4f5258` (79, 82, 88) comes back as (80, 82, 87), so 77% of the statusline's
+  pixels "differ", nearly all by a level.
 
 ## Results
 
-Ticket 018 ran `scripts/ghostty-diff` on all screens at a 177 × 51 grid, with the final harness
-(captures converted to sRGB, our font smoothing off). Per screen, after the sprite and underline
-work:
+Ticket 037 ran `scripts/ghostty-diff` on all four screens at a 177 × 51 grid, with the final
+harness (captures converted to sRGB, our font smoothing off) and its fixes in (see
+[Fidelity](#fidelity)):
 
 | screen | cells | identical | pixels differing | > 16 | > 64 | mean abs diff (0-255) |
 | --- | --- | --- | --- | --- | --- | --- |
-| `colors` | 9027 | 8267 | 3.42% | 0.30% | 0.02% | 0.11 |
+| `colors` | 9027 | 8267 | 3.39% | 0.25% | 0.00% | 0.08 |
 | `boxes` | 9027 | 8735 | 0.39% | 0.11% | 0.00% | 0.03 |
-| `nvim` (before the sprite work) | 9027 | 6543 | 9.17% | 1.15% | 0.02% | 0.37 |
+| `nvim` | 9027 | 6545 | 9.16% | 1.12% | 0.00% | 0.35 |
+| `nvim-checklist` | 9027 | 8246 | 3.98% | 0.22% | 0.00% | 0.08 |
+
+Ticket 018's last run, before them, had `colors` at 0.30% over 16 and 0.02% over 64, and `nvim`
+(before the sprite work) at 1.15% and 0.02%.
 
 By kind of cell:
 
@@ -150,6 +166,7 @@ By kind of cell:
 | `colors` | 428 | −0.097 | 0.097 | +0.002 | 0.005 | 1.000 |
 | `boxes` | 191 | −0.100 | 0.100 | +0.001 | 0.004 | 1.001 |
 | `nvim` | 2094 | −0.098 | 0.098 | +0.002 | 0.003 | 1.000 |
+| `nvim-checklist` | 442 | −0.095 | 0.095 | +0.001 | 0.003 | 1.000 |
 
 - **Horizontal.** Every glyph sits 0.1 px left of Ghostty's, the offset predicted here before:
   Ghostty centers each glyph in the rounded cell by `(cell − advance) / 2`
@@ -179,6 +196,7 @@ Ghostty's, most of them identical. From the `boxes` and `colors` screens:
 | geometric shapes `◢◣◤◥◸◹◺◿` | 8 | 0 | ≤ 1.0% | 0.00% | 0.00% |
 | Powerline `` | 5 | 0 | ≤ 54% | 0.00% | 0.00% |
 | underlines (single, double, curly, dotted, dashed) | — | identical rows | 0.00% | 0.00% | 0.00% |
+| undercurl's lower half, over Neovim's filled next row | 3 | 0 | 2.12% | 0.00% | 0.00% |
 
 - The differences are rounding of a level or two in a color channel: an arc's antialiased pixels
   are byte-identical to Ghostty's in the channel checked, and the Powerline cells differ by at
@@ -263,8 +281,8 @@ nothing it draws is affected. Three later features are:
   placements keeps the one grid.
 - **Glyphs that overflow their row** are clipped. That affects tall accents and descenders in
   fonts whose glyphs reach outside the line, which `Metrics.zig:249-256` allows for. Pinned cells
-  aren't clipped. How often it shows for JetBrains Mono and Operator Mono is for the Ghostty diff
-to say (it's not measured here).
+  aren't clipped. For JetBrains Mono at 14 pt it doesn't show: no text pixel on the four screens
+  is off by more than 64, and the ink weight matches. Operator Mono isn't measured.
 
 **Passes for the MVP.** Below-text images are the one known case that needs the two-grid
 arrangement. That's a contained change inside the pane view, not a reason to leave grid.
@@ -306,8 +324,12 @@ Where it differs from Ghostty:
 - **Underlines draw over the text.** Ghostty draws them under the glyphs; grid's vector layer is
   above the row's line. Only pixels where a descender crosses an underline of another color
   differ.
-- **A sprite reaching into the next row** (an underline set low by its font) is painted under
-  that row's background fill, where Ghostty paints all backgrounds first.
+- **A sprite reaching into the next row** (JetBrains Mono's undercurl) is drawn over the grid,
+  after every row, as Ghostty paints all backgrounds first. The grid alone painted it under the
+  next row's background fill. That only showed where the next row has a fill, as every row does
+  under a Neovim colorscheme: the cells under the checklist's error curl had 2.54% of their
+  pixels off by more than 64, and have none over 16 now. It's drawn over the next row's text
+  too, like the underlines.
 - **Inner strokes** (`` `` and the outlined triangles `◸◹◺◿`) stroke the path inset by
   half the line width directly, rather than through z2d's path offsetter. The triangles measured
   within 1% of pixels, none over 16; the two outlined half circles aren't in a screen yet.
@@ -316,75 +338,112 @@ Where it differs from Ghostty:
 ### Glyph atlas
 
 `crates/app/src/view/terminal/glyph/` draws the cells the row's line can't place the way Ghostty
-does: wide characters, characters the terminal font lacks, emoji and Nerd Font icons. Each is
-rasterized once, with the same CoreText calls as Ghostty's `coretext.zig` `renderGlyph`, and drawn
-as an image over the grid at its device pixels. Its pinned text stays in the row, drawn
-transparent, so the row still reads.
+does: wide characters, characters the terminal font lacks, emoji and Nerd Font icons, and the
+terminal font's own glyphs that Ghostty constrains. Each is rasterized once, with the same
+CoreText calls as Ghostty's `coretext.zig` `renderGlyph`, and drawn as an image over the grid at
+its device pixels. Its pinned text stays in the row, drawn transparent, so the row still reads.
 
 - **Fallback** follows Ghostty's resolver:
-  1. the Symbols Nerd Font 3.4.0 Ghostty embeds (bundled in `assets/fonts/`, MIT);
-  2. Apple Color Emoji for emoji presentation;
-  3. fallback faces already loaded;
-  4. CoreText's fallback for the character, scaled to match the terminal font's ideograph width
-     (Ghostty's `ic_width` size adjustment).
+  1. the terminal font itself;
+  2. for a terminal font other than JetBrains Mono, the JetBrains Mono Ghostty embeds as its
+     backup (ticket 017);
+  3. the Symbols Nerd Font 3.4.0 Ghostty embeds (bundled in `assets/fonts/`, MIT);
+  4. Apple Color Emoji for emoji presentation;
+  5. fallback faces already loaded;
+  6. Ghostty's discovery (`glyph/discovery.rs`, from `discovery.zig` `discoverFallback`). For a
+     Han ideograph (U+4E00 to U+9FFF), it takes CoreText's fallback from the terminal font. For
+     anything else, it takes the fonts CoreText matches for the character, sorted by Ghostty's
+     score: has the character, then monospace, then the style name, then not italic, then not
+     bold, then the most glyphs. The first face with the character in the wanted presentation
+     wins. It's scaled to match the terminal font's ideograph width (Ghostty's `ic_width` size
+     adjustment).
 
   A variation selector picks the presentation; without one, it's the Unicode
   `Emoji_Presentation` property (from the `emoji-data.txt` of the uucode Ghostty pins), as in
-  Ghostty's `CodepointResolver`.
-- **Constraints** port `RenderOptions.Constraint`:
+  Ghostty's `CodepointResolver`. On this Mac that gives Ghostty's faces: kanji from PingFang SC;
+  kana from Arial Unicode MS, the score's pick (PingFang SC has no kana, and CoreText's own
+  fallback would be Hiragino Sans); Hangul from Arial Unicode MS too, already loaded.
+- **Constraints** port `RenderOptions.Constraint`, for every glyph as Ghostty's `addGlyph` does,
+  whatever face it comes from:
   - every emoji covers its cells, centered, with 2.5% side padding;
   - Nerd Font icons follow Ghostty's generated table (`glyph/tables.rs`, from
     `scripts/gen_ghostty_tables.py`);
   - other symbol-like characters shrink to fit;
   - a symbol followed by a blank cell may take two cells (`constraintWidth`).
+
+  So a character the terminal font has but Ghostty constrains, such as JetBrains Mono's
+  Powerline branch `` or its arrows and dingbats, leaves the row's line for the atlas. The
+  atlas has only the terminal font's regular face, so in a bold or italic cell (a prompt's bold
+  `❯`) such a glyph stays on the line, in its style but unconstrained.
 - **Rasterizing** is antialiased with no font smoothing, subpixel positioned without quantizing,
   with the glyph's box constrained and centered in the rounded cell, and bitmap (sbix) glyphs
   quantized to whole pixels. Text glyphs are alpha masks drawn in the cell's color; a block cursor
   draws one again in the cursor-text color.
-- **Color glyphs are drawn in sRGB.** Ghostty draws them in Display P3 because its surface is P3;
-  Rune's is sRGB, so sRGB gives the colors Ghostty shows.
+- **Color glyphs are drawn in sRGB, with Ghostty's edges.** Ghostty draws them in Display P3
+  because its surface is P3; Rune's is sRGB, so sRGB gives the colors Ghostty shows. Ghostty's
+  color atlas is an sRGB texture, so its shader decodes CoreGraphics' premultiplied values,
+  divides out the alpha and encodes again (`shaders.metal` `ATLAS_COLOR`). That darkens every
+  partly covered pixel, and the atlas makes the same straight color, `encode(decode(v) / a)`.
 
-Measured on the `colors` screen's 28 pinned cells, before and after the atlas (the atlas run drew
-emoji in Display P3 and didn't yet reuse loaded fallback faces):
+Measured on the pinned cells of the `colors` screen (28 cells: kanji, kana, Hangul, two emoji
+and two letters with combining marks) and the `nvim-checklist` screen (49: the comment's kanji,
+kana and emoji, the statusline and float icons, and `✓`):
 
-| | pixels differing | > 16 | > 64 | mean abs diff (0-255) |
+| screen | run | pixels differing | > 16 | > 64 | mean abs diff (0-255) |
+| --- | --- | --- | --- | --- | --- |
+| `colors` | before the atlas (Rune's pinned text) | 28.46% | 22.78% | 14.59% | 21.09 |
+| `colors` | ticket 018's atlas | 20.74% | 14.90% | 5.73% | 10.39 |
+| `colors` | its sRGB emoji and face reuse | 18.21% | 11.02% | 5.73% | 9.70 |
+| `colors` | ticket 037 | 9.62% | 0.30% | 0.00% | 0.19 |
+| `nvim-checklist` | before ticket 037 | 22.43% | 5.23% | 2.37% | 3.50 |
+| `nvim-checklist` | ticket 037 | 21.46% | 0.00% | 0.00% | 0.13 |
+
+Every atlas cell now has no pixel off by more than 16. What's left over 16 on `colors` is the two
+letters with combining marks, which Rune still shapes. By character:
+
+| characters | screen | pixels differing | > 16 | > 64 |
 | --- | --- | --- | --- | --- |
-| before (Rune's pinned text) | 28.46% | 22.78% | 14.59% | 21.09 |
-| atlas | 20.74% | 14.90% | 5.73% | 10.39 |
+| kanji `日本語` | both | ≤ 38% | 0.00% | 0.00% |
+| kana `のキステト`, `のコトメン` | both | ≤ 25% | 0.00% (was ≤ 21%) | 0.00% (was ≤ 14%) |
+| Hangul `한국어` | `colors` | ≤ 13% | 0.00% (was ≤ 39%) | 0.00% (was ≤ 26%) |
+| emoji `🙂🚀` | both | ≤ 36% | 0.00% (was ≤ 8%) | 0.00% |
+| Nerd Font icons `` | `nvim-checklist` | ≤ 47% | 0.00% | 0.00% |
+| JetBrains Mono's `` and `✓`, constrained | `nvim-checklist` | ≤ 35% | 0.00% | 0.00% |
 
-- Kanji `日本語` came out within 2.5% of pixels, none over 16.
-- The kana and Hangul came from a different fallback face than Ghostty's. Ghostty uses a face
-  it has already loaded before asking CoreText again, so the kana take the kanji's face. The
-  atlas now does the same.
-- The emoji had Ghostty's size and place (no pixel over 64) but not its colors, which the sRGB
-  fix addresses.
-
-**Not measured yet:** those two fixes, and the Neovim checklist screen, need a Ghostty capture.
-That's ticket `037-ghostty-diffs-for-the-neovim-checklist-and-glyph-atlas`
-(`scripts/ghostty-diff colors nvim-checklist`).
+The pixels that differ by a level or two are rounding of antialiased edges; the share is high
+for icons and emoji because they're mostly edge.
 
 What it doesn't take yet:
 
 - **Clusters of several code points** (combining marks, emoji ZWJ sequences, skin tones) stay
   pinned cells that Rune shapes, as before.
-- **Bold and italic** cells fall back to the fallback faces' regular style.
+- **Bold and italic** cells fall back to the fallback faces' regular style, as in Ghostty. The
+  terminal font's own constrained glyphs in those cells aren't constrained yet: that needs its
+  bold and italic faces in the atlas.
 - **Off macOS**, every such cell stays a pinned cell.
 
 ### Neovim checklist
 
 `fixtures/nvim-checklist.bin` (scene `terminal-nvim-checklist`, `tests/terminal_view.rs`) and the
-`nvim-checklist` screen of `scripts/ghostty-diff` run `fixtures/nvim-checklist.lua`.
+`nvim-checklist` screen of `scripts/ghostty-diff` run `fixtures/nvim-checklist.lua`. Ticket 037
+measured it in Ghostty at 177 × 51, the regions as `ghostty-diff` names them:
 
-| item | how it draws | Ghostty diff |
+| item | how it draws | Ghostty diff (pixels differing, > 16, > 64) |
 | --- | --- | --- |
-| splits | `│` separators as sprites; the `nvim` screen | lines ≤ 3.1% of pixels, none over 16; the checklist screen in ticket 037 |
-| floats | rounded border: `╭╮╯╰` arcs and `─│` lines as sprites | arcs ≤ 5%, none over 16; the checklist screen in ticket 037 |
-| undercurl | per-cell curl sprites in the SGR 58 color; dotted and dashed too | identical |
-| statusline icons | Nerd Font glyphs through the atlas with Ghostty's constraints; Powerline separators as sprites | separators within 16; icons not measured yet (ticket 037) |
-| cmdline | text on the line, the cursor in it | not measured yet (ticket 037) |
-| cursor | the cell's whole-pixel box, the glyph under a block redrawn | identical on every screen measured; the cmdline cursor in ticket 037 |
-| CJK and emoji | the atlas | see [Glyph atlas](#glyph-atlas); the last fixes not measured yet (ticket 037) |
+| splits | `│` separators as sprites | the split column's 49 cells identical; all 55 `│` cells identical |
+| floats | rounded border: `╭╮╯╰` arcs and `─│` lines as sprites | the float's 150 cells: 4.89%, 1.98%, 0.00%, the > 16 all in its text (gate 1's 0.1 px); arcs 2.54%, 0.00%, 0.00%; every `─` and `│` cell on the screen identical |
+| undercurl | per-cell curl sprites in the SGR 58 color, the lower half over the next row; dotted and dashed too | identical on `colors`; the cells under the error's curl 2.12%, 0.00%, 0.00% (they were 3.50%, 2.86%, 2.54% before ticket 037) |
+| statusline icons | Nerd Font glyphs through the atlas with Ghostty's constraints, JetBrains Mono's `` too; Powerline separators as sprites | icons ≤ 47%, 0.00%, 0.00%; `` 34.90%, 0.00%, 0.00% (was 0.29% of the statusline over 64); separators ≤ 51%, 0.00%, 0.00%; the statusline's 177 cells 77.14%, 0.01%, 0.00%, the 77% from the capture's color conversion (see [limits](#the-pixel-diff)) |
+| cmdline | text on the line | its 177 cells: 1.03%, 0.48%, 0.00%, the > 16 all in its text (gate 1's 0.1 px) |
+| cursor | the cell's whole-pixel box, the glyph under a block redrawn | the cmdline cursor Neovim sets, after `:%s/nam/name`, identical, as on every screen measured |
+| CJK | the atlas | kanji ≤ 38%, kana ≤ 25%, all 0.00% over 16 (see [Glyph atlas](#glyph-atlas)) |
+| emoji | the atlas | `🚀` 30.52%, 0.00%, 0.00% |
+| fallback | the atlas | `✓` (JetBrains Mono's, constrained) 5.88%, 0.00%, 0.00%; float icons ≤ 15%, 0.00%, 0.00% |
 | ligatures off | `calt` and `liga` off, as Ghostty's `-calt`, `-liga` | `-> => != fi fl` measure as text |
+
+Every item passes: no pixel of an item is off by more than 16, other than text's 0.1 px offset
+(gate 1). The text on this screen measures as on the others: ink 0.095 px left of Ghostty's,
+level, the same weight.
 
 ## Font smoothing
 

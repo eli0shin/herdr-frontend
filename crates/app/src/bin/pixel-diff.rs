@@ -1,7 +1,10 @@
 //! Compares what Ghostty.app drew for a screen with what herdr-frontend's renderer drew for the
 //! same bytes, cell by cell (`docs/research/renderer-gates.md`, `scripts/ghostty-diff`).
 //!
-//!     pixel-diff GHOSTTY.png OURS.png SCREEN.bin COLS ROWS [DIFF.png]
+//!     pixel-diff [--region NAME=COL,ROW,COLS,ROWS]... GHOSTTY.png OURS.png SCREEN.bin COLS ROWS [DIFF.png]
+//!
+//! Each `--region` is also reported on its own: the cells from `COL`, `ROW`, `COLS` wide and `ROWS`
+//! tall. A negative `ROW` counts from the grid's bottom, so `-1` is the last row.
 //!
 //! Both images are 2x captures with the grid at their top left: Ghostty's window and our
 //! `--snap`. The screen is replayed into a terminal to tell each cell's kind, so the report can
@@ -17,6 +20,7 @@ use std::process::ExitCode;
 use herdr_frontend::fixtures;
 use herdr_frontend::view::terminal::font::Font;
 use herdr_frontend::view::terminal::look;
+use herdr_frontend::view::terminal::rows;
 use herdr_frontend::view::terminal::sprite;
 use terminal::{Snapshot, Width};
 
@@ -80,7 +84,7 @@ enum Kind {
     Sprite,
     /// A character Ghostty draws as a sprite that we still take from a font.
     FontSprite,
-    /// A wide, fallback or multi-code-point cell, pinned to its column.
+    /// A wide, fallback, constrained or multi-code-point cell, pinned to its column.
     Pinned,
     /// Under the cursor.
     Cursor,
@@ -107,6 +111,16 @@ struct Tally {
 }
 
 impl Tally {
+    fn add(&mut self, other: &Tally) {
+        self.cells += other.cells;
+        self.pixels += other.pixels;
+        self.abs_sum += other.abs_sum;
+        self.identical_cells += other.identical_cells;
+        for k in 0..3 {
+            self.over[k] += other.over[k];
+        }
+    }
+
     fn line(&self, name: &str) -> String {
         let pct = |n: usize| 100.0 * n as f64 / self.pixels.max(1) as f64;
         format!(
@@ -182,7 +196,7 @@ fn kinds(
                 }
             } else if cell.width == Width::Wide || single.is_none() {
                 Kind::Pinned
-            } else if single.is_some_and(|c| face.covers(c)) {
+            } else if single.is_some_and(|c| rows::on_line(c, cell, face)) {
                 if decorated {
                     Kind::Decorated
                 } else {
@@ -204,14 +218,78 @@ fn kinds(
     kinds
 }
 
+/// A named block of cells to report on its own (`--region`).
+struct Region {
+    name: String,
+    col: usize,
+    row: usize,
+    cols: usize,
+    rows: usize,
+}
+
+impl Region {
+    /// `NAME=COL,ROW,COLS,ROWS` on a `grid_rows`-row grid, a negative `ROW` counting from its bottom.
+    fn parse(spec: &str, grid_rows: u16) -> Result<Region, String> {
+        let bad = || format!("--region {spec}: not NAME=COL,ROW,COLS,ROWS");
+        let (name, nums) = spec.split_once('=').ok_or_else(bad)?;
+        let nums: Vec<i64> = nums
+            .split(',')
+            .map(|n| n.trim().parse().map_err(|_| bad()))
+            .collect::<Result<_, _>>()?;
+        let [col, row, cols, rows] = nums[..] else {
+            return Err(bad());
+        };
+        let row = if row < 0 {
+            i64::from(grid_rows) + row
+        } else {
+            row
+        };
+        let whole = |n: i64| usize::try_from(n).map_err(|_| bad());
+        Ok(Region {
+            name: name.to_string(),
+            col: whole(col)?,
+            row: whole(row)?,
+            cols: whole(cols)?,
+            rows: whole(rows)?,
+        })
+    }
+
+    fn holds(&self, x: usize, y: usize) -> bool {
+        (self.col..self.col + self.cols).contains(&x)
+            && (self.row..self.row + self.rows).contains(&y)
+    }
+}
+
 fn run(args: &[String]) -> Result<(), String> {
+    let mut specs = Vec::new();
+    let mut args = args;
+    while let [flag, spec, rest @ ..] = args {
+        if flag != "--region" {
+            break;
+        }
+        specs.push(spec.as_str());
+        args = rest;
+    }
     let [ghostty, ours, screen, cols, rows, rest @ ..] = args else {
-        return Err(
-            "usage: pixel-diff GHOSTTY.png OURS.png SCREEN.bin COLS ROWS [DIFF.png]".into(),
-        );
+        return Err("usage: pixel-diff [--region NAME=COL,ROW,COLS,ROWS]... \
+                    GHOSTTY.png OURS.png SCREEN.bin COLS ROWS [DIFF.png]"
+            .into());
     };
     let cols: u16 = cols.parse().map_err(|_| "COLS isn't a number")?;
     let rows: u16 = rows.parse().map_err(|_| "ROWS isn't a number")?;
+    let regions = specs
+        .iter()
+        .map(|spec| Region::parse(spec, rows))
+        .collect::<Result<Vec<_>, _>>()?;
+    if let Some(r) = regions
+        .iter()
+        .find(|r| r.col + r.cols > usize::from(cols) || r.row + r.rows > usize::from(rows))
+    {
+        return Err(format!(
+            "region {} is outside the {cols}x{rows} grid",
+            r.name
+        ));
+    }
     let g = Image::read(ghostty)?;
     let o = Image::read(ours)?;
     let face = Font::jetbrains_mono(herdr_frontend::TERMINAL_POINTS)
@@ -238,6 +316,7 @@ fn run(args: &[String]) -> Result<(), String> {
     let mut tallies = [Tally::default(); 7];
     let mut by_char: std::collections::BTreeMap<char, Tally> = Default::default();
     let mut total = Tally::default();
+    let mut in_region = vec![Tally::default(); regions.len()];
     let mut diff = vec![0u8; w * h * 4];
     // Text placement: centroid offsets (ours − Ghostty) and ink ratios.
     let (mut n, mut dx, mut dy, mut adx, mut ady, mut ratio) = (0usize, 0.0, 0.0, 0.0, 0.0, 0.0);
@@ -281,15 +360,13 @@ fn run(args: &[String]) -> Result<(), String> {
                 total.identical_cells += 1;
                 own.identical_cells += 1;
             }
-            if let Some(c) = sprite_char {
-                let e = by_char.entry(c).or_default();
-                e.cells += 1;
-                e.pixels += own.pixels;
-                e.abs_sum += own.abs_sum;
-                e.identical_cells += own.identical_cells;
-                for k in 0..3 {
-                    e.over[k] += own.over[k];
+            for (region, tally) in regions.iter().zip(&mut in_region) {
+                if region.holds(cx, cy) {
+                    tally.add(&own);
                 }
+            }
+            if let Some(c) = sprite_char {
+                by_char.entry(c).or_default().add(&own);
             }
             if kind == Kind::Text {
                 let (gw, gx, gy) = ink(&g, cx * cw, cy * ch, cw, ch);
@@ -335,6 +412,19 @@ fn run(args: &[String]) -> Result<(), String> {
             ady / n,
             ratio / n
         );
+    }
+    if !regions.is_empty() {
+        println!();
+        println!("regions (column, row, size):");
+        println!();
+        println!(
+            "| region | cells | identical | pixels differing | > 16 | > 64 | mean abs diff (0-255) |"
+        );
+        println!("| --- | --- | --- | --- | --- | --- | --- |");
+        for (r, t) in regions.iter().zip(&in_region) {
+            let name = format!("{} ({},{} {}x{})", r.name, r.col, r.row, r.cols, r.rows);
+            println!("{}", t.line(&name));
+        }
     }
     if !by_char.is_empty() {
         println!();
