@@ -23,7 +23,7 @@ use crate::action::{Action, AppCommand};
 use crate::control::{Call, CallId, answer_call};
 use crate::effect::{Effect, Effects, Focus, Level, Request, TerminalCommand, Toast, Token};
 use crate::geometry::{self, Geometry, Rect};
-use crate::keys::{Chord, Key, Keymap, Lookup, Mods};
+use crate::keys::{Chord, Context, Key, Keymap, Lookup, Mods, Press};
 use crate::mode::{self, Mode, PREFIX_TIMEOUT};
 use crate::view::{Before, SeenRecord, View};
 use crate::world::{SpaceExt, World};
@@ -112,7 +112,7 @@ pub enum Event {
     Tick,
     /// A key press. `terminal`: a terminal pane's grid has the keyboard.
     Key {
-        chord: Chord,
+        press: Press,
         terminal: bool,
     },
     /// A new connection is up (its snapshot follows as a resynced [`Event::Terminals`]).
@@ -153,6 +153,16 @@ pub enum Event {
     },
     /// How many rows the open list popup shows now.
     PopupRows(usize),
+}
+
+impl Event {
+    /// A key press with one spelling.
+    pub fn key(press: impl Into<Press>, terminal: bool) -> Event {
+        Event::Key {
+            press: press.into(),
+            terminal,
+        }
+    }
 }
 
 /// A launch waiting for `terminal.run`: the ids are made before the call, the pane goes in the
@@ -605,7 +615,7 @@ impl Model {
         match event {
             // The clock already moved, and an overdue prefix was dropped.
             Event::Tick => {}
-            Event::Key { chord, terminal } => self.key(chord, terminal, fx),
+            Event::Key { press, terminal } => self.key(press, terminal, fx),
             Event::Connected => {
                 self.connected = true;
                 self.listed = false;
@@ -908,7 +918,7 @@ impl Model {
         }
     }
 
-    fn key(&mut self, chord: Chord, terminal: bool, fx: &mut Effects) {
+    fn key(&mut self, press: Press, terminal: bool, fx: &mut Effects) {
         let reset = Chord::new(
             Key::Escape,
             Mods {
@@ -918,30 +928,31 @@ impl Model {
                 shift: true,
             },
         );
-        if chord == reset {
+        if press.matches(&reset) {
             self.close_mode(fx);
             self.run(Action::App(AppCommand::Reset), fx);
             return;
         }
         match std::mem::take(&mut self.mode) {
-            Mode::Normal => match self.keymap.lookup(terminal, &[chord]) {
+            Mode::Normal => match self.keymap.lookup_in(Context::normal(terminal), &[press]) {
                 Lookup::Action(action) => {
                     let action = action.clone();
                     self.run(action, fx);
                 }
-                Lookup::Pending => self.wait_for_more(vec![chord], fx),
-                Lookup::None => fx.handled = false,
+                Lookup::Pending => self.wait_for_more(vec![press], fx),
+                Lookup::Program | Lookup::None => fx.handled = false,
             },
             Mode::Prefix { mut keys, .. } => {
-                keys.push(chord);
-                match self.keymap.lookup(terminal, &keys) {
+                keys.push(press);
+                match self.keymap.lookup_in(Context::normal(terminal), &keys) {
                     Lookup::Action(action) => {
                         let action = action.clone();
                         self.run(action, fx);
                     }
                     Lookup::Pending => self.wait_for_more(keys, fx),
-                    // An unbound sequence is dropped whole; none of it reaches the terminal.
-                    Lookup::None => {}
+                    // An unbound sequence is dropped whole; none of it reaches the terminal (a
+                    // key file can't send a sequence to it).
+                    Lookup::Program | Lookup::None => {}
                 }
             }
             Mode::Popup(state) => {
@@ -952,37 +963,52 @@ impl Model {
                     state,
                     mode::PopupState::List(_) | mode::PopupState::Prompt(_)
                 );
-                let action = mode::popup_key(&state, chord);
+                // The key file's popup keys first, then the popup's own, then the window's.
+                let action = self
+                    .bound(Context::Popup, press)
+                    .or_else(|| press.first(|chord| mode::popup_key(&state, chord)));
                 self.mode = Mode::Popup(state);
-                match action.or_else(|| (!jump).then(|| self.global_key(chord)).flatten()) {
+                match action.or_else(|| (!jump).then(|| self.global_key(press)).flatten()) {
                     Some(action) => self.run(action, fx),
                     None => fx.handled = !typing,
                 }
             }
             Mode::Copy(state) => {
                 self.mode = Mode::Copy(state);
-                if let Some(action) = mode::copy_key(chord).or_else(|| self.global_key(chord)) {
+                let action = self
+                    .bound(Context::Copy, press)
+                    .or_else(|| press.first(mode::copy_key))
+                    .or_else(|| self.global_key(press));
+                if let Some(action) = action {
                     self.run(action, fx);
                 }
             }
         }
     }
 
+    /// The action a single key runs in one context of the key file.
+    fn bound(&self, context: Context, press: Press) -> Option<Action> {
+        match self.keymap.lookup_in(&[context], &[press]) {
+            Lookup::Action(action) => Some(action.clone()),
+            _ => None,
+        }
+    }
+
     /// A one-key global binding, for a key an open overlay doesn't use: Herdr app runs the
     /// window's keys over a dialog too. Closing a tab or pane closes the overlay (or leaves copy
     /// mode) instead, not the terminal behind it (`app:src/window.rs` `run_key`).
-    fn global_key(&self, chord: Chord) -> Option<Action> {
-        match self.keymap.lookup(false, &[chord]) {
+    fn global_key(&self, press: Press) -> Option<Action> {
+        match self.keymap.lookup_in(Context::normal(false), &[press]) {
             Lookup::Action(Action::TabClose | Action::PaneClose) => Some(match self.mode {
                 Mode::Copy(_) => Action::Copy(crate::action::CopyAction::Quit),
                 _ => Action::Popup(crate::action::PopupAction::Close),
             }),
             Lookup::Action(action) => Some(action.clone()),
-            Lookup::Pending | Lookup::None => None,
+            Lookup::Program | Lookup::Pending | Lookup::None => None,
         }
     }
 
-    fn wait_for_more(&mut self, keys: Vec<Chord>, fx: &mut Effects) {
+    fn wait_for_more(&mut self, keys: Vec<Press>, fx: &mut Effects) {
         let due = self.now + PREFIX_TIMEOUT;
         self.mode = Mode::Prefix { keys, due };
         fx.push(Effect::WakeAt(due));

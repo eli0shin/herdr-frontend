@@ -7,7 +7,7 @@
 //! transitions and the actions the keys map to.
 
 use crate::action::{Action, CopyAction, Popup, PopupAction};
-use crate::keys::{Chord, Key, Mods};
+use crate::keys::{Chord, Key, Mods, Press};
 
 /// How long a prefix sequence waits for its next key, in seconds (GPUI's pending-keystroke
 /// timeout, which Herdr app's `ctrl-g` sequences use).
@@ -21,7 +21,7 @@ pub enum Mode {
     Normal,
     /// Part of a sequence: `keys` so far. At `due` (app clock, seconds) it is dropped.
     Prefix {
-        keys: Vec<Chord>,
+        keys: Vec<Press>,
         due: f64,
     },
     Popup(PopupState),
@@ -141,6 +141,14 @@ impl Mode {
     pub fn popup(&self) -> Option<&PopupState> {
         match self {
             Mode::Popup(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// The keys of a sequence part-way through, for the prefix indicator.
+    pub fn pending_keys(&self) -> Option<&[Press]> {
+        match self {
+            Mode::Prefix { keys, .. } => Some(keys),
             _ => None,
         }
     }

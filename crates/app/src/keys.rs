@@ -5,7 +5,7 @@
 //!
 //! Everything else is left for the app: chords with Cmd, and Option or Ctrl with anything but
 //! a letter. Full input (the physical key, consumed modifiers, releases, IME, the mouse, paste)
-//! is ticket 015's, the keymap ticket 016's.
+//! is ticket 015's. Keys reach here only after the keymap passed on them (`docs/keys.md`).
 
 use ghostty_vt_sys::*;
 use rune::{Key, KeyEvent};

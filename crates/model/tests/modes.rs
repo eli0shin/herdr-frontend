@@ -49,7 +49,7 @@ fn press(m: &mut model::Model, keys: &str, terminal: bool) -> model::Effects {
 fn press_at(m: &mut model::Model, now: f64, keys: &str, terminal: bool) -> model::Effects {
     let mut last = model::Effects::default();
     for chord in Chord::parse_sequence(keys).unwrap() {
-        last = m.step(now, Event::Key { chord, terminal });
+        last = m.step(now, Event::key(chord, terminal));
     }
     last
 }
@@ -772,14 +772,7 @@ fn every_binding_runs_in_every_mode() {
                     key(&mut m, &mut core, setup, true);
                 }
                 for chord in &binding.keys {
-                    drive(
-                        &mut m,
-                        &mut core,
-                        Event::Key {
-                            chord: *chord,
-                            terminal,
-                        },
-                    );
+                    drive(&mut m, &mut core, Event::key(*chord, terminal));
                 }
                 core.now = 10.0;
                 drive(&mut m, &mut core, Event::Tick);
@@ -793,4 +786,118 @@ fn every_binding_runs_in_every_mode() {
             }
         }
     }
+}
+
+fn keymap(json: &str) -> model::Keymap {
+    model::Keymap::from_json(json).unwrap()
+}
+
+#[test]
+fn a_prefix_reads_either_spelling_of_a_shifted_key_and_shows_what_waits() {
+    let mut core = agents();
+    let mut m = connected(&mut core);
+    // Shift+2 types `@`; Eli binds both `ctrl-g shift-2` and `ctrl-g @` to the second row.
+    let shift_2 = model::Press {
+        chord: Chord::parse("shift-2").unwrap(),
+        typed: Some(Chord::parse("@").unwrap()),
+    };
+    let only_at = model::Press::new(Chord::parse("@").unwrap());
+    for second in [shift_2, only_at] {
+        drive(&mut m, &mut core, Action::FocusPane("p1".into()));
+        press(&mut m, "ctrl-g", true);
+        let waiting: Vec<String> = m
+            .mode()
+            .pending_keys()
+            .unwrap()
+            .iter()
+            .map(|p| p.to_string())
+            .collect();
+        assert_eq!(waiting, ["ctrl-g"]);
+        drive(
+            &mut m,
+            &mut core,
+            Event::Key {
+                press: second,
+                terminal: true,
+            },
+        );
+        assert_eq!(m.focused_terminal(), Some(m.agent_rows()[1].as_str()));
+        assert_eq!(m.mode().pending_keys(), None);
+    }
+}
+
+#[test]
+fn a_key_the_file_gives_the_terminal_reaches_the_program_over_a_global_binding() {
+    let mut core = agents();
+    let mut m = connected(&mut core);
+    m.set_keymap(keymap(
+        r#"{"global": {"ctrl-h": "pane.go:left", "cmd-t": "tab.new"},
+            "terminal": {"ctrl-h": "terminal"}}"#,
+    ));
+    assert!(
+        !press(&mut m, "ctrl-h", true).handled,
+        "the program gets it"
+    );
+    assert!(
+        press(&mut m, "ctrl-h", false).handled,
+        "no terminal: global"
+    );
+    assert!(press(&mut m, "cmd-t", true).handled);
+    // Keys the file leaves out are unbound: Eli's cmd-d isn't there.
+    assert!(!press(&mut m, "cmd-d", true).handled);
+}
+
+#[test]
+fn a_key_files_popup_and_copy_keys_come_before_their_own() {
+    let mut core = agents();
+    let mut m = connected(&mut core);
+    m.set_keymap(keymap(
+        r#"{"global": {"cmd-p": "mod.open:picker", "ctrl-g [": "mod.open:copy-mode", "cmd-t": "tab.new"},
+            "popup": {"ctrl-j": "popup.down", "escape": "popup.choose"},
+            "copy": {"x": "copy_mode.yank", "j": "copy_mode.up"}}"#,
+    ));
+    press(&mut m, "cmd-p", true);
+    m.step(m.now(), Event::PopupRows(3));
+    press(&mut m, "ctrl-j", false);
+    let Mode::Popup(PopupState::List(list)) = m.mode() else {
+        panic!("{:?}", m.mode())
+    };
+    assert_eq!(list.cursor, 1);
+    // The file's Escape picks instead of closing.
+    let fx = press(&mut m, "escape", false);
+    assert!(fx.list.iter().any(|e| matches!(e, Effect::Pick { .. })));
+    assert_eq!(*m.mode(), Mode::Normal);
+
+    drive(&mut m, &mut core, Action::FocusPane("p1".into()));
+    press(&mut m, "ctrl-g [", true);
+    assert!(matches!(m.mode(), Mode::Copy(_)));
+    let fx = press(&mut m, "j", true);
+    assert!(fx.list.contains(&Effect::Terminal {
+        address: "t1".into(),
+        command: TerminalCommand::CopyMove(CopyAction::Up),
+    }));
+    // Copy mode's own keys still work where the file doesn't bind them.
+    let fx = press(&mut m, "l", true);
+    assert!(fx.list.contains(&Effect::Terminal {
+        address: "t1".into(),
+        command: TerminalCommand::CopyMove(CopyAction::Right),
+    }));
+    press(&mut m, "x", true);
+    assert_eq!(*m.mode(), Mode::Normal, "x yanks and leaves");
+}
+
+#[test]
+fn elis_copy_mode_escape_drops_the_selection_then_leaves() {
+    let mut core = agents();
+    let mut m = connected(&mut core);
+    drive(&mut m, &mut core, Action::FocusPane("p1".into()));
+    press(&mut m, "ctrl-g [", true);
+    press(&mut m, "v", true);
+    press(&mut m, "escape", true);
+    assert!(matches!(
+        m.mode(),
+        Mode::Copy(CopyState { visual: None, .. })
+    ));
+    press(&mut m, "escape", true);
+    assert_eq!(*m.mode(), Mode::Normal);
 }

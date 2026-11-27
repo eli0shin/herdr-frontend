@@ -2,6 +2,7 @@
 //! (`docs/plan.md` "Decisions"). `$HERDR_FRONTEND_HOME`, else `$XDG_CONFIG_HOME/herdr-frontend`,
 //! else `~/.config/herdr-frontend`, as Herdr app finds `~/.config/herdr-app`.
 //!
+//! - `keys.json`: the key file, read and reloaded live by [`crate::keyfile`].
 //! - `view.json`: this screen's view ([`model::View::to_json`]): the space shown, each space's
 //!   tab, each tab's focused pane, recents and seen attention.
 //! - `window.json`: where the window was ([`crate::window::Placement`]).

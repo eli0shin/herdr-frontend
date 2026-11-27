@@ -248,7 +248,7 @@ pub fn connected(core: &mut Core) -> Model {
 pub fn key(m: &mut Model, core: &mut Core, keys: &str, terminal: bool) -> Vec<Effect> {
     let mut out = Vec::new();
     for chord in Chord::parse_sequence(keys).unwrap() {
-        out.extend(drive(m, core, Event::Key { chord, terminal }));
+        out.extend(drive(m, core, Event::key(chord, terminal)));
     }
     out
 }

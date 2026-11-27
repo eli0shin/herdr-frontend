@@ -2,14 +2,15 @@
 //! `keys.json` syntax (`cmd-shift-]`, `ctrl-g s` for a sequence), and the [`Keymap`] that maps
 //! sequences to [`Action`]s in a [`Context`].
 //!
-//! [`Keymap::eli`] is the effective table of `docs/research/feature-inventory.md` §22: `layout:eli`
-//! folded over `global`, plus the `terminal` section. The keys inside popups and copy mode are not
-//! here; their machines read them (`crate::mode`). The app turns a Rune key event into a
-//! [`Chord`]; the key file and live reload are ticket 016's.
+//! A key file ([`Keymap::from_json`]) is Eli's `keys.json` form, and [`Keymap::eli`] reads Eli's
+//! own ([`ELI_KEYS`]): the table of `docs/research/feature-inventory.md` §22. The keys popups
+//! and copy mode read themselves are not here; their machines have them (`crate::mode`), after
+//! the file's `popup` and `copy` sections. The app turns a Rune key event into a [`Press`],
+//! reads the file from herdr-frontend's home and reloads it live.
 
 use std::fmt;
 
-use crate::action::{Action, AppCommand, Direction, Popup, Split, TerminalAction};
+use crate::action::{Action, AppCommand};
 
 /// Held modifiers. `cmd` is ⌘ on macOS.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -212,20 +213,104 @@ impl fmt::Display for Chord {
     }
 }
 
-/// Which bindings apply: `Terminal` ones while a terminal pane has the keyboard, and they win
-/// over `Global` ones (§22: `terminal` overrides `layout:eli`, which overrides `global`).
+/// One key press as the keymap reads it: the chord by the key's unshifted character
+/// (`shift-1`, `cmd-shift-]`), and, when Shift made the key type another character, that
+/// spelling too (`!`, `cmd-}`). A binding written either way matches, as Herdr app's shifted
+/// punctuation does (`cfg/AGENTS.md` "Keys").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Press {
+    pub chord: Chord,
+    pub typed: Option<Chord>,
+}
+
+impl Press {
+    /// A press with one spelling.
+    pub const fn new(chord: Chord) -> Press {
+        Press { chord, typed: None }
+    }
+
+    /// Whether `chord` is one of this press's spellings.
+    pub fn matches(&self, chord: &Chord) -> bool {
+        self.chord == *chord || self.typed.as_ref() == Some(chord)
+    }
+
+    /// The first spelling `f` answers for.
+    pub fn first<T>(&self, mut f: impl FnMut(Chord) -> Option<T>) -> Option<T> {
+        f(self.chord).or_else(|| self.typed.and_then(f))
+    }
+}
+
+impl From<Chord> for Press {
+    fn from(chord: Chord) -> Press {
+        Press::new(chord)
+    }
+}
+
+impl fmt::Display for Press {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.chord)
+    }
+}
+
+/// Where a binding applies, as the key file's sections name them:
+///
+/// - `Global` (`global`) and `Layout` (`layout:eli`), which wins over it;
+/// - `Terminal` (`terminal`): while a terminal pane has the keyboard, over both;
+/// - `Popup` (`popup`): while a popup or dialog is open, before its own keys;
+/// - `Copy` (`copy`, or Eli's `mod:copy-mode`): in copy mode, before its own keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Context {
     Global,
+    Layout,
     Terminal,
+    Popup,
+    Copy,
 }
+
+impl Context {
+    /// The contexts a key outside popups and copy mode looks in, most specific first.
+    pub fn normal(terminal: bool) -> &'static [Context] {
+        if terminal {
+            &[Context::Terminal, Context::Layout, Context::Global]
+        } else {
+            &[Context::Layout, Context::Global]
+        }
+    }
+
+    /// The key file section this context is written as.
+    pub fn section(self) -> &'static str {
+        match self {
+            Context::Global => "global",
+            Context::Layout => LAYOUT_SECTION,
+            Context::Terminal => "terminal",
+            Context::Popup => "popup",
+            Context::Copy => "copy",
+        }
+    }
+}
+
+/// The one layout herdr-frontend has: Eli's.
+pub const LAYOUT_SECTION: &str = "layout:eli";
+
+/// The escape hatch: built in, answered in every mode, and never rebound
+/// (`feature-inventory.md` §1).
+pub const RESET: &str = "ctrl-alt-shift-escape";
+
+/// The key file's name in herdr-frontend's home.
+pub const KEY_FILE: &str = "keys.json";
+
+/// Eli's `keys.json` (`feature-inventory.md` §22): the default key file, written to the home
+/// when it has none.
+pub const ELI_KEYS: &str = include_str!("keys.json");
 
 /// A key sequence bound to an action.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Binding {
     pub context: Context,
     pub keys: Vec<Chord>,
-    pub action: Action,
+    /// `None`: the key goes to the terminal's program (the key file's `"terminal"`), over a
+    /// less specific binding.
+    pub action: Option<Action>,
 }
 
 /// What a sequence typed so far means.
@@ -233,10 +318,24 @@ pub struct Binding {
 pub enum Lookup<'a> {
     /// A whole binding.
     Action(&'a Action),
+    /// Bound to `"terminal"`: the program gets the key.
+    Program,
     /// The start of one or more longer bindings: wait for the next key.
     Pending,
     None,
 }
+
+/// Why a key file can't be used. The app keeps the keys it had.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyFileError(pub Vec<String>);
+
+impl fmt::Display for KeyFileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0.join("; "))
+    }
+}
+
+impl std::error::Error for KeyFileError {}
 
 /// Key sequences and their actions.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -255,6 +354,15 @@ impl Keymap {
 
     /// Binds a sequence, replacing an earlier binding of the same keys in that context.
     pub fn bind(&mut self, context: Context, keys: Vec<Chord>, action: Action) {
+        self.put(context, keys, Some(action));
+    }
+
+    /// Leaves a key to the terminal's program in `context` (the key file's `"terminal"`).
+    pub fn pass(&mut self, context: Context, keys: Vec<Chord>) {
+        self.put(context, keys, None);
+    }
+
+    fn put(&mut self, context: Context, keys: Vec<Chord>, action: Option<Action>) {
         self.bindings
             .retain(|b| !(b.context == context && b.keys == keys));
         self.bindings.push(Binding {
@@ -264,34 +372,33 @@ impl Keymap {
         });
     }
 
-    /// Binds every sequence in `keys` (Eli's syntax) to `action`. Panics on a bad key: for
-    /// built-in tables only.
-    fn bind_all(&mut self, context: Context, keys: &[&str], action: Action) {
-        for text in keys {
-            let keys = Chord::parse_sequence(text).expect("built-in key");
-            self.bind(context, keys, action.clone());
-        }
+    /// What `keys` mean outside popups and copy mode, with the terminal's bindings first while
+    /// it has the keyboard. Each key has one spelling here; [`Keymap::lookup_in`] takes both.
+    pub fn lookup(&self, terminal: bool, keys: &[Chord]) -> Lookup<'_> {
+        let presses: Vec<Press> = keys.iter().copied().map(Press::new).collect();
+        self.lookup_in(Context::normal(terminal), &presses)
     }
 
-    /// What `keys` mean, with the terminal's bindings first while it has the keyboard. A whole
-    /// binding wins over a longer one it starts.
-    pub fn lookup(&self, terminal: bool, keys: &[Chord]) -> Lookup<'_> {
-        let contexts: &[Context] = if terminal {
-            &[Context::Terminal, Context::Global]
-        } else {
-            &[Context::Global]
-        };
+    /// What `keys` mean in `contexts`, most specific first. A whole binding wins over a longer
+    /// one it starts, in any of them.
+    pub fn lookup_in(&self, contexts: &[Context], keys: &[Press]) -> Lookup<'_> {
+        let matches = |chords: &[Chord]| chords.iter().zip(keys).all(|(c, p)| p.matches(c));
         for context in contexts {
             if let Some(b) = self
                 .bindings
                 .iter()
-                .find(|b| b.context == *context && b.keys == keys)
+                .find(|b| b.context == *context && b.keys.len() == keys.len() && matches(&b.keys))
             {
-                return Lookup::Action(&b.action);
+                return match &b.action {
+                    Some(action) => Lookup::Action(action),
+                    None => Lookup::Program,
+                };
             }
         }
         let starts = self.bindings.iter().any(|b| {
-            contexts.contains(&b.context) && b.keys.len() > keys.len() && b.keys.starts_with(keys)
+            contexts.contains(&b.context)
+                && b.keys.len() > keys.len()
+                && matches(&b.keys[..keys.len()])
         });
         if starts {
             Lookup::Pending
@@ -300,119 +407,127 @@ impl Keymap {
         }
     }
 
-    /// The sequences bound to an action, in binding order (for help and menu hints).
-    pub fn keys_for(&self, action: &Action) -> Vec<&[Chord]> {
-        self.bindings
-            .iter()
-            .filter(|b| &b.action == action)
-            .map(|b| b.keys.as_slice())
-            .collect()
+    /// The bindings that can run: all but a `global` one whose keys `layout:eli` binds too.
+    pub fn effective(&self) -> impl Iterator<Item = &Binding> {
+        self.bindings.iter().filter(|b| {
+            b.context != Context::Global
+                || !self
+                    .bindings
+                    .iter()
+                    .any(|l| l.context == Context::Layout && l.keys == b.keys)
+        })
     }
 
-    /// Eli's effective keys (§22).
-    pub fn eli() -> Keymap {
-        use Action as A;
-        use Context::{Global as G, Terminal as T};
-        let mut k = Keymap::new();
-        let app = |c| A::App(c);
-        k.bind_all(G, &["cmd-q"], app(AppCommand::Quit));
-        k.bind_all(G, &["cmd-h"], app(AppCommand::Hide));
-        k.bind_all(G, &["cmd-alt-h"], app(AppCommand::HideOthers));
-        k.bind_all(G, &["cmd-t", "ctrl-g t"], A::TabNew);
-        k.bind_all(G, &["cmd-w", "ctrl-g shift-q"], A::TabClose);
-        k.bind_all(G, &["ctrl-tab", "cmd-shift-]", "ctrl-g n"], A::TabNext);
-        k.bind_all(
-            G,
-            &["ctrl-shift-tab", "cmd-shift-[", "ctrl-g p"],
-            A::TabPrev,
-        );
-        for n in 1..=9u8 {
-            k.bind_all(
-                G,
-                &[&format!("cmd-{n}"), &format!("ctrl-g {n}")],
-                A::TabSelect(n),
-            );
-            k.bind_all(G, &[&format!("ctrl-{n}")], A::SpaceSelect(n));
+    /// The sequences that run an action, once each, in binding order (for help and menu hints).
+    pub fn keys_for(&self, action: &Action) -> Vec<&[Chord]> {
+        let mut out: Vec<&[Chord]> = Vec::new();
+        for b in self.effective() {
+            if b.action.as_ref() == Some(action) && !out.contains(&b.keys.as_slice()) {
+                out.push(b.keys.as_slice());
+            }
         }
-        k.bind_all(G, &["cmd-alt-]"], A::SpaceNext);
-        k.bind_all(G, &["cmd-alt-["], A::SpacePrev);
-        k.bind_all(G, &["cmd-]", "ctrl-g j"], A::AgentNext);
-        k.bind_all(G, &["cmd-[", "ctrl-g k"], A::AgentPrev);
-        for (n, shifted) in "!@#$%^&*()".chars().enumerate() {
-            let n = n as u8 + 1;
-            let digit = n % 10;
-            k.bind_all(
-                G,
-                &[
-                    &format!("ctrl-g shift-{digit}"),
-                    &format!("ctrl-g {shifted}"),
-                ],
-                A::AgentSelect(n),
-            );
-        }
-        k.bind_all(G, &["ctrl-;"], A::Open(Popup::AgentJump));
-        k.bind_all(G, &["ctrl-g o"], A::JumpBack);
-        k.bind_all(G, &["ctrl-g i"], A::JumpForward);
-        k.bind_all(G, &["cmd-r"], A::Review);
-        k.bind_all(G, &["cmd-shift-l"], app(AppCommand::LayoutSwitch));
-        k.bind_all(G, &["cmd-n", "ctrl-g ctrl-s"], A::Open(Popup::NewSpace));
-        k.bind_all(G, &["cmd-p"], A::Open(Popup::Picker));
-        k.bind_all(G, &["ctrl-g s"], A::Open(Popup::SpacePicker));
-        k.bind_all(G, &["ctrl-g /"], A::Open(Popup::AgentMachines));
-        k.bind_all(G, &["ctrl-g f"], A::Open(Popup::PrFinder));
-        k.bind_all(G, &["ctrl-g ["], A::CopyMode);
-        k.bind_all(G, &["cmd-shift-p"], A::Open(Popup::Palette));
-        k.bind_all(G, &["cmd-,", "ctrl-g c"], A::Open(Popup::Settings));
-        k.bind_all(G, &["cmd-/", "cmd-shift-/"], A::Open(Popup::Help));
-        k.bind_all(G, &["cmd-b", "ctrl-g b"], app(AppCommand::ToggleSidebar));
-        k.bind_all(G, &["cmd-=", "cmd-+"], app(AppCommand::ZoomIn));
-        k.bind_all(G, &["cmd--"], app(AppCommand::ZoomOut));
-        k.bind_all(G, &["cmd-0"], app(AppCommand::ZoomReset));
-        k.bind_all(G, &["cmd-d", "ctrl-g v"], A::PaneSplit(Split::Right));
-        k.bind_all(G, &["cmd-shift-d", "ctrl-g h"], A::PaneSplit(Split::Down));
-        k.bind_all(G, &["cmd-shift-w", "ctrl-g q"], A::PaneClose);
-        k.bind_all(G, &["cmd-shift-enter"], A::PaneZoom);
-        for (d, arrow, letter) in [
-            (Direction::Left, "left", 'h'),
-            (Direction::Down, "down", 'j'),
-            (Direction::Up, "up", 'k'),
-            (Direction::Right, "right", 'l'),
-        ] {
-            k.bind_all(G, &[&format!("cmd-alt-{arrow}")], A::PaneGo(d));
-            k.bind_all(G, &[&format!("ctrl-{letter}")], A::PaneNavigate(d));
-            k.bind_all(G, &[&format!("cmd-alt-shift-{arrow}")], A::PaneSwap(d));
-            k.bind_all(G, &[&format!("alt-shift-{letter}")], A::PaneResize(d));
-        }
-        k.bind_all(G, &["f2", "ctrl-g r"], A::TabRename);
-        k.bind_all(G, &["shift-f2"], A::SpaceRename);
-        k.bind_all(G, &["ctrl-g x"], A::SpaceClose);
-        k.bind_all(G, &["ctrl-g d"], app(AppCommand::CloseWindow));
-        // Built in and unbindable in Herdr app; the mode machine also answers it in every mode.
-        k.bind_all(G, &["ctrl-alt-shift-escape"], app(AppCommand::Reset));
+        out
+    }
 
-        let send = |text: &str| A::Terminal(TerminalAction::Send(text.to_owned()));
-        k.bind_all(T, &["cmd-f"], A::Terminal(TerminalAction::Search));
-        k.bind_all(T, &["cmd-c"], A::Terminal(TerminalAction::Copy));
-        k.bind_all(T, &["cmd-v", "ctrl-v"], A::Terminal(TerminalAction::Paste));
-        k.bind_all(
-            T,
-            &["ctrl-shift-v"],
-            A::Terminal(TerminalAction::PasteImage),
-        );
-        k.bind_all(T, &["alt-left"], send("\u{1b}b"));
-        k.bind_all(T, &["alt-right"], send("\u{1b}f"));
-        k.bind_all(T, &["alt-backspace"], send("\u{17}"));
-        k.bind_all(T, &["cmd-left"], send("\u{1}"));
-        k.bind_all(T, &["cmd-right"], send("\u{5}"));
-        k.bind_all(T, &["cmd-backspace"], send("\u{15}"));
-        k.bind_all(T, &["ctrl-g ctrl-l"], send("\u{c}"));
-        k
+    /// Reads a key file in Eli's `keys.json` form: sections of `"<keys>": "<action>"`.
+    ///
+    /// - Sections: `global`, `layout:eli`, `terminal`, `popup`, and `copy` (also Eli's
+    ///   `mod:copy-mode`). Other `layout:<name>` and `mod:<name>` sections are for layouts and
+    ///   mods herdr-frontend doesn't have, and are skipped.
+    /// - Keys in Eli's syntax ([`Chord::parse_sequence`]): `cmd-shift-]`, `ctrl-g s`. Popups and
+    ///   copy mode take single keys.
+    /// - Actions are command names ([`Action::parse`], Herdr app's names included), `send:<text>`,
+    ///   or `"terminal"`: the program gets the key (single keys in `global`, `layout:eli` and
+    ///   `terminal`).
+    /// - `ctrl-alt-shift-escape` is built in and can't be bound.
+    ///
+    /// The file is the whole keymap (as Herdr app's is): keys it leaves out are unbound. Every
+    /// problem is reported; one is enough to refuse the file.
+    pub fn from_json(text: &str) -> Result<Keymap, KeyFileError> {
+        let value: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| KeyFileError(vec![format!("not JSON: {e}")]))?;
+        let serde_json::Value::Object(sections) = value else {
+            return Err(KeyFileError(vec![
+                "the file must be an object of sections".into(),
+            ]));
+        };
+        let reset = Chord::parse_sequence(RESET).expect("built-in key");
+        let mut k = Keymap::new();
+        let mut errors = Vec::new();
+        for (section, keys) in &sections {
+            let context = match section.as_str() {
+                "global" => Context::Global,
+                LAYOUT_SECTION => Context::Layout,
+                "terminal" => Context::Terminal,
+                "popup" => Context::Popup,
+                "copy" | "mod:copy-mode" => Context::Copy,
+                s if s.starts_with("layout:") || s.starts_with("mod:") => continue,
+                s => {
+                    errors.push(format!("unknown section {s:?}"));
+                    continue;
+                }
+            };
+            let serde_json::Value::Object(keys) = keys else {
+                errors.push(format!("{section}: must be an object of keys"));
+                continue;
+            };
+            for (text, action) in keys {
+                let at = format!("{section} {text:?}");
+                let chords = match Chord::parse_sequence(text) {
+                    Ok(chords) => chords,
+                    Err(e) => {
+                        errors.push(format!("{at}: {e}"));
+                        continue;
+                    }
+                };
+                if chords == reset {
+                    errors.push(format!("{at}: {RESET} is built in and can't be bound"));
+                    continue;
+                }
+                let one_key = chords.len() == 1;
+                if matches!(context, Context::Popup | Context::Copy) && !one_key {
+                    errors.push(format!("{at}: popups and copy mode take single keys"));
+                    continue;
+                }
+                let Some(name) = action.as_str() else {
+                    errors.push(format!("{at}: the action must be a command name"));
+                    continue;
+                };
+                if name == "terminal" {
+                    if one_key && !matches!(context, Context::Popup | Context::Copy) {
+                        k.pass(context, chords);
+                    } else {
+                        errors.push(format!(
+                            "{at}: only a single key outside popups and copy mode can go to the terminal"
+                        ));
+                    }
+                    continue;
+                }
+                match Action::parse(name) {
+                    Some(action) => k.bind(context, chords, action),
+                    None => errors.push(format!("{at}: unknown action {name:?}")),
+                }
+            }
+        }
+        if !errors.is_empty() {
+            return Err(KeyFileError(errors));
+        }
+        // Listed for help; the model answers it before any binding, in every mode.
+        k.bind(Context::Global, reset, Action::App(AppCommand::Reset));
+        Ok(k)
+    }
+
+    /// Eli's keys ([`ELI_KEYS`]): §22's table, `layout:eli` over `global`, `terminal` over both,
+    /// and copy mode's Esc.
+    pub fn eli() -> Keymap {
+        Keymap::from_json(ELI_KEYS).expect("Eli's key file reads")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::action::{Popup, TerminalAction};
 
     fn seq(text: &str) -> Vec<Chord> {
         Chord::parse_sequence(text).unwrap()
@@ -692,5 +807,167 @@ mod tests {
             .map(|s| s.iter().map(Chord::to_string).collect::<Vec<_>>().join(" "))
             .collect();
         assert_eq!(keys, ["cmd-t", "ctrl-g t"]);
+    }
+
+    fn press(chord: &str, typed: Option<&str>) -> Press {
+        Press {
+            chord: Chord::parse(chord).unwrap(),
+            typed: typed.map(|t| Chord::parse(t).unwrap()),
+        }
+    }
+
+    #[test]
+    fn a_press_matches_a_binding_written_either_way() {
+        let k = Keymap::eli();
+        let g = press("ctrl-g", None);
+        let normal = Context::normal(false);
+        // Shift+1 types `!`: `ctrl-g shift-1` and `ctrl-g !` are both Eli's.
+        let bang = press("shift-1", Some("!"));
+        assert_eq!(
+            k.lookup_in(normal, &[g, bang]),
+            Lookup::Action(&Action::AgentSelect(1))
+        );
+        // `cmd-+` is written by the character Shift types on `=`.
+        assert_eq!(
+            k.lookup_in(normal, &[press("cmd-shift-=", Some("cmd-+"))]),
+            Lookup::Action(&Action::App(AppCommand::ZoomIn))
+        );
+        assert_eq!(
+            k.lookup_in(normal, &[press("cmd-shift-]", Some("cmd-}"))]),
+            Lookup::Action(&Action::TabNext)
+        );
+    }
+
+    #[test]
+    fn keymap_eli_reads_elis_key_file_section_by_section() {
+        let k = Keymap::eli();
+        let at = |context: Context, keys: &str| {
+            k.bindings()
+                .iter()
+                .find(|b| b.context == context && b.keys == seq(keys))
+                .and_then(|b| b.action.clone())
+        };
+        // `global` keeps its own binding; `layout:eli` overrides it in the eli layout.
+        assert_eq!(
+            at(Context::Global, "ctrl-h"),
+            Some(Action::PaneGo(crate::Direction::Left))
+        );
+        assert_eq!(
+            at(Context::Layout, "ctrl-h"),
+            Some(Action::PaneNavigate(crate::Direction::Left))
+        );
+        assert_eq!(
+            k.lookup(false, &seq("ctrl-h")),
+            Lookup::Action(&Action::PaneNavigate(crate::Direction::Left))
+        );
+        assert_eq!(
+            at(Context::Copy, "escape"),
+            Some(Action::Copy(crate::CopyAction::Escape))
+        );
+        assert_eq!(
+            at(Context::Global, RESET),
+            Some(Action::App(AppCommand::Reset))
+        );
+    }
+
+    #[test]
+    fn a_key_file_is_the_whole_keymap() {
+        let k = Keymap::from_json(
+            r#"{
+                "global": {"cmd-k": "tab.new", "ctrl-a s": "mod.open:space-picker"},
+                "terminal": {"ctrl-h": "terminal", "cmd-k": "send:\f"},
+                "popup": {"ctrl-j": "popup.down"},
+                "copy": {"x": "copy_mode.yank"},
+                "layout:terminals": {"cmd-q": "nonsense"},
+                "mod:editor": {"ctrl-s": "editor.save"}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(k.lookup(false, &seq("cmd-t")), Lookup::None);
+        assert_eq!(
+            k.lookup(false, &seq("cmd-k")),
+            Lookup::Action(&Action::TabNew)
+        );
+        assert_eq!(k.lookup(false, &seq("ctrl-a")), Lookup::Pending);
+        assert_eq!(
+            k.lookup(true, &seq("ctrl-a s")),
+            Lookup::Action(&Action::Open(Popup::SpacePicker))
+        );
+        assert_eq!(k.lookup(true, &seq("ctrl-h")), Lookup::Program);
+        assert_eq!(
+            k.lookup(true, &seq("cmd-k")),
+            Lookup::Action(&Action::Terminal(TerminalAction::Send("\u{c}".into())))
+        );
+        assert_eq!(
+            k.lookup_in(&[Context::Popup], &[press("ctrl-j", None)]),
+            Lookup::Action(&Action::Popup(crate::PopupAction::Down))
+        );
+        assert_eq!(
+            k.lookup_in(&[Context::Copy], &[press("x", None)]),
+            Lookup::Action(&Action::Copy(crate::CopyAction::Yank))
+        );
+        // Popup and copy keys don't apply outside them.
+        assert_eq!(k.lookup(true, &seq("ctrl-j")), Lookup::None);
+    }
+
+    #[test]
+    fn a_bad_key_file_says_what_is_wrong_with_each_key() {
+        let err = |text: &str| Keymap::from_json(text).unwrap_err().to_string();
+        assert!(err("{").starts_with("not JSON"));
+        assert_eq!(err("[]"), "the file must be an object of sections");
+        assert_eq!(err(r#"{"gloabl": {}}"#), r#"unknown section "gloabl""#);
+        assert_eq!(
+            err(r#"{"global": []}"#),
+            "global: must be an object of keys"
+        );
+        assert_eq!(
+            err(r#"{"global": {"hyper-k": "tab.new"}}"#),
+            r#"global "hyper-k": can't read the key "hyper-k""#
+        );
+        assert_eq!(
+            err(r#"{"global": {"cmd-k": "tab.nope"}}"#),
+            r#"global "cmd-k": unknown action "tab.nope""#
+        );
+        assert_eq!(
+            err(r#"{"global": {"cmd-k": {"command": "tab.new"}}}"#),
+            r#"global "cmd-k": the action must be a command name"#
+        );
+        assert_eq!(
+            err(r#"{"global": {"ctrl-alt-shift-escape": "tab.new"}}"#),
+            r#"global "ctrl-alt-shift-escape": ctrl-alt-shift-escape is built in and can't be bound"#
+        );
+        assert_eq!(
+            err(r#"{"popup": {"ctrl-g j": "popup.down"}}"#),
+            r#"popup "ctrl-g j": popups and copy mode take single keys"#
+        );
+        assert_eq!(
+            err(r#"{"global": {"ctrl-g x": "terminal"}}"#),
+            r#"global "ctrl-g x": only a single key outside popups and copy mode can go to the terminal"#
+        );
+        // Every problem at once.
+        assert_eq!(
+            err(r#"{"global": {"cmd-k": "x", "cmd-j": "y"}}"#),
+            r#"global "cmd-j": unknown action "y"; global "cmd-k": unknown action "x""#
+        );
+    }
+
+    #[test]
+    fn effective_bindings_drop_global_keys_the_layout_rebinds() {
+        let k = Keymap::eli();
+        assert!(
+            k.effective()
+                .all(|b| !(b.context == Context::Global && b.keys == seq("ctrl-h")))
+        );
+        assert!(
+            k.effective()
+                .any(|b| b.context == Context::Global && b.keys == seq("cmd-q"))
+        );
+        // ctrl-tab runs tab.next from both sections: listed once.
+        let next: Vec<String> = k
+            .keys_for(&Action::TabNext)
+            .iter()
+            .map(|s| s.iter().map(Chord::to_string).collect::<Vec<_>>().join(" "))
+            .collect();
+        assert_eq!(next.iter().filter(|k| *k == "ctrl-tab").count(), 1);
     }
 }

@@ -580,12 +580,15 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   can't take an edit is refused before any terminal starts. The model also adopts labeled
   orphans, removes panes whose stream ended or whose terminal the core no longer has, and backs a
   failing machine's layout reads off for `RETRY` (2 s).
-- **Keys.** `Keymap::eli()` is §22's effective table as data (`Chord` in Eli's syntax); the key
-  file and live reload are ticket 016's. `Mode` is `Normal`, `Prefix` (dropped after 1 s, GPUI's
+- **Keys** (`docs/keys.md`). `Keymap::from_json` reads a key file in Eli's `keys.json` form, with
+  contexts `Global`, `Layout` (`layout:eli`), `Terminal`, `Popup` and `Copy`. `Keymap::eli()`
+  reads Eli's own file, which is bundled. A key arrives as a `Press`: its chord, plus the spelling
+  Shift typed (`shift-1` and `!`). `Mode` is `Normal`, `Prefix` (dropped after 1 s, GPUI's
   pending-key timeout; an unbound sequence is swallowed whole), `Popup` or `Copy`. Popups and
-  copy mode read their own keys (§22), then fall back to one-key global bindings, as Herdr app
-  runs window keys over a dialog; `tab.close`/`pane.close` close the popup or leave copy mode
-  instead. List popups keep a query and a wrapping cursor; the feature that fills them reports
+  copy mode read the file's `popup` or `copy` keys first, then their own keys (§22), then fall
+  back to one-key global bindings, as Herdr app runs window keys over a dialog;
+  `tab.close`/`pane.close` close the popup or leave copy mode instead. `help::rows` builds the
+  keys help from the keymap. List popups keep a query and a wrapping cursor; the feature that fills them reports
   `PopupRows` and resolves `Effect::Pick`. Prompts, confirms and the agent-jump bar resolve in the model.
 - **Not built here** (they return `Effect::NotYet`): Neovim-aware Ctrl+H/J/K/L where the editor
   label is set, `pane.resize`, the review view, peek, menus, sub-agent folds, links and pane drag. Writing
@@ -624,13 +627,20 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   model's `pane_rects` (`Geometry { gap: 1 }`) over a border-colored fill. The tab area's
   `on_layout_tx` reports the geometry; before the first layout it comes from the window size
   (`App::on_window_geometry`, `SIZE` headless).
-- **Input.** Plain typing only (`keys::encode`): text, Return, Backspace, Tab, Escape, arrows
-  and editing keys, and Ctrl with a letter, encoded by the terminal's worker for the program's
-  modes and sent as DATA. The focused pane's element takes keys in `El::on_key`; with nothing
-  focused, `AppSpec::on_key` types into the model's focused pane and gives it focus back. A click
-  focuses a pane (`Action::FocusPane`).
+- **Input.** Every key goes through the keymap first (ticket 016, `docs/keys.md`). While
+  something has focus, the window root's `on_key_preview` reads it. While nothing has focus,
+  `AppSpec::on_key` reads it, and never when `tx.focused()` is set, so no key is matched twice.
+  Keys the model doesn't use are plain typing (`keys::encode`): text, Return, Backspace, Tab,
+  Escape, arrows and editing keys, and Ctrl with a letter. The terminal's worker encodes them
+  for the program's modes and sends them as DATA. The focused pane's element takes them in
+  `El::on_key`. With nothing focused, `AppSpec::on_key` types into the model's focused pane and
+  gives it focus back. A click focuses a pane (`Action::FocusPane`).
+- **Overlays.** The key file reloads live from the home. The tab strip shows the prefix
+  indicator. Toasts sit at the bottom right (the model's toasts, and "not yet" for unbuilt
+  actions and for popups the window doesn't draw yet). The keys help (`cmd-/`) is the one popup
+  the window draws so far.
 - **Home** (`$HERDR_FRONTEND_HOME`, else `$XDG_CONFIG_HOME/herdr-frontend`, else
-  `~/.config/herdr-frontend`): `view.json` (the model's saved view) and `window.json` (position,
+  `~/.config/herdr-frontend`): `keys.json` (the key file), `view.json` (the model's saved view) and `window.json` (position,
   physical size, maximized, full screen, display). Writes go through a saver thread, written
   whole and renamed; close and quit write at once. A saved place whose display is gone opens
   centered.
