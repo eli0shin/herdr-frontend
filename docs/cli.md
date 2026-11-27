@@ -165,9 +165,15 @@ own `<mod>.<command>`. Each one gets the unknown-command error.
 
 ## Status
 
-The socket server, the client and every command are built and tested. The tests run the real
-binary against a `Control` backed by the model on a fake core (`crates/app/tests/control.rs`,
-`crates/model/tests/control.rs`). The window doesn't serve the socket yet. Its frame loop has to
-call `Control::listen` at startup, `Control::drain` each frame, and `Control::answer` for each
-`Effect::Answer` it carries out. That follow-up comes after ticket 014 lands the model and core
-connection in the window.
+The window serves the socket. `State::setup` listens on its home's socket before the core link
+starts. Each `State::pump` runs the requests that came in through `Control::drain`, carries out
+their effects as it does any step's, and sends each later `Effect::Answer` (`space.new`'s) through
+`Control::answer`. `on_close` takes the socket away. A window with no home (scenes, `--snap`,
+headless tests on `app()`) serves nothing.
+
+Tests:
+
+- `crates/app/tests/window_control.rs` runs the whole app (`live`, headless) on an isolated core
+  and an isolated home, and drives every command above with the real binary.
+- `crates/app/tests/control.rs` and `crates/model/tests/control.rs` cover the socket, the client
+  and each command's rules against the model on a fake core.
