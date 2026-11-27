@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">herdr-frontend</title>
+  <desc id="desc">A dark window with an agents sidebar of three status dots and a terminal pane with a prompt, in the arctic theme's colors.</desc>
+  <!-- The tile follows macOS's icon grid: 824 x 824 on a 1024 canvas, 100 px margins. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#1e1e1e" />
+  <g>
+    <!-- The agents sidebar: a tile-shaped rect, its right side covered by the pane. Plain shapes
+         only (no clip paths or arcs), so every SVG renderer draws it the same. -->
+    <rect x="100" y="100" width="450" height="824" rx="185" fill="#2A2D2E" />
+    <rect x="350" y="100" width="200" height="824" fill="#1e1e1e" />
+    <rect x="350" y="100" width="6" height="824" fill="#3a3a3a" />
+    <circle cx="190" cy="330" r="34" fill="#3794FF" />
+    <rect x="244" y="318" width="64" height="24" rx="12" fill="#8F8F8F" />
+    <circle cx="190" cy="470" r="34" fill="#CCA700" />
+    <rect x="244" y="458" width="64" height="24" rx="12" fill="#8F8F8F" />
+    <circle cx="190" cy="610" r="34" fill="#89D185" />
+    <rect x="244" y="598" width="64" height="24" rx="12" fill="#8F8F8F" />
+    <!-- The terminal pane: a selected line and a prompt with its cursor. -->
+    <rect x="420" y="300" width="420" height="44" rx="10" fill="#04395E" />
+    <rect x="436" y="310" width="300" height="24" rx="12" fill="#D4D4D4" />
+    <rect x="420" y="396" width="230" height="24" rx="12" fill="#8F8F8F" />
+    <path d="M436 560 L536 625 L436 690" fill="none" stroke="#D4D4D4" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="580" y="660" width="140" height="40" rx="8" fill="#D4D4D4" />
+  </g>
+  <!-- An edge, so the dark tile still reads on a dark Dock. -->
+  <rect x="102" y="102" width="820" height="820" rx="183" fill="none" stroke="#3a3a3a" stroke-width="4" />
+</svg>

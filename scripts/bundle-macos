@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Builds target/release/herdr-frontend.app: the release binary, the icon and an Info.plist, signed
+# ad hoc. `scripts/install-macos` installs it. Prints the bundle's path.
+set -euo pipefail
+
+[[ $(uname -s) == Darwin ]] || { echo 'bundle-macos needs macOS.' >&2; exit 1; }
+cd "$(dirname "$0")/.."
+
+cargo build --release --locked -p herdr-frontend --bin herdr-frontend >&2
+
+version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+[[ -n $version ]] || { echo 'bundle-macos: no version in Cargo.toml' >&2; exit 1; }
+
+app=target/release/herdr-frontend.app
+rm -rf "$app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp target/release/herdr-frontend "$app/Contents/MacOS/herdr-frontend"
+cp assets/icon/herdr-frontend.icns "$app/Contents/Resources/herdr-frontend.icns"
+
+# Its own identifier and name, so it sits beside Herdr.app (dev.herdr.app) and never replaces it.
+# No usage descriptions: terminal programs run under herdr-core, not this process.
+cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key><string>herdr-frontend</string>
+    <key>CFBundleIdentifier</key><string>dev.herdr.frontend</string>
+    <key>CFBundleName</key><string>herdr-frontend</string>
+    <key>CFBundleDisplayName</key><string>herdr-frontend</string>
+    <key>CFBundleIconFile</key><string>herdr-frontend</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleShortVersionString</key><string>$version</string>
+    <key>CFBundleVersion</key><string>$version</string>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+PLIST
+plutil -lint "$app/Contents/Info.plist" >&2
+
+# Ad hoc: no Developer ID, so Gatekeeper would stop a downloaded copy, but a local build runs.
+codesign --force --sign - "$app"
+codesign --verify --strict "$app"
+echo "$app"
