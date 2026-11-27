@@ -32,6 +32,7 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-agents-grouped", shell_agents_grouped),
     ("shell-sort-menu", shell_sort_menu),
     ("shell-agents-empty", shell_agents_empty),
+    ("shell-alerts", shell_alerts),
     ("shell-palette", shell_palette),
     ("shell-palette-typed", shell_palette_typed),
     ("shell-picker", shell_picker),
@@ -159,6 +160,26 @@ fn shell_sort_menu(s: &mut State) {
     shell_agents(s);
     s.step(0.0, model::Action::Open(model::Popup::SortMenu));
     s.settle();
+}
+
+/// The agents core while you work in `work`: the Pi orchestrator needs you, then the sidebar's
+/// Claude finishes. Their toasts stack at the bottom right, the older one lowest.
+fn shell_alerts(s: &mut State) {
+    let fake = fixtures::agents_core();
+    s.connect(Box::new(fake.clone()));
+    s.settle();
+    for (address, state, turn) in [
+        ("t12", herdr_proto::StatusState::Blocked, 0),
+        ("t10", herdr_proto::StatusState::Idle, 1),
+    ] {
+        let mut t = fake.core().terminals[address].clone();
+        if let Some(status) = t.status.as_mut() {
+            status.state = state;
+        }
+        t.turn = turn;
+        fake.update(t);
+        s.settle();
+    }
 }
 
 /// The demo core, whose terminals report no status: the list says how agents show up.

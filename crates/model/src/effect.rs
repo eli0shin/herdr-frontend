@@ -67,11 +67,13 @@ pub enum Level {
 }
 
 /// An in-app toast. Never a native notification and never a sound.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Toast {
     pub level: Level,
     pub title: String,
     pub body: String,
+    /// What a click runs before the toast goes (an agent's alert: [`Action::FocusAgent`]).
+    pub action: Option<Action>,
 }
 
 impl Toast {
@@ -80,6 +82,21 @@ impl Toast {
             level,
             title: title.into(),
             body: body.into(),
+            action: None,
+        }
+    }
+
+    /// The toast, running `action` when clicked.
+    pub fn on_click(mut self, action: Action) -> Toast {
+        self.action = Some(action);
+        self
+    }
+
+    /// The terminal its click goes to, when it is about one.
+    pub fn terminal(&self) -> Option<&str> {
+        match self.action.as_ref()? {
+            Action::FocusAgent(address) | Action::Peek(address) => Some(address),
+            _ => None,
         }
     }
 }
@@ -119,7 +136,8 @@ pub enum Effect {
     /// Move the keyboard.
     Focus(Focus),
     Toast(Toast),
-    /// An agent wants the person (ticket 025 draws it; the model already brought its tab back).
+    /// An agent wants the person; the model already brought its tab back. With `toast`, the app
+    /// shows [`crate::Model::alert_toast`].
     Alert(Raise),
     /// A list popup's row was picked; the popup's feature resolves it.
     Pick {

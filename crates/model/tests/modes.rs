@@ -519,16 +519,8 @@ fn attention_alerts_brings_settled_tabs_back_and_looking_marks_done_seen() {
     drive(&mut m, &mut core, snapshot);
     assert!(m.view().settled("tb3"));
     // a3 goes blocked: always an alert, and its settled tab comes back.
-    let mut a3 = agent("a3", StatusState::Blocked);
-    a3.turn = 1;
-    let fx = drive(
-        &mut m,
-        &mut core,
-        Event::Terminals(model::TerminalUpdate {
-            terminals: vec![a3],
-            ..Default::default()
-        }),
-    );
+    let blocked = core.report("a3", StatusState::Blocked, 1);
+    let fx = drive(&mut m, &mut core, blocked);
     assert!(
         fx.iter()
             .any(|e| matches!(e, Effect::Alert(r) if r.terminal == "a3"))
@@ -536,16 +528,8 @@ fn attention_alerts_brings_settled_tabs_back_and_looking_marks_done_seen() {
     assert!(!m.view().settled("tb3"));
     // a2 finishes while the window is in the background: done until looked at.
     drive(&mut m, &mut core, Event::WindowActive(false));
-    let mut a2 = agent("a2", StatusState::Idle);
-    a2.turn = 1;
-    drive(
-        &mut m,
-        &mut core,
-        Event::Terminals(model::TerminalUpdate {
-            terminals: vec![a2],
-            ..Default::default()
-        }),
-    );
+    let finished = core.report("a2", StatusState::Idle, 1);
+    drive(&mut m, &mut core, finished);
     assert_eq!(m.attention().displayed("a2"), Some(Displayed::Done));
     drive(&mut m, &mut core, Action::FocusAgent("a2".into()));
     assert_eq!(

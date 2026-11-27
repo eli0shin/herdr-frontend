@@ -606,9 +606,11 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   its terminal is focused; every value is noted on arrival, so none replays.
 - **Not built here** (they return `Effect::NotYet`): the review view, peek, the terminal menu,
   sub-agent folds and links. The tab menu is a `PopupState::Menu` (ticket 021) that the window
-  doesn't draw yet. Writing `herdr.seen` labels (`SeenTracker`) and drawing alerts are ticket
-  025's; the model keeps `Attention` for displayed status and marks what the person looks at as
-  seen.
+  doesn't draw yet.
+- **Attention** (ticket 025, `docs/attention.md`). The model keeps `Attention` for displayed
+  status, marks what the person looks at as seen, and shares it as `herdr.seen` through a
+  `SeenTracker` after every step. An alert is `Effect::Alert`; the app shows
+  `Model::alert_toast` for it.
 
 ### The app shell as built
 
