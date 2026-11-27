@@ -11,7 +11,10 @@ use rune::{ElementInfo, Env, Key, KeyEvent, Mods, Runtime};
 
 /// A runtime on the demo core, settled and laid out.
 fn runtime() -> (Runtime<State>, Fake) {
-    let fake = demo_core();
+    runtime_on(demo_core())
+}
+
+fn runtime_on(fake: Fake) -> (Runtime<State>, Fake) {
     let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
     rt.state.with_settings(Settings::fixture());
     rt.state.connect(Box::new(fake.clone()));
@@ -190,6 +193,79 @@ fn a_size_from_another_viewer_resizes_the_local_terminal_without_taking_it_back(
         fake.sent_to("t2"),
         [],
         "an unfocused pane never sends RESIZE"
+    );
+}
+
+fn resizes(fake: &Fake, address: &str) -> Vec<Out> {
+    fake.sent_to(address)
+        .into_iter()
+        .filter(|o| matches!(o, Out::Resize { .. }))
+        .collect()
+}
+
+#[test]
+fn a_click_takes_the_size_back_from_another_viewer() {
+    let (mut rt, fake) = runtime();
+    let (cols, rows) = grid_of(&rt, "pn-1");
+    assert_eq!(resizes(&fake, "t1"), [Out::Resize { cols, rows }]);
+    // Herdr app took it (attached, refit or reattached); the window doesn't fight it.
+    fake.resize_elsewhere("t1", 50, 10);
+    frames(&mut rt, 3);
+    assert_eq!(resizes(&fake, "t1").len(), 1, "taken back without use");
+    let s = screen(&rt, "t1");
+    assert_eq!((s.cols, s.rows), (50, 10));
+
+    // A click in it is use: it takes the size back.
+    let (x, y) = rt.find("pane-pn-1").expect("pane 1");
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    frames(&mut rt, 2);
+    assert_eq!(resizes(&fake, "t1").len(), 2);
+    assert_eq!(
+        resizes(&fake, "t1").last(),
+        Some(&Out::Resize { cols, rows })
+    );
+    let s = screen(&rt, "t1");
+    assert_eq!((s.cols, s.rows), (cols, rows));
+
+    // While it holds the size, a click sends none.
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    frames(&mut rt, 2);
+    assert_eq!(resizes(&fake, "t1").len(), 2);
+}
+
+#[test]
+fn every_pane_answers_queries_as_automatic_input() {
+    let (mut rt, fake) = runtime();
+    let before = fake.sent_to("t1").len();
+    // Device status: the engine answers `CSI 0 n`.
+    fake.output("t1", b"\x1b[5n");
+    fake.output("t2", b"\x1b[5n");
+    frames(&mut rt, 3);
+    let reply = Out::Automatic(b"\x1b[0n".to_vec());
+    assert_eq!(&fake.sent_to("t1")[before..], std::slice::from_ref(&reply));
+    assert_eq!(fake.sent_to("t2"), [reply]);
+}
+
+#[test]
+fn without_automatic_input_only_the_pane_in_use_answers_queries() {
+    let fake = demo_core();
+    fake.core().no_automatic_input = true;
+    let (mut rt, fake) = runtime_on(fake);
+    let before = fake.sent_to("t1").len();
+    fake.output("t1", b"\x1b[5n");
+    fake.output("t2", b"\x1b[5n");
+    frames(&mut rt, 3);
+    // The pane in use holds the size already: its DATA takes nothing from anyone.
+    assert_eq!(
+        fake.sent_to("t1")[before..],
+        [Out::Input(b"\x1b[0n".to_vec())]
+    );
+    assert_eq!(
+        fake.sent_to("t2"),
+        [],
+        "as DATA, the reply would take the size"
     );
 }
 

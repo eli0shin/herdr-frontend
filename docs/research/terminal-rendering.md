@@ -959,5 +959,6 @@ Each stage ends with tests in `cargo test` plus a fixture or screenshot check.
 7. **Scrollback:** viewport and scrollbar, smooth scroll with overscan, search, OSC 8 and links.
 8. **Copy/visual mode** (§6).
 9. **Kitty graphics.**
-10. **Multi-viewer sizing** with herdr-core (§4). Then an iOS spike: xcframework iOS slice plus
-    Rune `LayerHost`.
+10. **Multi-viewer sizing** with herdr-core (§4). Built in ticket 031: the policy, its tests on
+    an isolated core beside a second viewer, and Eli's two-app checklist are in `docs/interop.md`.
+    Then an iOS spike: xcframework iOS slice plus Rune `LayerHost`.

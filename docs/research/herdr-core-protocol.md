@@ -513,6 +513,15 @@ the program to 200×120 and back on every tab switch.
 There is no "take size" call, and a viewer can't switch between observe and active without
 reattaching. "Take size" is simply sending RESIZE with the pane's grid.
 
+As built (ticket 031, `docs/interop.md`), with two choices beyond the table. Hidden panes attach
+`resumed`, never as observers: when herdr-frontend is a terminal's only viewer, observers would
+send it to 200×120. After a reconnect, the focused pane of the window in front counts as in use
+and takes the size again. And three hardenings: a click in the pane in use takes the size back
+once another viewer has moved it; DATA from a viewer not in use first reports the grid it should
+hold; and on a stream without `automatic_input`, only the viewer in use sends its replies (as
+DATA). `crates/herdr-client/tests/multi_viewer.rs` checks the core's side of these rules with two
+framed connections on an isolated core.
+
 ### What herdr-app does that causes wrong sizes
 
 herdr-app never uses `observe`, `resumed` or `resize_notifications`, and it never follows `size`
@@ -612,7 +621,8 @@ are worth raising upstream for herdr-app: use `resumed` for hidden and reattache
 - **Features.** `hello.features` covers what can't be seen from method names, and the attach reply
   confirms that every hop on the path supports a feature:
   - `automatic_input` needs both the feature *and* `attach.automatic_input == true`; otherwise send
-    DATA.
+    DATA, and only from the viewer that holds the size: from any other, the DATA would take it.
+    herdr-frontend drops the other viewers' replies.
   - `resize_notifications` needs both the feature *and* `attach.resize_notifications == true`;
     otherwise follow `size` events.
   - If a relay loses a feature on reconnect, the stream closes; attach again to negotiate.
