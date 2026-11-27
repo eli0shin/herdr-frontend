@@ -52,6 +52,7 @@ Every call below is in `crates/app/tests/tool_calls.rs`, made the way the tool m
 | `spawn-worker` | `ls`; `hc run --bg --keep --no-parent --cwd <worktree> --label herdr.space=<new or found id> --label herdr.tab=<new id>`, then `ls` until the space appears; `do space.rename --id <space> --name <worker>` |
 | `agent-status` skill (`scripts/agent-status`, `ACTIONS.md`) | `ls` (spaces' `id`, `name`, `machine`; tabs' `id`, `name`; terminals' `terminal`, `pane`, `app`, `status`); `do agent.focus --terminal <t>`; `do pane.close --pane <p>`; resume with `hc run … --label herdr.space=<space> --label herdr.tab=<new id>`, then `do tab.rename --id <tab> --name <label>` |
 | Pi `auto-session-name.ts` | `ls` (the tab holding `HC_TERMINAL_ID`, its first terminal with `app: "pi"`); `do tab.rename '{"id", "name"}'` |
+| code-review-tui `review` (`src/tools/herdr-adapter.ts`) | `ls` (the local space holding `HC_TERMINAL_ID`); `hc run --bg --keep --no-parent --json --cwd <folder> --label herdr.space=<space> --label herdr.tab=<new id>`, then `ls` until that tab shows the terminal; `do tab.rename '{"id", "name"}'`; `do agent.focus '{"terminal"}'`. The tab's program ends with `do agent.focus '{"terminal": <Review Queue>}'`, and the tab leaves when its program exits |
 | `dot stow` (`configure-herdr-app.sh`) | `status`, with `no Herdr window at ` on stderr when no window is open; `do layout.switch --name eli` |
 
 `dot stow` also runs `navigator-status.set-shared:<json>`, a command of Eli's navigator-status

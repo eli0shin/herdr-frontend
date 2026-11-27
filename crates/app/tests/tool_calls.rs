@@ -9,6 +9,7 @@
 //!   `ACTIONS.md`).
 //! - Pi's `auto-session-name`: `~/.dotfiles/home/.pi/agent/extensions/auto-session-name.ts`.
 //! - `dot stow`: `~/.dotfiles/scripts/configure-herdr-app.sh`.
+//! - code-review-tui's `review`: `src/tools/herdr-adapter.ts` (`openFrontendTab`).
 //!
 //! Each runs the whole app headless on its own isolated core and home (`window`). Without an
 //! `hc` the tests skip, except under CI.
@@ -458,6 +459,134 @@ fn agent_status_calls() {
     assert_eq!(resumed_in["terminals"][0]["terminal"], resumed.as_str());
     // The resume didn't take focus.
     assert_eq!(status(&mut rt, home)["tab"], "tb-2");
+}
+
+/// code-review-tui's `review` (`openFrontendTab`): `ls` for the local space holding the Review
+/// Queue's terminal; `hc run --bg --keep --no-parent --json` labeled with that space and a fresh
+/// tab; `ls` until that tab shows the terminal; `do tab.rename '{"id", "name"}'` and
+/// `do agent.focus '{"terminal"}'`. The tab's own program ends with
+/// `herdr-frontend do agent.focus '{"terminal": <queue>}'` and exits, and its tab leaves.
+#[test]
+fn code_review_tui_calls() {
+    let Some(core) = IsolatedCore::new() else {
+        return;
+    };
+    let conn = Connection::open(&core.transport(), &ConnectOptions::default()).expect("connect");
+    let (queue, build) = (run(&conn, &core), run(&conn, &core));
+    let folder = core.folder().display().to_string();
+    set_layout(
+        &conn,
+        json!({"spaces": [
+            {"id": "sp-1", "name": "work", "folder": folder, "tabs": [
+                tab("tb-1", "Review Queue", split("tb-1", "row", vec![pane("pn-q", &queue)])),
+                tab("tb-2", "build", split("tb-2", "row", vec![pane("pn-b", &build)])),
+            ]},
+        ]}),
+    );
+    let scratch = Scratch::new("review");
+    let home = scratch.0.as_path();
+    let mut rt = open(&core, home);
+    // `findTerminalSpace`: the local space whose tabs hold `HC_TERMINAL_ID`.
+    let space = ls_until(&mut rt, home, "the Review Queue's terminal", |l| {
+        local_spaces(l)
+            .into_iter()
+            .find(|s| terminals_of(s).contains(&queue.as_str()))
+            .map(|s| s["id"].as_str().unwrap().to_owned())
+    });
+    assert_eq!(space, "sp-1");
+
+    // The tab's program: the review command (here: wait for `go`), then the cleanup, which puts
+    // focus back on the Review Queue through this window. Its exit code lands in `focused`.
+    let (go, focused) = (home.join("go"), home.join("focused"));
+    let focus_queue = format!(
+        "{} do agent.focus '{}'",
+        env!("CARGO_BIN_EXE_herdr-frontend"),
+        json!({"terminal": queue})
+    );
+    let script = format!(
+        "while [ ! -e '{}' ]; do sleep 0.05; done; {focus_queue}; echo $? > '{}'",
+        go.display(),
+        focused.display()
+    );
+    let tab_id = fresh("tb", 0x5e);
+    let review = hc_run(
+        &core,
+        &[
+            "--bg",
+            "--keep",
+            "--no-parent",
+            "--json",
+            "--cwd",
+            &folder,
+            "--label",
+            &format!("herdr.space={space}"),
+            "--label",
+            &format!("herdr.tab={tab_id}"),
+            "--",
+            "/usr/bin/env",
+            &format!("HERDR_FRONTEND_HOME={}", home.display()),
+            "/bin/sh",
+            "-c",
+            &script,
+        ],
+    );
+    // `waitForFrontendTab`: that tab, showing that terminal.
+    ls_until(&mut rt, home, "the review tab", |l| {
+        local_spaces(l)
+            .iter()
+            .flat_map(|s| s["tabs"].as_array().into_iter().flatten())
+            .any(|t| {
+                t["id"] == tab_id.as_str()
+                    && t["terminals"]
+                        .as_array()
+                        .is_some_and(|ts| ts.iter().any(|x| x["terminal"] == review.as_str()))
+            })
+            .then_some(())
+    });
+    let args = json!({"id": tab_id, "name": "Review #97"}).to_string();
+    ok(&mut rt, home, &["do", "tab.rename", &args]);
+    let args = json!({"terminal": review}).to_string();
+    ok(&mut rt, home, &["do", "agent.focus", &args]);
+    let shown = status(&mut rt, home);
+    assert_eq!(shown["tab"], tab_id.as_str());
+    let listed = ls(&mut rt, home);
+    let tab = local_spaces(&listed)[0]["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == tab_id.as_str())
+        .unwrap()
+        .clone();
+    assert_eq!(tab["name"], "Review #97");
+    assert_eq!(shown["focused_pane"], tab["terminals"][0]["pane"]);
+
+    // The review command returns: the cleanup focuses the Review Queue, the program exits, and
+    // its tab leaves.
+    std::fs::write(&go, "").unwrap();
+    until(&mut rt, "the review tab to leave", |rt| {
+        !rt.state.model.ls().to_string().contains(tab_id.as_str())
+    });
+    assert_eq!(
+        std::fs::read_to_string(&focused).unwrap().trim(),
+        "0",
+        "the cleanup's agent.focus succeeded"
+    );
+    assert!(!is_live(&conn, &review), "the review terminal ended");
+    let listed = ls(&mut rt, home);
+    let tabs: Vec<&Value> = local_spaces(&listed)[0]["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .collect();
+    assert_eq!(
+        tabs.iter().map(|t| &t["id"]).collect::<Vec<_>>(),
+        [&json!("tb-1"), &json!("tb-2")]
+    );
+    let shown = status(&mut rt, home);
+    assert_eq!(
+        (&shown["tab"], &shown["focused_pane"]),
+        (&json!("tb-1"), &json!("pn-q"))
+    );
 }
 
 /// Pi's `auto-session-name`: `ls`, the tab whose terminals hold `HC_TERMINAL_ID`, its first
