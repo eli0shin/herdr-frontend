@@ -27,7 +27,7 @@ Everything the app writes goes in its state folder (`$XDG_STATE_HOME/herdr-front
 | File | What it is |
 | --- | --- |
 | `zoom.json` | The zoom the zoom keys set ([Zoom keys](#zoom-keys)) |
-| `window.json` | The window's size, position, display, maximized and full screen |
+| `window.json` | The window's position and size, saved when it closes |
 | `view.json` | This screen's view: the space shown, each space's tab and pane, recents, seen attention |
 | `shared.json`, `agents.json` | The sidebar's shared state and the Agents list's times (`docs/sidebar.md`) |
 | `keys.error` | Why `keys.json` can't be used, while it can't (`docs/keys.md`) |
