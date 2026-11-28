@@ -199,8 +199,6 @@ fn main(s: &State, cx: &mut Cx<State>) -> El {
             .absolute(r.x, r.y)
             .size(r.w, r.h)
             .fill(c.border)
-            .instant_changes()
-            .transition(Transition::none())
             .inert()
     });
     area.fill(background)
