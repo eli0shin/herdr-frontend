@@ -593,7 +593,8 @@ Keep `model` free of Rune types where practical, so core logic tests run without
 - **Panes** (`feature-inventory.md` §5, ticket 022). Splits, close, zoom (a one-pane tab doesn't
   zoom; the pill says " Z"), `pane.go` (the most recently focused along the edge) and
   `pane.swap` are layout intents or view changes. `pane.resize` moves the focused pane's nearest
-  divider along the direction's axis 40 pt, as dragging it would (`geometry::resize_divider`,
+  divider along the direction's axis 5 columns or 2 rows of the terminal's cell
+  (`geometry::resize_step`), as dragging it would (`geometry::resize_divider`,
   `geometry::drag_sizes`: either side keeps 24 pt and its `min`/`max`, a `px` side stays `px`,
   two weighted sides share their weight). `Action::DragDivider` is the same drag from the mouse.
   `Action::RearrangePane` drops a pane on another of its tab: the center swaps, an edge places
@@ -631,10 +632,13 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   shown tab draws: a `Terminal` worker and the `TerminalPane` drawing its snapshots. Viewers
   stay attached while their pane is in the layout, shown or not.
 - **Viewer policy** (`herdr-core-protocol.md` §4). Every terminal attaches `resumed: true` at
-  the record's current grid, with `history: 2000` and this window's `display`. The pane in use,
-  the focused pane while the window is focused, sends FACTS, then RESIZE with its grid (Ghostty's
-  whole-pixel cell, `terminal::Size::report`, no padding, grid at the top left), then FOCUS(1);
-  RESIZE again on each grid change at most every 25 ms; FOCUS(0) when it stops being in use. The
+  the record's current grid, with `history: 2000` and this window's `display`. While the window
+  is in front, every terminal it shows sends FACTS, then RESIZE with its pane's grid (Ghostty's
+  whole-pixel cell, `terminal::Size::report`, no padding), and RESIZE again on each grid change
+  at most every 25 ms per pane. The pane in use, the focused pane, then sends FOCUS(1), and
+  FOCUS(0) when it stops being in use. The grid is at the pane's left, under padding of what the
+  pane's height leaves under whole rows, so at the pane's size its bottom row is on the pane's
+  bottom edge. The
   local terminal follows the record's `cols` × `rows` (kept by `size` events), never the pane.
   After a reconnect or a `restarted` event, viewers reattach `resumed` and reset their screen
   for the repaint.
@@ -642,7 +646,8 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   corners, no title bar and no traffic lights. `Chrome { drag_regions: true }` makes only the
   38 pt sidebar top row and tab strip (`.window_drag()`) move it. The view is the Agents
   sidebar (366 pt by default, `docs/sidebar.md`), the tab strip, and the tab area, where panes
-  sit at the model's `pane_rects` (`Geometry { gap: 1 }`) over a border-colored fill. Each pane
+  sit at the model's `pane_rects` (`Geometry { gap: 1, cell }`: split panes are whole cells)
+  on the terminal's background, with each gap between them filled in the border color. Each pane
   is a slot keyed by its id (`slot-<id>`), so another tab's pane is a new slot, not this one
   springing to a new rect. The slot and the terminal in it (`Transition::none()`, and
   `.instant_changes()` on the terminal's grid, not its root, whose frame keeps following the

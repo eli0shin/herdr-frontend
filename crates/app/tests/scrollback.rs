@@ -64,6 +64,14 @@ fn element(rt: &Runtime<State>, key: &str) -> Option<ElementInfo> {
         .find(|e| e.key.as_deref() == Some(key) && !e.exiting)
 }
 
+/// `key` in pn-1's slot: the other panes' terminals, resized to their panes, have scrollbacks
+/// and scrollbars too.
+fn in_pn1(rt: &Runtime<State>, key: &str) -> Option<ElementInfo> {
+    rt.elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some(key) && !e.exiting && e.path.contains("slot-pn-1/"))
+}
+
 fn focused(rt: &Runtime<State>) -> Option<String> {
     rt.elements()
         .into_iter()
@@ -239,7 +247,12 @@ fn a_trackpad_scrolls_the_scrollback_by_whole_lines() {
         .find(|e| e.key.as_deref() == Some("screen") && e.path.contains("pane-pn-1/"))
         .unwrap();
     let pane = element(&rt, "pane-pn-1").unwrap();
-    assert_eq!(grid.rect[1], pane.rect[1], "on its rows, never part of one");
+    assert!(
+        (grid.rect[1] + grid.rect[3] - (pane.rect[1] + pane.rect[3])).abs() <= 0.5,
+        "on its rows at the pane's bottom, never part of one: {:?} in {:?}",
+        grid.rect,
+        pane.rect
+    );
 
     // Back down past the bottom: following output again.
     up(&mut rt, -4.0);
@@ -250,14 +263,14 @@ fn a_trackpad_scrolls_the_scrollback_by_whole_lines() {
 fn the_scrollbar_shows_where_the_viewport_is_and_drags_it() {
     let (mut rt, fake, _) = runtime();
     hundred_lines(&mut rt, &fake);
-    assert!(element(&rt, "scrollbar").is_none(), "off, as Eli has it");
+    assert!(in_pn1(&rt, "scrollbar").is_none(), "off, as Eli has it");
     rt.state.with_settings(Settings {
         pane_scrollbars: true,
         ..Settings::fixture()
     });
     frames(&mut rt, 2);
-    let lane = element(&rt, "scrollbar").expect("the scrollbar");
-    let thumb = element(&rt, "scrollbar-thumb").unwrap();
+    let lane = in_pn1(&rt, "scrollbar").expect("the scrollbar");
+    let thumb = in_pn1(&rt, "scrollbar-thumb").unwrap();
     // At the bottom, the thumb sits at the lane's end.
     assert!((thumb.rect[1] + thumb.rect[3] - (lane.rect[1] + lane.rect[3])).abs() < 0.5);
 
@@ -275,7 +288,7 @@ fn the_scrollbar_shows_where_the_viewport_is_and_drags_it() {
     // None on the alternate screen.
     fake.output("t1", b"\x1b[?1049h");
     frames(&mut rt, 3);
-    assert!(element(&rt, "scrollbar").is_none());
+    assert!(in_pn1(&rt, "scrollbar").is_none());
 }
 
 fn type_text(rt: &mut Runtime<State>, text: &str) {

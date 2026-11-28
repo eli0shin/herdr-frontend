@@ -92,7 +92,10 @@ fn with_no_settings_file_the_window_is_elis_arctic_at_zoom_1_1() {
     let arctic = Theme::arctic().chrome();
     assert_eq!(element(&rt, "root").fill, arctic.canvas);
     assert_eq!(element(&rt, "sidebar").fill, arctic.chrome);
-    assert_eq!(element(&rt, "main").fill, arctic.border);
+    // The tab area is the terminals' background; only the gaps between split panes are the
+    // border color.
+    assert_eq!(element(&rt, "main").fill, rt.state.background());
+    assert_eq!(element(&rt, "gap-0").fill, arctic.border);
     assert_eq!(element(&rt, "brand-title").text_color, Some(arctic.muted));
     let colors = rt.state.viewers["t1"]
         .pane

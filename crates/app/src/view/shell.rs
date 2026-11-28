@@ -11,14 +11,17 @@
 //! │            list below (`view::sidebar`)
 //! └─ work column
 //!    ├─ tabs   38 pt: drags the window; the shown space's tab pills ([`super::tabs`])
-//!    └─ main   the shown tab's panes, bare, with a 1 pt gap that shows the border color;
-//!              over them each divider's 6 pt handle, each pane's top-edge grip while the
-//!              pointer is on that edge, and a dragged pane's drop preview
+//!    └─ main   the shown tab's panes, bare, with a 1 pt gap in the border color between split
+//!              panes; over them each divider's 6 pt handle, each pane's top-edge grip while
+//!              the pointer is on that edge, and a dragged pane's drop preview
 //! ```
 //!
 //! No title bar, no status row: terminals reach the window's bottom edge. A pane is its
-//! terminal's grid at the core's size, at the pane's top left; until its first snapshot it is
-//! the terminal's background.
+//! terminal's grid at the core's size, at the pane's left under what the pane's height leaves
+//! under whole rows, so at the pane's size it sits on the bottom edge; until its first snapshot
+//! it is the terminal's background. Only the gaps are the border color: the rest of the tab
+//! area is the terminal's background, so a frame drawn before the panes catch up with a grown
+//! tab area shows background there, not a flash of the border color.
 //!
 //! Colors are the theme's ([`crate::config::theme::Chrome`]), labels are in the settings'
 //! `ui_font`, and every size here is at zoom 1: Rune's zoom scales the whole view.
@@ -198,13 +201,23 @@ fn main(s: &State, cx: &mut Cx<State>) -> El {
     // The tab area follows the pointer for the grips: as the panes' parent it covers none of
     // them. Only a grip, drawn while the pointer is on its pane's top edge, covers a terminal's
     // top row; presses anywhere else on that row reach the terminal.
-    area.fill(c.border)
+    let gaps = s.model.gaps().into_iter().enumerate().map(|(i, r)| {
+        el().key(format!("gap-{i}"))
+            .absolute(r.x, r.y)
+            .size(r.w, r.h)
+            .fill(c.border)
+            .instant_changes()
+            .transition(Transition::none())
+            .inert()
+    });
+    area.fill(background)
         .on_pointer_move_local(|s: &mut State, p, tx| s.tab_area_pointer(Some((p.x, p.y)), tx))
         .on_hover_change(|s: &mut State, inside, tx| {
             if !inside {
                 s.tab_area_pointer(None, tx);
             }
         })
+        .children(gaps)
         .children(panes)
         .children(s.model.dividers().into_iter().map(divider))
         .children(grips)

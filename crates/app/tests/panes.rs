@@ -88,10 +88,22 @@ fn dragging_a_divider_resizes_the_panes_beside_it_and_writes_the_sizes() {
     rt.state.settle();
     frames(&mut rt, 2);
 
+    // It lands on the cell boundary nearest the pointer: pn-1 is whole cells, its grid filling
+    // it to the divider.
     let after = element(&rt, "pane-pn-1").rect;
+    let grid = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("screen") && e.path.contains("pane-pn-1/"))
+        .expect("pn-1's grid")
+        .rect;
+    let cols = rt.state.viewers["t1"].pane.as_ref().unwrap().snapshot.cols;
+    let cell = grid[2] / f32::from(cols);
+    // (Within a device pixel at the zoom, which Rune snaps both to.)
+    assert!((grid[2] - after[2]).abs() < 0.5, "{grid:?} in {after:?}");
     assert!(
-        (after[2] - (before[2] + 100.0)).abs() <= 1.0,
-        "{before:?} → {after:?}"
+        (after[2] - (before[2] + 100.0)).abs() <= cell / 2.0 + 0.5,
+        "{before:?} → {after:?}, cell {cell}"
     );
     let (Some(Size::Weight(a)), Some(Size::Weight(b))) =
         (size_of(&fake, "pn-1"), size_of(&fake, "c-1"))

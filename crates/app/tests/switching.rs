@@ -38,7 +38,7 @@ impl Pixels {
     }
 }
 
-/// What a run drew of its element, and the panes' area's fill: the split gaps' border color.
+/// What a run drew of its element, and the split gaps' border color.
 struct Run {
     frames: Vec<Pixels>,
     gap: [u8; 3],
@@ -157,7 +157,15 @@ fn run(name: &str, scene: &str, script: serde_json::Value, area: &str) -> Run {
             [x0, y0, x1 - x0, y1 - y0].map(|v| v.max(0.0) as usize)
         })
         .collect();
-    let fill = element(&tree, "main")["fill"].as_str().unwrap();
+    // The gaps' fill, or the tab area's where no split draws one.
+    let fill = tree["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["key"].as_str().is_some_and(|k| k.starts_with("gap-")))
+        .unwrap_or_else(|| element(&tree, "main"))["fill"]
+        .as_str()
+        .unwrap();
     let hex = |i: usize| u8::from_str_radix(&fill[i..i + 2], 16).unwrap();
     let gap = [hex(1), hex(3), hex(5)];
 

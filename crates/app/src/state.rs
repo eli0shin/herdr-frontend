@@ -12,23 +12,29 @@
 //! [`Viewer`] per terminal the shown tab draws, and applies the viewer policy of
 //! `herdr-core-protocol.md` §4 ("Recommended viewer policy"):
 //!
-//! - Every terminal attaches `resumed: true`, so attaching takes no size: hidden and unfocused
-//!   panes never do, and a viewer that comes back after a dropped connection doesn't either.
-//! - Only the pane in use, the focused pane while the window is focused, takes the size: FACTS
-//!   with the cell, then RESIZE with the pane's grid, then FOCUS(1) (§4 rule 4: the cell before
-//!   the size, so a program woken by it asks for the new cell). Each change of its grid sends
-//!   RESIZE again, at most every 25 ms and always the last one. When it stops being in use it
-//!   sends FOCUS(0), and takes the size again only when it is used again.
+//! - Every terminal attaches `resumed: true`, so attaching takes no size: hidden panes never do,
+//!   and a viewer that comes back after a dropped connection doesn't either.
+//! - Every terminal drawn in the window while it is in front (the shown tab's panes, the peek)
+//!   takes its pane's size: FACTS with the cell, then RESIZE with the pane's grid (§4 rule 4: the
+//!   cell before the size, so a program woken by it asks for the new cell). Each change of its
+//!   grid (a split, a close, a divider, the sidebar, the window, the zoom, the font) sends RESIZE
+//!   again, at most every 25 ms per terminal and always the last one. One that stops being drawn
+//!   in front (another tab, the window to the background) sends nothing more, and takes the size
+//!   again when it is drawn in front again.
+//! - The pane in use, the focused pane while the window is in front, also gets FOCUS(1), after
+//!   its RESIZE, and FOCUS(0) when it stops being in use.
 //! - A click in the pane in use takes the size back when the core holds it at another grid
-//!   (Herdr app attached, refit or reattached it). Nothing takes it back without real use.
+//!   (Herdr app attached, refit or reattached it). Nothing else takes it back without real use
+//!   or a change of the pane's grid.
 //! - DATA from any other viewer (a paste into a window in the background) first reports the grid
 //!   it should hold, so the core never applies a stale one.
 //! - The engine's replies to queries go as AUTOMATIC_INPUT, which takes nothing, where the stream
-//!   carries it; where it doesn't, only the terminal in use answers, as DATA, and only while no
-//!   other viewer has moved its grid.
+//!   carries it; where it doesn't, only a terminal drawn in front answers, as DATA, and only
+//!   while no other viewer has moved its grid.
 //! - Each terminal is drawn at the core's grid (its record's `cols` × `rows`, which `size` events
 //!   keep current), never the pane's: a pane bigger than it shows the background around it, a
-//!   smaller one clips it.
+//!   smaller one clips it. What the pane's height leaves under whole rows goes above the grid,
+//!   so at the pane's size its bottom row is on the pane's bottom edge ([`State::place_grids`]).
 //!
 //! Viewers stay attached while their pane is in the layout, shown or not, so switching back is
 //! instant and the program isn't sent to the headless size and back.
@@ -144,6 +150,10 @@ pub struct Viewer {
     /// The FACTS, RESIZE and FOCUS this viewer last sent.
     told_facts: Option<Display>,
     told_grid: Option<GridSize>,
+    /// It's drawn in the window in front, so it holds its pane's grid ([`State::fit`]).
+    sized: bool,
+    /// When it last sent RESIZE (app clock).
+    resized_at: f64,
     /// The core's grid changed away from `told_grid` since it was told: another viewer took the
     /// size.
     moved: bool,
@@ -355,9 +365,8 @@ pub struct State {
     /// The window's size in window points, as last reported.
     window_points: (f32, f32),
     window_active: bool,
-    /// The terminal that takes the size.
+    /// The terminal the keyboard is in, while the window is in front: it has FOCUS(1).
     in_use: Option<String>,
-    resized_at: f64,
     /// Every pump settles each terminal before it returns ([`Terminal::snapshot_now`]): scenes
     /// and fake-core tests, so a frame never races a worker.
     synchronous: bool,
@@ -560,7 +569,6 @@ impl State {
             window_points: crate::SIZE,
             window_active: true,
             in_use: None,
-            resized_at: f64::NEG_INFINITY,
             synchronous: false,
             home,
             control: None,
@@ -677,6 +685,9 @@ impl State {
             };
             self.font = base.adjusted(s.terminal_line_height, s.terminal_cell_width);
             *self.face.borrow_mut() = None;
+            // Panes are whole cells of the new font.
+            let area = self.model.geometry().area;
+            self.set_geometry(self.now, area);
         }
         if ui {
             self.ui_family = match &config.ui_font {
@@ -824,12 +835,20 @@ impl State {
             (w / k - self.sidebar.shown().unwrap_or(0.0)).max(0.0),
             (h / k - crate::view::shell::BAR).max(0.0),
         );
+        self.set_geometry(self.now, area);
+    }
+
+    /// The tab area as the model lays panes out in it: with the split gap, and the terminal's
+    /// cell in view points, so split panes are whole cells ([`model::geometry::snap`]).
+    fn set_geometry(&mut self, now: f64, area: model::Rect) {
+        let cell = self.face(self.scale).cell_pt();
         self.step(
-            self.now,
+            now,
             Event::Geometry(model::Geometry {
                 area,
                 gap: SPLIT_GAP,
                 zoom: 1.0,
+                cell,
             }),
         );
     }
@@ -1663,6 +1682,7 @@ impl State {
         changed |= self.keep_viewers();
         changed |= self.fit(now);
         changed |= self.drain_terminals();
+        changed |= self.place_grids();
         changed |= self.refresh_agents(now);
         changed | std::mem::take(&mut self.redraw)
     }
@@ -2070,6 +2090,8 @@ impl State {
             vt: (cols, rows, cell.width, cell.height),
             told_facts: None,
             told_grid: None,
+            sized: false,
+            resized_at: f64::NEG_INFINITY,
             moved: false,
             focus_sent: false,
             automatic_input: false,
@@ -2098,14 +2120,20 @@ impl State {
         }
     }
 
+    /// The whole device pixels in `points` at the window's scale. A pane the layout made a
+    /// whole number of cells wide is that many cells of pixels, though the float product may
+    /// fall a hair short of it.
+    fn px(&self, points: f32) -> u32 {
+        (points * self.scale + 1e-3).floor().max(0.0) as u32
+    }
+
     /// The grid a pane of `rect` points holds at the window's scale.
     pub fn grid_for(&self, rect: model::Rect) -> GridSize {
         let cell = self.face(self.scale).metrics.cell_size();
-        let px = |points: f32| (points * self.scale).floor().max(0.0) as u32;
         Size::new(
             ScreenSize {
-                width: px(rect.w),
-                height: px(rect.h),
+                width: self.px(rect.w),
+                height: self.px(rect.h),
             },
             cell,
             Padding::default(),
@@ -2115,7 +2143,8 @@ impl State {
         .grid
     }
 
-    /// Keeps each local terminal at the core's grid, and lets the pane in use take the size.
+    /// Keeps each local terminal at the core's grid, lets every terminal drawn in the window in
+    /// front take its pane's size, and gives the one the keyboard is in FOCUS(1).
     fn fit(&mut self, now: f64) -> bool {
         let cell = self.face(self.scale).metrics.cell_size();
         for viewer in self.viewers.values_mut() {
@@ -2159,46 +2188,110 @@ impl State {
                     self.link.send(&old, Out::Focus(false));
                 }
                 viewer.focus_sent = false;
-                // It takes the size again when it's used again.
-                viewer.told_grid = None;
             }
             self.in_use = in_use;
         }
-        let Some(address) = self.in_use.clone() else {
-            return false;
+
+        // Every terminal drawn in the window in front holds its pane's grid. None does while the
+        // window is in the background.
+        let shown: Vec<(String, GridSize)> = if self.window_active {
+            self.model
+                .visible_terminals()
+                .into_iter()
+                .filter(|a| {
+                    self.viewers
+                        .get(a)
+                        .is_some_and(|v| v.attach == Attach::Attached)
+                })
+                .filter_map(|a| {
+                    let grid = self.grid_for(self.rect_of(&a)?);
+                    Some((a, grid))
+                })
+                .collect()
+        } else {
+            Vec::new()
         };
-        let Some(rect) = self.rect_of(&address) else {
-            return false;
-        };
-        let grid = self.grid_for(rect);
-        let display = self.display();
-        let viewer = self.viewers.get_mut(&address).expect("in use");
-        if viewer.told_facts.as_ref() != Some(&display) {
-            self.link.send(&address, Out::Facts(display.clone()));
-            viewer.told_facts = Some(display);
-        }
-        if viewer.told_grid != Some(grid) {
-            let due = self.resized_at + RESIZE_EVERY;
-            if viewer.told_grid.is_some() && now < due {
-                self.ui.wake = Some(self.ui.wake.map_or(due, |w| w.min(due)));
-            } else {
-                self.link.send(
-                    &address,
-                    Out::Resize {
-                        cols: grid.columns,
-                        rows: grid.rows,
-                    },
-                );
-                viewer.told_grid = Some(grid);
-                viewer.moved = false;
-                self.resized_at = now;
+        for (address, viewer) in &mut self.viewers {
+            if viewer.sized && !shown.iter().any(|(a, _)| a == address) {
+                viewer.sized = false;
+                // It takes the size again when it's drawn in front again.
+                viewer.told_grid = None;
             }
         }
-        if !viewer.focus_sent && viewer.told_grid.is_some() {
+        let display = self.display();
+        for (address, grid) in shown {
+            let viewer = self.viewers.get_mut(&address).expect("attached above");
+            viewer.sized = true;
+            if viewer.told_facts.as_ref() != Some(&display) {
+                self.link.send(&address, Out::Facts(display.clone()));
+                viewer.told_facts = Some(display.clone());
+            }
+            if viewer.told_grid != Some(grid) {
+                let due = viewer.resized_at + RESIZE_EVERY;
+                if viewer.told_grid.is_some() && now < due {
+                    self.ui.wake = Some(self.ui.wake.map_or(due, |w| w.min(due)));
+                } else {
+                    self.link.send(
+                        &address,
+                        Out::Resize {
+                            cols: grid.columns,
+                            rows: grid.rows,
+                        },
+                    );
+                    viewer.told_grid = Some(grid);
+                    viewer.moved = false;
+                    viewer.resized_at = now;
+                }
+            }
+        }
+        if let Some(address) = self.in_use.clone()
+            && let Some(viewer) = self.viewers.get_mut(&address)
+            && !viewer.focus_sent
+            && viewer.told_grid.is_some()
+        {
             self.link.send(&address, Out::Focus(true));
             viewer.focus_sent = true;
         }
         false
+    }
+
+    /// Puts each drawn grid's rows where the pane's own grid has them: the pixels the pane's
+    /// height doesn't fill with whole rows go above the grid, which stays at the pane's left. So
+    /// a grid at the pane's size has its bottom row on the pane's bottom edge, and one at another
+    /// size (another viewer holds it, or a resize hasn't landed) starts at the same row, so
+    /// nothing jumps when the resize lands.
+    ///
+    /// It goes by the rects the view draws the panes at, laid out or not yet: unlike a RESIZE,
+    /// drawing on the first frame's estimate takes nothing.
+    fn place_grids(&mut self) -> bool {
+        let cell = self.face(self.scale).metrics.cell_size();
+        let peeked = self.model.peeked().map(str::to_owned);
+        let mut drawn: Vec<(String, f32)> = self
+            .shown_panes()
+            .into_iter()
+            .filter_map(|(_, rect, address)| Some((address?, rect.h)))
+            .filter(|(address, _)| peeked.as_ref() != Some(address))
+            .collect();
+        if let (Some(address), Some(area)) = (peeked, self.peek_area) {
+            drawn.push((address, area.h));
+        }
+        let mut changed = false;
+        for (address, h) in drawn {
+            let height = self.px(h);
+            let Some(pane) = self.viewers.get_mut(&address).and_then(|v| v.pane.as_mut()) else {
+                continue;
+            };
+            let top = if height >= cell.height {
+                height % cell.height.max(1)
+            } else {
+                0
+            };
+            if pane.padding.top != top {
+                pane.padding.top = top;
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Sends what the terminals encoded (replies as AUTOMATIC_INPUT, typing as DATA) and shows
@@ -2279,33 +2372,34 @@ impl State {
 
     /// A reply the terminal engine made to the program's query (rule 9): AUTOMATIC_INPUT, which
     /// never takes the size, on a stream that carries it. On one that doesn't (a machine whose
-    /// core predates it), the reply would go as DATA, which takes the size. So only the terminal
-    /// in use answers, and only while the core still holds it at the grid this window told:
-    /// once another viewer moved it, a reply (the mode-2048 report its resize brings) would take
-    /// the size back with no real use, and contradict the leader's own reply. Such replies are
-    /// dropped.
+    /// core predates it), the reply would go as DATA, which takes the size. So only a terminal
+    /// holding its size in the window in front answers, and only while the core still holds it
+    /// at the grid this window told: once another viewer moved it, a reply (the mode-2048 report
+    /// its resize brings) would take the size back with no real use, and contradict the leader's
+    /// own reply. Such replies are dropped.
     fn send_reply(&mut self, address: &str, bytes: Vec<u8>) {
         let Some(viewer) = self.viewers.get(address) else {
             return;
         };
         if viewer.automatic_input {
             self.link.send(address, Out::Automatic(bytes));
-        } else if self.in_use.as_deref() == Some(address) && !viewer.moved {
+        } else if viewer.sized && !viewer.moved {
             self.send_data(address, bytes);
         }
     }
 
     /// Input for the program, as DATA. DATA takes the size, and the core then applies the grid
     /// this viewer last reported (`herdr-core-protocol.md` §4), which may be stale. So a viewer
-    /// that isn't in use (a paste into a window in the background, a file landing after a
-    /// `terminal.put`) reports first the grid it should hold: its pane's, or the core's own for
-    /// a terminal no shown pane draws, which leaves the size where it is. The terminal in use
-    /// told its grid already ([`State::fit`]). Either way the core then holds the grid told
-    /// last, so the viewer is no longer `moved`.
+    /// that doesn't hold its size (a paste into a window in the background, a file landing after
+    /// a `terminal.put`) reports first the grid it should hold: its pane's, or the core's own for
+    /// a terminal no shown pane draws, which leaves the size where it is. A terminal drawn in the
+    /// window in front told its grid already ([`State::fit`]). Either way the core then holds
+    /// the grid told last, so the viewer is no longer `moved`.
     fn send_data(&mut self, address: &str, bytes: Vec<u8>) {
-        let in_use = self.in_use.as_deref() == Some(address);
-        let told = self.viewers.get(address).and_then(|v| v.told_grid);
-        if !(in_use && told.is_some())
+        let viewer = self.viewers.get(address);
+        let sized = viewer.is_some_and(|v| v.sized);
+        let told = viewer.and_then(|v| v.told_grid);
+        if !(sized && told.is_some())
             && let Some(grid) = self.grid_to_hold(address)
             && told != Some(grid)
         {
@@ -2428,14 +2522,7 @@ impl State {
         }
         self.area = Some(area);
         self.scale = scale;
-        self.step(
-            tx.clock(),
-            Event::Geometry(model::Geometry {
-                area: model::Rect::new(0.0, 0.0, area.w, area.h),
-                gap: SPLIT_GAP,
-                zoom: 1.0,
-            }),
-        );
+        self.set_geometry(tx.clock(), model::Rect::new(0.0, 0.0, area.w, area.h));
         self.pump(tx.clock());
         self.apply_ui(tx);
     }
