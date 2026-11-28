@@ -116,12 +116,14 @@ impl TerminalPane {
         (self.nudge() * face.metrics.cell_height as f32).round()
     }
 
-    /// The part of [`TerminalPane::nudge_px`] the worker's own viewport sits low by, under a
-    /// cell: by the time anything sent now reaches the worker, it has moved by every scroll sent
-    /// before it, whole rows included, and only its part row is left.
+    /// The part of [`TerminalPane::nudge_px`] the worker's own viewport sits low by: by the time
+    /// anything sent now reaches the worker, it has moved by every scroll sent before it, whole
+    /// rows included, and only its part row is left. The whole rows come off as the worker snaps
+    /// them ([`terminal::ON_ROW`]), before rounding to pixels, so a part row just under one is
+    /// still the part row it draws.
     pub fn worker_nudge_px(&self, face: &Face) -> f32 {
-        self.nudge_px(face)
-            .rem_euclid(face.metrics.cell_height.max(1) as f32)
+        let rows = (self.nudge() + terminal::ON_ROW).floor();
+        self.nudge_px(face) - rows * face.metrics.cell_height as f32
     }
 
     /// How many kitty images the pane holds pixels for: the ones its last view drew.
@@ -398,6 +400,35 @@ mod tests {
         vt.write(lines.as_bytes());
         then(&mut vt);
         vt.snapshot()
+    }
+
+    /// The worker's part row, as what goes to it takes it off the pointer: the drawn nudge less
+    /// the whole rows the worker has moved by, snapped as it snaps them.
+    #[test]
+    fn the_workers_part_row_is_the_drawn_nudge_less_whole_rows() {
+        let face = font::Font::jetbrains_mono(14.0).at(2.0).unwrap();
+        let cell = face.metrics.cell_height as f32;
+        // Just under a row, at rest: it draws a whole cell low, and so does the worker.
+        let mut pane = TerminalPane::new("pane-1", scrolled(|vt| vt.scroll_rows(20.995, 1)));
+        assert!((pane.nudge() - 0.995).abs() < 1e-4);
+        assert_eq!(pane.nudge_px(&face), cell);
+        assert_eq!(pane.worker_nudge_px(&face), pane.nudge_px(&face));
+        // Two rows more in flight: those come off.
+        pane.ahead = 2.0;
+        assert_eq!(
+            pane.worker_nudge_px(&face),
+            pane.nudge_px(&face) - 2.0 * cell
+        );
+        assert_eq!(pane.worker_nudge_px(&face), cell);
+        // A sum a hair under two rows is two rows, as the worker lands it.
+        let mut pane = TerminalPane::new("pane-1", scrolled(|vt| vt.scroll_rows(20.0, 1)));
+        pane.ahead = 1.999_999_9;
+        assert_eq!(pane.worker_nudge_px(&face), 0.0);
+        // Ahead downward past a part row: the worker's quarter row is left.
+        let mut pane = TerminalPane::new("pane-1", scrolled(|vt| vt.scroll_rows(20.25, 1)));
+        pane.ahead = -3.0;
+        assert_eq!(pane.nudge(), -2.75);
+        assert_eq!(pane.worker_nudge_px(&face), (0.25 * cell).round());
     }
 
     #[test]

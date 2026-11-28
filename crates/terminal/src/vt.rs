@@ -35,8 +35,9 @@ pub use select::AUTOSCROLL_EVERY;
 /// flick moves past before the worker has caught up with it.
 pub const OVERSCAN: u16 = 12;
 
-/// Within this much of a row is on it: what a smooth scroll's float sums can be off by.
-const ON_ROW: f32 = 1e-3;
+/// Within this much of a row is on it: what a smooth scroll's float sums can be off by. A view
+/// that works out where the worker's rows are snaps the same way.
+pub const ON_ROW: f32 = 1e-3;
 
 /// How a terminal starts.
 #[derive(Clone, Debug, PartialEq)]

@@ -53,7 +53,7 @@ pub use snapshot::{
 };
 pub use vt::{
     AUTOSCROLL_EVERY, ClipboardLocation, ColorScheme, Config, Event, IMAGE_STORAGE_LIMIT, Link,
-    OVERSCAN, Progress, Scroll, Scrollback, Theme, Vt,
+    ON_ROW, OVERSCAN, Progress, Scroll, Scrollback, Theme, Vt,
 };
 
 /// Called from the worker thread when there is something new for the UI: a snapshot to take or
