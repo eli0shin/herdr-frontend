@@ -275,7 +275,7 @@ panel buttons ([`14-panels--01-a-shell-tab`](images/parity/14-panels--01-a-shell
 
 | Item | Verdict | Evidence |
 | --- | --- | --- |
-| Pi resumes after a reboot: a reopened terminal is the same address with its labels, and 7501/DA aren't answered in a way that breaks Pi | Pass | Panes follow addresses (`app/shell.rs::after_a_dropped_connection_every_pane_reattaches_resumed`). The renderer leaves OSC 7501 queries to herdr-core: no program-status callback is set, so libghostty-vt never answers them. Replies the core confirms go as AUTOMATIC_INPUT (`app/shell.rs::every_pane_answers_queries_as_automatic_input`, `terminal/tests/vt.rs::leaves_queries_it_cannot_answer_unanswered`) |
+| Pi resumes after a reboot: a reopened terminal is the same address with its labels, and 7501/DA aren't answered in a way that breaks Pi | Pass | Panes follow addresses (`app/shell.rs::after_a_dropped_connection_every_pane_reattaches_resumed`). The renderer leaves OSC 7501 queries to herdr-core: no program-status callback is set, so libghostty-vt never answers them. Replies the core confirms go as AUTOMATIC_INPUT (`app/shell.rs::every_pane_answers_queries_as_automatic_input`, `terminal/tests/vt.rs::leaves_queries_it_cannot_answer_unanswered`). OSC 7577 resume reports are herdr-core's: the viewer draws, answers and raises nothing for them (`terminal/tests/vt.rs::program_resume_reports_are_left_to_the_core`) and `hc` never inherits a token (`herdr-client` `transport.rs::hc_never_gets_a_resume_token`). Pi comes back by itself with Pi 1.7.0 and the herdr-core release after 0.1.22 ([`osc-7577.md`](research/osc-7577.md)) |
 | Tab names follow Pi session names (`do tab.rename`) | Pass | `model/control.rs::renames_write_trimmed_names_and_empty_goes_back_to_automatic`; [`18-session--02-pi-names-the-tab`](images/parity/18-session--02-pi-names-the-tab.jpg) |
 | Kept terminals: new panes are `keep: true`, closing a pane ends its terminal | Pass | `model/layout.rs::a_new_tab_starts_a_labeled_terminal_then_goes_after_the_selected_tab` (`run.keep`), `::closing_a_pane_kills_its_terminal_and_focus_goes_back` |
 
@@ -328,7 +328,7 @@ copy of each rule, and its default key file is Eli's.
 | `herdr-app-nvim-links.mjs` | `src/links.rs`, `model/links.rs` |
 | `herdr-app-review-view.mjs` | `model/peek.rs::cmd_r_*`, `::without_one_cmd_r_starts_a_labelled_review_tab_in_the_shown_space` |
 | `herdr-app-dead-spaces.mjs` | `model/dead_spaces.rs` (a port, case for case) |
-| `hc-pi-resume.sh` | herdr-core and fish, not herdr-frontend (§18) |
+| `hc-pi-resume.sh` | herdr-core and fish, not herdr-frontend (§18). OSC 7577 replaces it once Pi 1.7.0 and the herdr-core release after 0.1.22 are installed ([`osc-7577.md`](research/osc-7577.md)) |
 | `herdr-font-preparation.py`, `herdr-app-font.swift` | Not ported: the prepared fonts are Herdr app's workaround. `terminal/tests/golden.rs::operator_mono_book`, `::operator_mono_styles_have_the_regular_cell` check the installed faces |
 
 ## Terminal rendering against Ghostty
