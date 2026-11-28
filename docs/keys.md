@@ -65,9 +65,9 @@ half-saved file. At start, a home without a key file gets the defaults written t
 
 ## Modes
 
-- **Prefix.** A key that starts longer bindings waits up to 1 s for the next one. The tab strip's
-  right end, before the machine label, shows the keys so far (`ctrl-g …`) until the sequence
-  runs, is dropped (an unbound sequence is swallowed whole) or times out.
+- **Prefix.** A key that starts longer bindings waits up to 1 s for the next one, until the
+  sequence runs, is dropped (an unbound sequence is swallowed whole) or times out. Nothing shows
+  the keys so far, as in Herdr app.
 - **Popup.** The file's `popup` keys come first, then the popup's own keys (§22 "Keys inside
   Eli's popups"), then one-key global bindings. `tab.close` and `pane.close` close the popup
   instead. Lists read ↑/↓, Ctrl+P/N, Page Up/Down (ten rows, `popup.page_up` and
@@ -123,8 +123,10 @@ bar opens over the peek while one is open, else over the focused pane.
 ## Keys help
 
 `cmd-/` (or `cmd-shift-/`) opens a 640 × 520 dialog. `model::help::rows` builds its rows from the
-effective keymap. A `global` key that `layout:eli` rebinds shows only under its new action. Rows
+effective keymap. A `global` key that `layout:eli` rebinds shows only under its new action. Each
+row lists its prefix sequences first, then its single keys (`ctrl-g t, cmd-t`), the order every
+key hint follows (`docs/popups.md`). Rows
 are grouped spaces, tabs, panes, agents, terminal and window, then popups and copy mode. Keys
 from the `terminal`, `popup` and `copy` sections carry their section's name. Typing filters by
 substring over titles, command names and keys. Esc, `cmd-/` again or a click outside closes the
-dialog. Scenes: `shell-keys-help`, `shell-prefix`, `shell-not-yet`.
+dialog. Scenes: `shell-keys-help`, `shell-not-yet`.

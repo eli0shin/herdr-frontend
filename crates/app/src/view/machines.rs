@@ -28,7 +28,7 @@ use rune::{Color, El, col, el, row, text};
 
 use crate::State;
 use crate::view::icons::{CHECK, MONITOR, PLUS, SERVER};
-use crate::view::list::{self, Item, More};
+use crate::view::list::{self, Item};
 use crate::view::overlay::{self, Place};
 
 pub const FILTER_PLACE: Place = Place::Top {
@@ -47,8 +47,15 @@ pub const ADD_PLACE: Place = Place::Dialog {
     height: None,
 };
 
-/// Rows of the Machines dialog and the add dialog that show at once.
-pub const SHOWN: usize = 8;
+/// The Machines dialog's list height: about eight rows; more scroll.
+pub const MACHINES_H: f32 = 8.0 * 50.0;
+/// The add dialog's list height: eight 36-point hosts; more scroll.
+pub const ADD_H: f32 = 8.0 * 36.0;
+
+/// The lists' scroll viewports: the machine filter's, the Machines dialog's, the add dialog's.
+pub const FILTER_ROWS: &str = "am-rows";
+pub const MACHINES_ROWS: &str = "machines-rows";
+pub const ADD_ROWS: &str = "add-rows";
 
 // ---- The machine filter -------------------------------------------------------------------------
 
@@ -114,7 +121,6 @@ pub fn filter_view(s: &State, list: &ListPopup) -> El {
             )
         })
         .collect();
-    let n = items.len();
     col()
         .w_full()
         .min_h(0.0)
@@ -126,7 +132,7 @@ pub fn filter_view(s: &State, list: &ListPopup) -> El {
             "Agents from",
             Some(overlay::note(s, "↑/↓ · Space · Enter only · Esc")),
         ))
-        .child(list::view(s, "am-rows", items, n, More::None))
+        .child(list::view(FILTER_ROWS, items, None))
 }
 
 // ---- Machines -----------------------------------------------------------------------------------
@@ -305,7 +311,7 @@ pub fn machines_view(s: &State, list: &ListPopup) -> El {
             .w_full()
             .wrap(),
         )
-        .child(list::view(s, "machines-rows", items, SHOWN, More::Both))
+        .child(list::view(MACHINES_ROWS, items, Some(MACHINES_H)))
         .children((others == 0).then(|| {
             overlay::note(s, "No other machines yet.")
                 .key("machines-empty")
@@ -417,5 +423,5 @@ pub fn add_view(s: &State, list: &ListPopup) -> El {
             None,
         ))
         .child(overlay::note(s, heading).key("add-heading"))
-        .child(list::view(s, "add-rows", items, SHOWN, More::Both))
+        .child(list::view(ADD_ROWS, items, Some(ADD_H)))
 }

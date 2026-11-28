@@ -392,7 +392,8 @@ pub struct PaletteRow {
     pub title: String,
     /// The group title it shows under when the palette is empty: "Recent" or its group.
     pub head: &'static str,
-    /// The first key that runs it, in Eli's syntax.
+    /// The key that runs it, in Eli's syntax: its prefix key when it has one
+    /// ([`crate::help::hint`]'s choice).
     pub key: Option<String>,
 }
 
@@ -607,12 +608,6 @@ fn entries() -> Vec<(Action, &'static str, String, &'static str)> {
             "App",
             "Keys".into(),
             "keybindings shortcuts help",
-        ),
-        (
-            Action::App(AppCommand::Reset),
-            "App",
-            "Reset to the default keys".into(),
-            "escape hatch broken restore",
         ),
         (
             Action::App(AppCommand::ZoomIn),

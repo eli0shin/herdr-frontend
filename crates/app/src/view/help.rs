@@ -11,8 +11,8 @@
 //!
 //! The dialog draws the model's list popup in the shared frame ([`crate::view::overlay`]): its
 //! query is the filter field's text, its cursor the highlighted row. Keys reach the model through
-//! the window's keymap first, so the field only types what the popup doesn't use. Unlike the
-//! pickers, the whole list scrolls (the wheel moves it; the cursor doesn't).
+//! the window's keymap first, so the field only types what the popup doesn't use. The wheel
+//! scrolls the list and leaves the cursor; a cursor moved out of view brings its row back.
 
 use model::help::{self, HelpRow};
 use model::mode::ListPopup;
@@ -23,6 +23,14 @@ use crate::view::overlay::{self, Place};
 
 pub const WIDTH: f32 = 640.0;
 pub const HEIGHT: f32 = 520.0;
+
+/// The list's scroll viewport.
+pub const ROWS: &str = "help-rows";
+
+/// Row `i`'s key: what the window reveals when the cursor moves to it.
+pub fn row_key(i: usize) -> String {
+    format!("help-row-{i}")
+}
 
 pub const PLACE: Place = Place::Dialog {
     width: WIDTH,
@@ -70,7 +78,7 @@ pub fn view(s: &State, list: &ListPopup) -> El {
         });
         body.push(
             row()
-                .key(format!("help-row-{i}"))
+                .key(row_key(i))
                 .w_full()
                 .h(26.0)
                 .px(10.0)
@@ -114,7 +122,7 @@ pub fn view(s: &State, list: &ListPopup) -> El {
         .child(overlay::field(s, "Type to filter\u{2026}", None, None))
         .child(
             col()
-                .key("help-rows")
+                .key(ROWS)
                 .w_full()
                 .grow(1.0)
                 .min_h(0.0)

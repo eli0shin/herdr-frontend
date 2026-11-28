@@ -14,7 +14,6 @@
 //! │     └─ tab-<id>  icon · name (at most 170 pt, cut short, its whole name as a tooltip) ·
 //! │                  " Z" when zoomed · a spinner while working, a dot when blocked or
 //! │                  done · × on the selected one
-//! ├─ prefix       the keys of a sequence part-way through (`ctrl-g …`)
 //! └─ tab-machine  where the shown space runs: "This computer", or the machine's name
 //! ```
 //!
@@ -35,7 +34,7 @@ use crate::State;
 use crate::config::programs::Program;
 use crate::state::tab_key;
 use crate::view::icons::{CLOSE, MONITOR, SERVER, SPINNER};
-use crate::view::shell::{BAR, label, program_icon};
+use crate::view::shell::{BAR, program_icon};
 
 /// A pill's height, corner radius and widest name.
 pub const PILL: f32 = 29.0;
@@ -107,7 +106,6 @@ pub fn view(s: &State, cx: &Cx<State>) -> El {
                 .scroll_x()
                 .child(pills_row(pills)),
         )
-        .children(prefix(s))
         .children(space.map(|space| machine(s, space)))
 }
 
@@ -247,29 +245,6 @@ fn wheel(s: &mut State, e: WheelEvent, tx: &mut Tx) -> bool {
         tx,
     );
     true
-}
-
-/// The prefix indicator: the keys of a sequence part-way through (`ctrl-g …`), until the next
-/// key or the prefix timeout.
-fn prefix(s: &State) -> Option<El> {
-    let c = &s.chrome;
-    let keys = s.model.mode().pending_keys()?;
-    let typed: Vec<String> = keys.iter().map(|p| p.to_string()).collect();
-    Some(
-        el().key("prefix")
-            .h(PILL)
-            .px(10.0)
-            .items_center()
-            .radius(6.0)
-            .fill(c.raised)
-            .border(1.0, c.border)
-            .child(
-                text(format!("{} \u{2026}", typed.join(" ")))
-                    .key("prefix-keys")
-                    .font(label(s))
-                    .color(c.foreground),
-            ),
-    )
 }
 
 /// Where the shown space runs, at the strip's end.

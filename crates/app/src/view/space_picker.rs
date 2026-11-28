@@ -1,7 +1,7 @@
 //! The space picker (`ctrl-g s`, Eli's `space-picker` mod, `feature-inventory.md` §3): 520 wide,
 //! at most 0.6 of the window, 40 from the top, titled "Spaces" with a "Go to space…" field.
 //! Rows: the space's number (1-9), its status glyph, its name (semibold when shown), its machine
-//! when remote and "N tabs". Twelve show at once, with "↑ N more" / "↓ N more".
+//! when remote and "N tabs". Twelve show at once; the rest scroll.
 //!
 //! Rows and matching are [`model::popups::space_rows`]; Enter goes to the space
 //! ([`model::Action::ShowSpace`]).
@@ -11,7 +11,7 @@ use model::popups::{self, SpaceRow};
 use rune::{El, col, el, row, text};
 
 use crate::State;
-use crate::view::list::{self, Item, More};
+use crate::view::list::{self, Item};
 use crate::view::overlay::{self, Place};
 
 pub const PLACE: Place = Place::Top {
@@ -20,8 +20,11 @@ pub const PLACE: Place = Place::Top {
     height: 0.6,
 };
 
-/// Rows shown at once.
-pub const SHOWN: usize = 12;
+/// The list's height: twelve 32-point rows; more scroll.
+pub const LIST_H: f32 = 12.0 * 32.0;
+
+/// The list's scroll viewport.
+pub const ROWS: &str = "space-rows";
 
 pub fn rows(s: &State, list: &ListPopup) -> Vec<SpaceRow> {
     popups::space_rows(&s.model, &list.query)
@@ -87,6 +90,6 @@ pub fn view(s: &State, list: &ListPopup) -> El {
             Some(overlay::note(s, "↑/↓ · Enter · Esc")),
         ))
         .child(overlay::field(s, "Go to space…", None, None))
-        .child(list::view(s, "space-rows", items, SHOWN, More::Both))
+        .child(list::view(ROWS, items, Some(LIST_H)))
         .children(empty)
 }

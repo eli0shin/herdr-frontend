@@ -36,6 +36,23 @@ fn element(rt: &Runtime<State>, key: &str) -> Option<ElementInfo> {
         .find(|e| e.key.as_deref() == Some(key) && !e.exiting)
 }
 
+/// Whether the element keyed `key` shows whole in the scroll viewport keyed `list`.
+fn in_view(rt: &Runtime<State>, list: &str, key: &str) -> bool {
+    let v = element(rt, list)
+        .unwrap_or_else(|| panic!("no {list}"))
+        .rect;
+    let r = element(rt, key).unwrap_or_else(|| panic!("no {key}")).rect;
+    r[1] >= v[1] - 0.5 && r[1] + r[3] <= v[1] + v[3] + 0.5
+}
+
+/// The wheel over the middle of the element keyed `key`, `dy` points (negative: content up,
+/// showing what's below), then frames enough for it to land.
+fn wheel_over(rt: &mut Runtime<State>, key: &str, dy: f32) {
+    let r = element(rt, key).unwrap_or_else(|| panic!("no {key}")).rect;
+    rt.wheel_xy(r[0] + r[2] / 2.0, r[1] + r[3] / 2.0, 0.0, dy);
+    frames(rt, 30);
+}
+
 fn focused(rt: &Runtime<State>) -> Option<String> {
     rt.elements()
         .into_iter()
@@ -159,15 +176,25 @@ fn the_palette_filters_runs_a_command_and_remembers_it() {
     assert!(element(&rt, "palette-head-tab").is_some());
     assert_eq!(text_of(&rt, "palette-title-0"), "New tab");
 
-    // ↑ stops at the top; ↓ moves and the window follows.
+    // ↑ stops at the top; ↓ moves and the list scrolls to keep it in view.
     press(&mut rt, "", Key::Up);
     assert_eq!(list(&rt).cursor, 0);
+    let height = palette.rect[3];
     for _ in 0..12 {
         press(&mut rt, "", Key::Down);
     }
+    frames(&mut rt, 2);
     assert_eq!(list(&rt).cursor, 12);
-    assert!(element(&rt, "palette-row-12").is_some(), "in view");
-    assert!(element(&rt, "palette-row-0").is_none(), "scrolled out");
+    assert!(in_view(&rt, "palette-rows", "palette-row-12"));
+    assert!(
+        !in_view(&rt, "palette-rows", "palette-row-0"),
+        "scrolled out"
+    );
+    assert_eq!(
+        element(&rt, "palette").unwrap().rect[3],
+        height,
+        "the palette keeps its height"
+    );
 
     type_text(&mut rt, "zoom in");
     assert_eq!(list(&rt).query, "zoom in");
@@ -195,6 +222,64 @@ fn the_palette_filters_runs_a_command_and_remembers_it() {
     assert_eq!(*rt.state.model.mode(), Mode::Normal);
     frames(&mut rt, 2);
     assert_eq!(pane_focused(&rt), before, "and solid again once it closes");
+}
+
+#[test]
+fn the_palette_is_one_flat_list_the_wheel_scrolls_without_moving_the_cursor() {
+    let (mut rt, _) = runtime();
+    ch(&mut rt, "⌘⇧", 'p');
+    frames(&mut rt, 2);
+    let rows = list(&rt).rows;
+    // Every row and group title is laid out, on screen or not.
+    assert!(element(&rt, &format!("palette-row-{}", rows - 1)).is_some());
+    assert!(element(&rt, "palette-head-app").is_some());
+    assert!(!in_view(&rt, "palette-rows", "palette-head-app"));
+    let height = element(&rt, "palette").unwrap().rect[3];
+    let first = element(&rt, "palette-row-0").unwrap().rect;
+
+    // The wheel scrolls the list; the cursor stays where it was, out of view.
+    wheel_over(&mut rt, "palette-rows", -200.0);
+    assert_eq!(list(&rt).cursor, 0, "the wheel leaves the cursor");
+    let moved = element(&rt, "palette-row-0").unwrap().rect;
+    assert!(moved[1] < first[1] - 100.0, "{first:?} → {moved:?}");
+    assert_eq!(element(&rt, "palette").unwrap().rect[3], height);
+    // Core news (a relist) keeps where it scrolled.
+    rt.state.settle();
+    frames(&mut rt, 2);
+    assert_eq!(element(&rt, "palette-row-0").unwrap().rect, moved);
+    wheel_over(&mut rt, "palette-rows", 100.0);
+    assert_eq!(list(&rt).cursor, 0);
+
+    // A key moves the cursor, and its row comes back into view.
+    wheel_over(&mut rt, "palette-rows", -400.0);
+    press(&mut rt, "", Key::Down);
+    frames(&mut rt, 2);
+    assert_eq!(list(&rt).cursor, 1);
+    assert!(in_view(&rt, "palette-rows", "palette-row-1"));
+    assert!(!in_view(&rt, "palette-rows", "palette-head-tab"));
+    // Row 0 opens the Tab group: it comes into view with the group's title.
+    press(&mut rt, "", Key::Up);
+    frames(&mut rt, 2);
+    assert!(in_view(&rt, "palette-rows", "palette-row-0"));
+    assert!(
+        in_view(&rt, "palette-rows", "palette-head-tab"),
+        "with its group's title"
+    );
+}
+
+#[test]
+fn a_list_that_fits_doesnt_scroll() {
+    let (mut rt, _) = runtime();
+    ch(&mut rt, "⌃", 'g');
+    ch(&mut rt, "", 's');
+    frames(&mut rt, 2);
+    assert_eq!(list(&rt).popup, Popup::SpacePicker);
+    let cursor = list(&rt).cursor;
+    let before = element(&rt, "space-row-0").unwrap().rect;
+    wheel_over(&mut rt, "space-rows", -200.0);
+    wheel_over(&mut rt, "space-rows", 200.0);
+    assert_eq!(list(&rt).cursor, cursor, "the wheel leaves the cursor");
+    assert_eq!(element(&rt, "space-row-0").unwrap().rect, before);
 }
 
 #[test]

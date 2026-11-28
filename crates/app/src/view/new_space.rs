@@ -2,7 +2,7 @@
 //! `feature-inventory.md` §11): 640 wide, at most 0.6 of the window, 40 from the top, titled "New
 //! space" (or "New space on <machine>") with a "New space in…" field. Rows: the folder's name
 //! (semibold), its parent (dim, `~` for home) and its tag ("here", "repo", "path"). Twelve show at
-//! once, with "↓ N more"; "Loading folders…" until the space's machine answers.
+//! once and the rest scroll; "Loading folders…" until the space's machine answers.
 //!
 //! The folders and their ranking are [`model::folders`]; Enter makes the space there
 //! ([`model::Action::NewSpaceIn`]).
@@ -12,7 +12,7 @@ use model::mode::ListPopup;
 use rune::{El, col, row, text};
 
 use crate::State;
-use crate::view::list::{self, Item, More};
+use crate::view::list::{self, Item};
 use crate::view::overlay::{self, Place};
 
 pub const PLACE: Place = Place::Top {
@@ -21,8 +21,11 @@ pub const PLACE: Place = Place::Top {
     height: 0.6,
 };
 
-/// Rows shown at once.
-pub const SHOWN: usize = 12;
+/// The list's height: twelve 32-point rows; more scroll.
+pub const LIST_H: f32 = 12.0 * 32.0;
+
+/// The list's scroll viewport.
+pub const ROWS: &str = "folder-rows";
 
 pub fn rows(s: &State, list: &ListPopup) -> Vec<Folder> {
     model::popups::new_space_rows(&s.model, &list.query)
@@ -105,7 +108,7 @@ pub fn view(s: &State, list: &ListPopup) -> El {
             col()
                 .w_full()
                 .min_h(0.0)
-                .child(list::view(s, "folder-rows", items, SHOWN, More::Below))
+                .child(list::view(ROWS, items, Some(LIST_H)))
                 .children(loading_note)
                 .children(empty),
         )

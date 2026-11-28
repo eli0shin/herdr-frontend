@@ -19,7 +19,7 @@ use rune::{El, col, row, text};
 
 use crate::State;
 use crate::view::icons::COMMAND;
-use crate::view::list::{self, Item, More};
+use crate::view::list::{self, Item};
 use crate::view::overlay::{self, Place};
 
 pub const PLACE: Place = Place::Top {
@@ -28,8 +28,11 @@ pub const PLACE: Place = Place::Top {
     height: 0.85,
 };
 
-/// Rows shown at once (`SHOWN`).
-pub const SHOWN: usize = 10;
+/// The list's height: ten 32-point rows (Herdr app's `LIST_H`); more scroll.
+pub const LIST_H: f32 = 10.0 * 32.0;
+
+/// The list's scroll viewport.
+pub const ROWS: &str = "palette-rows";
 
 pub fn rows(s: &State, list: &ListPopup) -> Vec<PaletteRow> {
     popups::palette_rows(&s.model, &list.query)
@@ -101,7 +104,7 @@ pub fn view(s: &State, list: &ListPopup) -> El {
         .px(16.0)
         .py(14.0)
     } else {
-        list::view(s, "palette-rows", items, SHOWN, More::None).mb(6.0)
+        list::view(ROWS, items, Some(LIST_H)).mb(6.0)
     };
     col()
         .w_full()
