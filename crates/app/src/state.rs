@@ -73,6 +73,7 @@ use serde_json::{Map, Value, json};
 use terminal::{
     ActiveScreen, CellSize, GridSize, MouseAction, MouseButton, MouseEvent, OptionAsAlt, Output,
     Padding, PaddingBalance, ScreenSize, Scroll, SelectAction, SelectEvent, Size, Terminal, Theme,
+    latency,
 };
 
 use crate::config::settings::{self, Settings, UI_FONT_SIZE};
@@ -107,6 +108,12 @@ pub const SPLIT_GAP: f32 = 1.0;
 
 /// How long a scene or test waits for a terminal to settle.
 const SETTLE: Duration = Duration::from_secs(5);
+
+/// How long an input handler waits for the terminal worker to encode a key or click it handed
+/// over. Rune polls once more right after a handler, in the same frame: with the bytes there,
+/// that poll sends them, instead of the next frame's a refresh later (`docs/latency.md`). An
+/// idle worker answers in microseconds; this bounds the wait behind a flood of output.
+const ENCODE_WAIT: Duration = Duration::from_millis(2);
 
 /// The window points Rune gives a notched mouse wheel's step on macOS (its `LINE_POINTS`).
 const WHEEL_NOTCH: f32 = 40.0;
@@ -201,6 +208,7 @@ impl Viewer {
             Some(pane) => pane.show(snapshot),
             None => {
                 let mut pane = TerminalPane::new(self.key.clone(), snapshot);
+                pane.terminal = self.terminal.id();
                 pane.focused = self.focused;
                 pane.preedit = self.preedit.clone();
                 self.pane = Some(pane);
@@ -2507,6 +2515,7 @@ impl State {
         }
         self.link.send(address, Out::Input(bytes));
         if let Some(viewer) = self.viewers.get_mut(address) {
+            latency::mark(latency::Stage::Sent, viewer.terminal.id());
             viewer.moved = false;
         }
     }
@@ -2762,7 +2771,9 @@ impl State {
             if !self.keys_down.contains(&down) {
                 self.keys_down.push(down);
             }
+            latency::begin("key", viewer.terminal.id(), tx.input_time());
             viewer.terminal.key(key);
+            viewer.terminal.handled(ENCODE_WAIT);
         }
         self.after_input(tx);
         true
@@ -2830,7 +2841,9 @@ impl State {
             Ime::Commit(text) => {
                 viewer.set_preedit(None);
                 if in_use {
+                    latency::begin("text", viewer.terminal.id(), tx.input_time());
                     viewer.terminal.input(text.as_bytes());
+                    viewer.terminal.handled(ENCODE_WAIT);
                 }
                 s.after_input(tx);
                 true
@@ -3184,11 +3197,13 @@ impl State {
             }
             Phase::Down => {
                 let gesture = if in_use && viewer.tracks_mouse() && !mods.shift {
+                    latency::begin("click", viewer.terminal.id(), tx.input_time());
                     // The program took the click: an old selection can't be copied again.
                     viewer.terminal.clear_selection();
                     viewer
                         .terminal
                         .mouse(report(MouseAction::Press, Some(button), false));
+                    viewer.terminal.handled(ENCODE_WAIT);
                     Some(Gesture::Report(button))
                 } else if button == MouseButton::Left {
                     viewer.terminal.select(select(SelectAction::Press));
@@ -3222,7 +3237,8 @@ impl State {
                 }) if a == address => {
                     viewer
                         .terminal
-                        .mouse(report(MouseAction::Release, Some(held), false))
+                        .mouse(report(MouseAction::Release, Some(held), false));
+                    viewer.terminal.handled(ENCODE_WAIT);
                 }
                 Some(Press {
                     address: a,
@@ -3597,6 +3613,7 @@ impl State {
         }
         // The socket goes with the window, even when the process ends before the state drops.
         s.control = None;
+        latency::finish();
     }
 }
 

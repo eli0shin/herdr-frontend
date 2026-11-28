@@ -62,6 +62,8 @@ pub struct TerminalPane {
     /// Rows the window has scrolled the scrollback, up for positive, that the snapshot doesn't
     /// show yet: the smooth scrolls sent to the worker that it hasn't answered.
     pub ahead: f32,
+    /// The terminal it draws ([`terminal::Terminal::id`]), for the latency trace; 0 for none.
+    pub terminal: u64,
     rows: RefCell<RowCache>,
     /// The rows drawn above and below the screen, built apart so the screen's cache counts only
     /// its own.
@@ -80,6 +82,7 @@ impl TerminalPane {
             preedit: None,
             option_as_alt: OptionAsAlt::Both,
             ahead: 0.0,
+            terminal: 0,
             rows: RefCell::new(RowCache::default()),
             above: RefCell::new(RowCache::default()),
             below: RefCell::new(RowCache::default()),
@@ -189,6 +192,7 @@ impl TerminalPane {
                 std::mem::take(&mut cache.spill),
             )
         };
+        terminal::latency::mark(terminal::latency::Stage::Built, self.terminal);
         // The backgrounds alone, under the images between them and the text.
         let fills = fills.map(|rows| {
             grid(snapshot.cols, cell_w, cell_h, rows)

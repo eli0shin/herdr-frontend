@@ -96,10 +96,11 @@ The tracker holds the dependency graph. These are the stages:
   an isolated herdr-frontend home.
 - UI is checked headlessly: Rune scenes, `--snap`, `--tree`, `--script`, and
   `App::headless_runtime` tests. Never drive input on Eli's real display.
-- The end-to-end harness (`just e2e`, `docs/e2e.md`) is the one exception that opens windows on
-  his display. It runs the full app and Herdr app on isolated cores and homes. It sends keys to
-  herdr-frontend through its control socket, never OS-level input. Feature tickets add their
-  steps to `crates/app/tests/e2e/scenarios/`.
+- Two harnesses are the exceptions that open windows on his display, each app on an isolated
+  core and home, with keys sent to herdr-frontend through its control socket, never OS-level
+  input. The end-to-end harness (`just e2e`, `docs/e2e.md`) runs the full app and Herdr app;
+  feature tickets add their steps to `crates/app/tests/e2e/scenarios/`. The latency harness
+  (`just latency`, `docs/latency.md`) runs the release app and times its keys to the screen.
 - Two checks are required before a merge. GitHub's `ci` job runs `just --list` and `just test`
   (pin check, fmt, clippy, tests and the bindings check) on a free `ubuntu-latest` runner, by Eli's
   choice (macOS runners run only the release build). It runs that recipe rather than repeating its commands, with the

@@ -91,6 +91,24 @@ pub fn live_with(link: Live, home: Option<Home>, harness: bool) -> App<State> {
     if let Some(tap) = tap {
         app = app.on_frame_drawn(move |rt| tap.record(rt));
     }
+    // `HERDR_FRONTEND_LATENCY=<file>`: each frame, for the input-to-frame trace (`docs/latency.md`).
+    if terminal::latency::enabled() {
+        app = app
+            .on_frame_encoded(|f| match f.outcome() {
+                rune::FrameOutcome::Drawn => terminal::latency::drawn(terminal::latency::Frame {
+                    seq: f.seq(),
+                    started: f.started(),
+                    drawn: f.at(),
+                    target: f.presents_at(),
+                    hz: f.refresh_hz(),
+                    update_ms: f.update_ms(),
+                    encode_ms: f.encode_ms(),
+                }),
+                rune::FrameOutcome::Skipped => terminal::latency::skipped(f.seq(), f.at()),
+                _ => {}
+            })
+            .on_frame_presented(|p| terminal::latency::presented(p.seq(), p.presented_at()));
+    }
     app
 }
 

@@ -502,3 +502,18 @@ fn a_kitty_animation_plays_on_the_worker() {
     // Stopped: no more frames come by themselves.
     assert!(wakes.recv_timeout(Duration::from_millis(200)).is_err());
 }
+
+/// Once `handled` returns true, the key handed over before it is already encoded: an input
+/// handler that waits for it can send the bytes in the same frame.
+#[test]
+fn handled_means_the_keys_sent_before_are_in_the_output() {
+    let (terminal, _wakes) = spawn(config());
+    // The worker has started and is idle.
+    terminal.snapshot_now(PATIENCE).expect("a first snapshot");
+    terminal.key(KeyEvent::text(GHOSTTY_KEY_A, "a"));
+    assert!(terminal.handled(PATIENCE));
+    assert_eq!(
+        terminal.output().try_recv(),
+        Ok(Output::Input(b"a".to_vec()))
+    );
+}
