@@ -635,8 +635,9 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   is in front, every terminal it shows sends FACTS, then RESIZE with its pane's grid (Ghostty's
   whole-pixel cell, `terminal::Size::report`, no padding), and RESIZE again on each grid change
   at most every 25 ms per pane. The pane in use, the focused pane, then sends FOCUS(1), and
-  FOCUS(0) when it stops being in use. The grid sits at the pane's bottom left: what the pane's
-  height leaves under whole rows is padding above it. The
+  FOCUS(0) when it stops being in use. The grid is at the pane's left, under padding of what the
+  pane's height leaves under whole rows, so at the pane's size its bottom row is on the pane's
+  bottom edge. The
   local terminal follows the record's `cols` × `rows` (kept by `size` events), never the pane.
   After a reconnect or a `restarted` event, viewers reattach `resumed` and reset their screen
   for the repaint.

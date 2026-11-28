@@ -33,7 +33,8 @@
 //!   while no other viewer has moved its grid.
 //! - Each terminal is drawn at the core's grid (its record's `cols` × `rows`, which `size` events
 //!   keep current), never the pane's: a pane bigger than it shows the background around it, a
-//!   smaller one clips it. The grid sits at the pane's bottom left ([`State::place_grids`]).
+//!   smaller one clips it. What the pane's height leaves under whole rows goes above the grid,
+//!   so at the pane's size its bottom row is on the pane's bottom edge ([`State::place_grids`]).
 //!
 //! Viewers stay attached while their pane is in the layout, shown or not, so switching back is
 //! instant and the program isn't sent to the headless size and back.
@@ -2254,9 +2255,11 @@ impl State {
         false
     }
 
-    /// Sits each drawn grid on its pane's bottom edge: the pixels the pane's height doesn't fill
-    /// with whole rows go above the grid, which stays at the pane's left. A grid taller than its
-    /// pane (another viewer holds the size, or a resize hasn't landed) keeps to the top.
+    /// Puts each drawn grid's rows where the pane's own grid has them: the pixels the pane's
+    /// height doesn't fill with whole rows go above the grid, which stays at the pane's left. So
+    /// a grid at the pane's size has its bottom row on the pane's bottom edge, and one at another
+    /// size (another viewer holds it, or a resize hasn't landed) starts at the same row, so
+    /// nothing jumps when the resize lands.
     ///
     /// It goes by the rects the view draws the panes at, laid out or not yet: unlike a RESIZE,
     /// drawing on the first frame's estimate takes nothing.
@@ -2278,7 +2281,11 @@ impl State {
             let Some(pane) = self.viewers.get_mut(&address).and_then(|v| v.pane.as_mut()) else {
                 continue;
             };
-            let top = height.saturating_sub(u32::from(pane.snapshot.rows) * cell.height);
+            let top = if height >= cell.height {
+                height % cell.height.max(1)
+            } else {
+                0
+            };
             if pane.padding.top != top {
                 pane.padding.top = top;
                 changed = true;

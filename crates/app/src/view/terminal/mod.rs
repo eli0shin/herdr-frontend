@@ -5,8 +5,8 @@
 //! the terminal's background around it, and a smaller one clips it. The grid sits at the pane's
 //! top left after its padding, as Ghostty does with `window-padding-balance = false`, with no
 //! balancing (`docs/research/feature-inventory.md` §1 "Terminal grid centering"). The app sets
-//! the top padding to what the pane's height leaves under whole rows, so the bottom row sits on
-//! the pane's bottom edge (`State::place_grids`).
+//! the top padding to what the pane's height leaves under whole rows, so a grid at the pane's
+//! size has its bottom row on the pane's bottom edge (`State::place_grids`).
 //!
 //! While the pane has the keyboard, the cursor's cell is the input method's caret
 //! (`El::ime_cursor`), even when the program hides the cursor, so the candidate window opens

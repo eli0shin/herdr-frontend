@@ -17,10 +17,11 @@
 //! ```
 //!
 //! No title bar, no status row: terminals reach the window's bottom edge. A pane is its
-//! terminal's grid at the core's size, at the pane's bottom left; until its first snapshot it is
-//! the terminal's background. Only the gaps are the border color: the rest of the tab area is
-//! the terminal's background, so a frame drawn before the panes catch up with a grown tab area
-//! shows background there, not a flash of the border color.
+//! terminal's grid at the core's size, at the pane's left under what the pane's height leaves
+//! under whole rows, so at the pane's size it sits on the bottom edge; until its first snapshot
+//! it is the terminal's background. Only the gaps are the border color: the rest of the tab
+//! area is the terminal's background, so a frame drawn before the panes catch up with a grown
+//! tab area shows background there, not a flash of the border color.
 //!
 //! Colors are the theme's ([`crate::config::theme::Chrome`]), labels are in the settings'
 //! `ui_font`, and every size here is at zoom 1: Rune's zoom scales the whole view.

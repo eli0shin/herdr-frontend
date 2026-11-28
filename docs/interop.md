@@ -31,9 +31,10 @@ What herdr-frontend does (`crates/app/src/state.rs`):
 
 Every terminal is drawn at the core's grid, which the record's `cols` × `rows` keep current from
 `size` events. The pane's own grid isn't used. When another viewer holds the size, a pane bigger
-than the grid shows background around it, and a smaller pane clips it. The grid sits at the
-pane's bottom left, so what the pane's height leaves under whole rows is background above the
-grid. Split panes are laid out in whole cells, so a grid that holds its pane's size fills it to
+than the grid shows background around it, and a smaller pane clips it. What the pane's height
+leaves under whole rows is background above the grid, so a grid at the pane's size has its
+bottom row on the pane's bottom edge, and the rows of a grid at another size stay where they are
+when the resize lands. Split panes are laid out in whole cells, so a grid that holds its pane's size fills it to
 the divider. herdr-frontend takes the size only for panes it shows while its window is in front,
 and takes it back from another viewer only on real use or when the pane's grid changes.
 
