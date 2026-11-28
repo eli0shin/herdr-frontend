@@ -748,3 +748,102 @@ fn select_all_takes_the_scrollback_too() {
     assert!(text.starts_with("line 1\nline 2\n"), "{text:?}");
     assert!(text.trim_end().ends_with("line 30"), "{text:?}");
 }
+
+fn text(row: &terminal::Row) -> String {
+    row.text().trim_end().to_owned()
+}
+
+#[test]
+fn a_snapshot_carries_the_rows_around_the_viewport() {
+    let mut vt = Vt::new(&config());
+    vt.write(b"only\r\n$ ");
+    let s = vt.snapshot();
+    assert!(s.above.is_empty() && s.below.is_empty(), "no scrollback");
+    assert_eq!(s.cursor.position, Some((2, 1)));
+
+    vt.write(&lines(100));
+    let s = vt.snapshot();
+    assert_eq!(s.screen.len(), 24);
+    assert_eq!(s.line(0), "line 78");
+    assert_eq!(s.above.len(), usize::from(terminal::OVERSCAN));
+    assert_eq!(s.above.last().map(|r| text(r)), Some("line 77".into()));
+    assert!(s.below.is_empty(), "nothing below the bottom");
+    // The cursor is still counted from the viewport's top.
+    assert_eq!(s.cursor.position, Some((0, 23)));
+
+    vt.scroll(Scroll::Delta(-30));
+    let s = vt.snapshot();
+    assert_eq!(s.line(0), "line 48");
+    assert_eq!(s.above.last().map(|r| text(r)), Some("line 47".into()));
+    assert_eq!(s.below.first().map(|r| text(r)), Some("line 72".into()));
+    assert_eq!(s.below.len(), usize::from(terminal::OVERSCAN));
+
+    vt.scroll(Scroll::Top);
+    assert!(vt.snapshot().above.is_empty(), "the top of the scrollback");
+}
+
+#[test]
+fn scrolling_by_rows_leaves_part_of_a_row_in_view() {
+    let mut vt = Vt::new(&config());
+    vt.write(&lines(100));
+    // A row and a quarter up: the viewport moves one row and sits a quarter of one lower.
+    vt.scroll_rows(1.25, 1);
+    let s = vt.snapshot();
+    assert_eq!((s.scrollbar.offset, s.nudge, s.scrolled), (76, 0.25, 1));
+    assert_eq!(s.line(0), "line 77");
+    // Back down a quarter is on a row again; down past the bottom stops there, on its rows.
+    vt.scroll_rows(-0.25, 2);
+    let s = vt.snapshot();
+    assert_eq!((s.scrollbar.offset, s.nudge), (76, 0.0));
+    vt.scroll_rows(-2.5, 3);
+    let s = vt.snapshot();
+    assert_eq!((s.scrollbar.offset, s.nudge, s.scrolled), (77, 0.0, 3));
+    assert!(s.scrollbar.at_bottom);
+    // A sum a float can't hit exactly still lands on its row.
+    for seq in 4..14 {
+        vt.scroll_rows(0.1, seq);
+    }
+    let s = vt.snapshot();
+    assert_eq!((s.scrollbar.offset, s.nudge), (76, 0.0));
+    // At the top there's no row above to show part of.
+    vt.scroll(Scroll::Top);
+    vt.scroll_rows(0.5, 14);
+    assert_eq!(vt.snapshot().nudge, 0.0);
+    // Any other scroll drops the part row; so does output that moves the viewport.
+    vt.scroll(Scroll::Row(40));
+    vt.scroll_rows(0.5, 15);
+    assert_eq!(vt.snapshot().nudge, 0.5);
+    vt.scroll(Scroll::Delta(3));
+    assert_eq!(vt.snapshot().nudge, 0.0);
+    vt.scroll(Scroll::Bottom);
+    vt.scroll_rows(0.5, 16);
+    assert_eq!(vt.snapshot().nudge, 0.5, "half a row up from the bottom");
+    // Output the bottom follows keeps it, so a slow scroll still leaves a streaming bottom.
+    vt.write(b"more\r\n");
+    let s = vt.snapshot();
+    assert!(s.scrollbar.at_bottom);
+    assert_eq!(s.nudge, 0.5, "following output, half a row up");
+    vt.write(b"and more\r\n");
+    vt.scroll_rows(0.6, 17);
+    let s = vt.snapshot();
+    assert!(!s.scrollbar.at_bottom);
+    assert_eq!(s.scrollbar.offset, s.scrollbar.total - s.scrollbar.len - 1);
+    assert!((s.nudge - 0.1).abs() < 1e-4, "{}", s.nudge);
+}
+
+/// A frame a program holds (synchronized output) shows the rows from when the hold began, so
+/// it reports the smooth scroll and part row of then; the scrolls since show when it ends.
+#[test]
+fn a_held_frame_reports_the_scroll_it_shows() {
+    let mut vt = Vt::new(&config());
+    vt.write(&lines(100));
+    vt.scroll_rows(1.5, 1);
+    assert_eq!(vt.snapshot().nudge, 0.5);
+    vt.write(b"\x1b[?2026h");
+    vt.scroll_rows(1.25, 2);
+    let s = vt.snapshot();
+    assert_eq!((s.scrollbar.offset, s.nudge, s.scrolled), (76, 0.5, 1));
+    vt.write(b"\x1b[?2026l");
+    let s = vt.snapshot();
+    assert_eq!((s.scrollbar.offset, s.nudge, s.scrolled), (75, 0.75, 2));
+}

@@ -52,7 +52,7 @@
 //! encoded here: the FOCUS frames above are the core's to turn into `CSI I` and `CSI O`.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -177,8 +177,11 @@ pub struct Viewer {
     pub preedit: Option<String>,
     /// The find bar: open or not, and its query, which stays while it's closed.
     pub find: Option<FindBar>,
-    /// Trackpad travel not yet a whole line, in points.
+    /// Trackpad travel not yet a whole line, in points, while the wheel goes to the program.
     wheel: f32,
+    /// Smooth scrolls sent to the worker that the shown snapshot doesn't show yet: each
+    /// request's number and its rows, up for positive ([`Terminal::scroll_rows`]).
+    scrolls: VecDeque<(u64, f32)>,
     /// Cmd is held over the grid, so the link under the pointer is underlined.
     hovering_link: bool,
 }
@@ -192,6 +195,8 @@ pub struct FindBar {
 
 impl Viewer {
     fn show(&mut self, snapshot: terminal::Snapshot) {
+        let scrolled = snapshot.scrolled;
+        self.scrolls.retain(|&(seq, _)| seq > scrolled);
         match &mut self.pane {
             Some(pane) => pane.show(snapshot),
             None => {
@@ -200,6 +205,22 @@ impl Viewer {
                 pane.preedit = self.preedit.clone();
                 self.pane = Some(pane);
             }
+        }
+        self.ahead();
+    }
+
+    /// Scrolls the scrollback smoothly by `rows`, up for positive: the worker moves the
+    /// viewport, and the pane draws the move at once, before the worker's snapshot shows it.
+    fn scroll_rows(&mut self, rows: f32) {
+        let seq = self.terminal.scroll_rows(rows);
+        self.scrolls.push_back((seq, rows));
+        self.ahead();
+    }
+
+    /// Tells the pane how far ahead of its snapshot the window has scrolled.
+    fn ahead(&mut self) {
+        if let Some(pane) = &mut self.pane {
+            pane.ahead = self.scrolls.iter().map(|&(_, rows)| rows).sum();
         }
     }
 
@@ -2169,6 +2190,7 @@ impl State {
             preedit: None,
             find: None,
             wheel: 0.0,
+            scrolls: VecDeque::new(),
             hovering_link: false,
         }
     }
@@ -3055,16 +3077,15 @@ impl State {
         }
     }
 
-    /// The pointer in device pixels from the grid's top left, from points in the pane.
+    /// The pointer in device pixels from the grid's top left, from points in the pane. Scrolling
+    /// smoothly, the grid sits its nudge lower.
     fn grid_px(&self, address: &str, x: f32, y: f32) -> (f32, f32) {
-        let padding = self
-            .viewers
-            .get(address)
-            .and_then(|v| v.pane.as_ref())
-            .map_or(Padding::default(), |p| p.padding);
+        let pane = self.viewers.get(address).and_then(|v| v.pane.as_ref());
+        let padding = pane.map_or(Padding::default(), |p| p.padding);
+        let nudge = pane.map_or(0.0, |p| p.nudge_px(&self.face(self.scale)));
         (
             x * self.scale - padding.left as f32,
-            y * self.scale - padding.top as f32,
+            y * self.scale - padding.top as f32 - nudge,
         )
     }
 
@@ -3267,12 +3288,14 @@ impl State {
         s.after_input(tx);
     }
 
-    /// The wheel over pane `pane`, as Ghostty scrolls: a notch is three lines, and trackpad
-    /// travel adds up to a line per cell height, both times `terminal_scroll_speed`; whole lines
-    /// only, never part of one. A program tracking the mouse hears wheel buttons (Shift keeps
-    /// the wheel the terminal's); on the alternate screen, which has no scrollback, the arrows
-    /// (xterm's alternate scroll); otherwise the scrollback moves. Only the terminal in use sends
-    /// the program anything: over another pane the wheel moves the scrollback alone.
+    /// The wheel over pane `pane`, as Herdr app and Ghostty count it: a notch is three lines,
+    /// and trackpad travel is a line per cell height, both times `terminal_scroll_speed`. A
+    /// program tracking the mouse hears wheel buttons (Shift keeps the wheel the terminal's); on
+    /// the alternate screen, which has no scrollback, the arrows (xterm's alternate scroll);
+    /// both in whole lines. Otherwise the scrollback moves: a notch by whole lines, a trackpad
+    /// (and its momentum) or a free-spinning wheel smoothly, by the pixel, with part of a row in
+    /// view between rows, in the frame the event lands. Only the terminal in use sends the
+    /// program anything: over another pane the wheel moves the scrollback alone.
     pub fn pane_wheel(&mut self, pane: &str, ev: &WheelEvent, tx: &mut Tx) -> bool {
         let Some(address) = self.surface_address(pane) else {
             return false;
@@ -3297,7 +3320,17 @@ impl State {
         if !in_use && (alternate || to_program) {
             return true;
         }
-        let lines = if ev.notch || !ev.precise {
+        let notched = ev.notch || !ev.precise;
+        if !notched && !alternate && !to_program {
+            // Rune's delta and the cell are both in the zoomed view's points.
+            let rows = dy * speed / line;
+            if rows != 0.0 && rows.is_finite() {
+                viewer.scroll_rows(rows);
+                self.after_input(tx);
+            }
+            return true;
+        }
+        let lines = if notched {
             // Rune hands the delta over in the zoomed view's points; a notch is 40 window points.
             let ticks = dy * zoom / WHEEL_NOTCH;
             if ticks == 0.0 {
@@ -3348,10 +3381,9 @@ impl State {
                     .key(terminal::KeyEvent::press(arrow, terminal::Mods::NONE));
             }
         } else {
-            let delta = n as isize;
-            viewer
-                .terminal
-                .scroll(Scroll::Delta(if up { -delta } else { delta }));
+            // Whole lines from wherever a trackpad left the screen, drawn at once too.
+            let viewer = self.viewers.get_mut(&address).expect("found above");
+            viewer.scroll_rows(lines as f32);
         }
         self.after_input(tx);
         true

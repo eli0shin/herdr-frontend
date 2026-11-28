@@ -367,3 +367,50 @@ fn base64(bytes: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
+
+/// Where a screen nudged `rows` rows down sits, in points: on a whole device pixel at 2x.
+fn nudged(rows: f32) -> f32 {
+    (rows * CELL.1 * 2.0).round() / 2.0
+}
+
+/// Scrolled smoothly, the screen sits part of a row low with the row above in view over it,
+/// and runs ahead of its snapshot by the scrolling the worker hasn't caught up with, the rows
+/// below coming into view under it. The grid is still where a screen reader reads it.
+#[test]
+fn a_smooth_scroll_draws_part_of_a_row_and_the_rows_beside_the_screen() {
+    let rt = runtime("terminal-scrolling", BIG);
+    let screen = element(&rt, "pane-1/#0/screen");
+    assert_eq!(screen.rect[1], nudged(0.4));
+    let above = element(&rt, "pane-1/#0/above");
+    assert_eq!(
+        above.rect[1],
+        screen.rect[1] - CELL.1,
+        "one row, just above"
+    );
+    assert_eq!(above.rect[3], CELL.1);
+    assert!(rt.elements().iter().all(|e| !e.path.ends_with("/below")));
+    let lines = read_lines(&rt);
+    assert_eq!(
+        lines.len(),
+        usize::from(fixtures::ROWS),
+        "the screen's rows only"
+    );
+    assert!(lines[0].starts_with("line 132 "), "{:?}", lines[0]);
+
+    let rt = runtime("terminal-scrolling-ahead", BIG);
+    let screen = element(&rt, "pane-1/#0/screen");
+    // 0.4 low, then 2.5 rows down that the snapshot doesn't show yet.
+    assert_eq!(screen.rect[1], nudged(0.4 - 2.5));
+    let below = element(&rt, "pane-1/#0/below");
+    assert_eq!(
+        below.rect[1],
+        screen.rect[1] + GRID.1,
+        "just under the screen"
+    );
+    assert_eq!(
+        below.rect[3],
+        3.0 * CELL.1,
+        "the 2.1 rows it uncovers, whole"
+    );
+    assert!(rt.elements().iter().all(|e| !e.path.ends_with("/above")));
+}

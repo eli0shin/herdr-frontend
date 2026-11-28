@@ -22,6 +22,8 @@ pub(crate) const SCENES: &[Scene] = &[
     ("terminal-images", |s| one(s, &IMAGES)),
     ("terminal-selection", selection),
     ("terminal-panes", panes),
+    ("terminal-scrolling", |s| scrolling(s, 0.0)),
+    ("terminal-scrolling-ahead", |s| scrolling(s, -2.5)),
     ("screen-file", screen_file),
     ("shell", shell),
     ("shell-one-pane", shell_one_pane),
@@ -458,6 +460,19 @@ fn selection(s: &mut State) {
     let mut snapshot = COLORS.snapshot(&s.theme);
     fixtures::select(&mut snapshot, 15..=17, 8, 40);
     s.panes = vec![TerminalPane::new("pane-1", snapshot)];
+}
+
+/// A focused pane scrolled smoothly 40.4 rows up, so the screen sits 0.4 of a row low with part
+/// of the row above in view; `ahead` more rows the worker hasn't caught up with yet (negative is
+/// down, so the rows below the screen show).
+fn scrolling(s: &mut State, ahead: f32) {
+    s.with_settings(Settings::fixture());
+    let face = s.face(SNAP_SCALE);
+    let snapshot = fixtures::scrolled_in(fixtures::COLS, fixtures::ROWS, &s.theme, &face, 40.4);
+    let mut pane = TerminalPane::new("pane-1", snapshot);
+    pane.focused = true;
+    pane.ahead = ahead;
+    s.panes = vec![pane];
 }
 
 /// Four panes, 2 × 2, the Neovim one focused.

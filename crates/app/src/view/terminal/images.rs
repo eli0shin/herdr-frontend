@@ -43,8 +43,15 @@ impl ImageCache {
         self.pixels.is_empty()
     }
 
-    /// `snapshot`'s images as layers over a grid `grid` points in size, each clipped to it.
-    pub fn layers(&mut self, snapshot: &Snapshot, face: &Face, grid: (f32, f32)) -> Layers {
+    /// `snapshot`'s images as layers over a grid `grid` points in size, each clipped to it and
+    /// to the `edge` rows (above, below) drawn beside it while it scrolls smoothly.
+    pub fn layers(
+        &mut self,
+        snapshot: &Snapshot,
+        face: &Face,
+        grid: (f32, f32),
+        edge: (u16, u16),
+    ) -> Layers {
         self.pixels
             .retain(|g, _| snapshot.images.iter().any(|p| p.image.generation == *g));
         if snapshot.images.is_empty() || snapshot.cell_width == 0 || snapshot.cell_height == 0 {
@@ -55,6 +62,10 @@ impl ImageCache {
             face.metrics.cell_width as f32 / snapshot.cell_width as f32,
             face.metrics.cell_height as f32 / snapshot.cell_height as f32,
         );
+        // The rows in view, in points from the grid's top.
+        let cell_h = face.metrics.cell_height as f32 / face.scale;
+        let top = f32::from(edge.0) * cell_h;
+        let height = grid.1 + top + f32::from(edge.1) * cell_h;
         let mut layers = Layers::default();
         for (layer, key) in [
             (ImageLayer::BelowBackground, "images-below-background"),
@@ -72,13 +83,13 @@ impl ImageCache {
             let children: Vec<El> = images
                 .map(|p| {
                     let pixels = self.pixels(p);
-                    placed(p, &pixels, face, k)
+                    placed(p, &pixels, face, k, top)
                 })
                 .collect();
             let group = el()
                 .key(key)
-                .absolute(0.0, 0.0)
-                .size(grid.0, grid.1)
+                .absolute(0.0, -top)
+                .size(grid.0, height)
                 .clip_soft(0.0)
                 .a11y_hidden()
                 .inert()
@@ -104,15 +115,16 @@ impl ImageCache {
     }
 }
 
-/// One placement at its cell, `k` the face's cell over the terminal's.
-fn placed(p: &Placement, pixels: &Pixels, face: &Face, k: (f32, f32)) -> El {
+/// One placement at its cell, `k` the face's cell over the terminal's, in a group whose top is
+/// `top` points above the grid's.
+fn placed(p: &Placement, pixels: &Pixels, face: &Face, k: (f32, f32), top: f32) -> El {
     let (cell_w, cell_h) = (
         face.metrics.cell_width as f32,
         face.metrics.cell_height as f32,
     );
     let s = face.scale;
     let x = (p.col as f32 * cell_w + p.offset_x as f32 * k.0) / s;
-    let y = (p.row as f32 * cell_h + p.offset_y as f32 * k.1) / s;
+    let y = (p.row as f32 * cell_h + p.offset_y as f32 * k.1) / s + top;
     let (w, h) = (p.width as f32 * k.0 / s, p.height as f32 * k.1 / s);
     let image = el().absolute(x, y).size(w, h);
     let src = p.source;

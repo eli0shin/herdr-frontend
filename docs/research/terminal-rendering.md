@@ -559,22 +559,58 @@ Ghostty does. Install the selection with `OPT_SELECTION` so the render state rep
 
 - Scroll with `ghostty_terminal_scroll_viewport`. Each frame, poll `DATA_SCROLLBAR` and
   `DATA_VIEWPORT_ACTIVE` together with `begin_update` ("The scrollbar" in `guides/scrollback.md`).
-- For smooth pixel scrolling, request one row of overscan with `RENDER_STATE_OPT_OVERSCAN` and
-  shift the grid by a fraction of a row (`guides/rendering.md` "Overscan").
+- For smooth pixel scrolling, request overscan with `RENDER_STATE_OPT_OVERSCAN` and shift the
+  grid by a fraction of a row (`guides/rendering.md` "Overscan"). Overscan rows report negative
+  viewport rows above the viewport and rows from `rows` on below it (`ROW_DATA_VIEWPORT_Y`), and
+  kitty placements in them come with the image list at the same rows.
 - Set the scrollback limits explicitly. Optionally compress idle scrollback with
   `ghostty_terminal_compress` on an idle timer.
 
 ### What herdr-frontend does (ticket 019)
 
-- **Whole lines, as Ghostty scrolls** (`State::pane_wheel`). A notch is three lines and trackpad
-  travel adds up to a line per cell height (Ghostty's `mouse-scroll-multiplier` defaults, which
-  Eli's config keeps); the screen always sits on its rows. Pixel-smooth scrolling (the overscan
-  above) isn't drawn, because Ghostty has none (`AGENTS.md`: terminal behavior follows Eli's
-  Ghostty). `terminal_scroll_speed` multiplies notches and trackpad travel, for the scrollback
-  and for the wheel buttons and arrows a program hears. Part of a notch counts as a whole one
-  (Ghostty's `scrollCallback`), and a notch moves at least a line. Rune divides the wheel's
-  points by the zoom and the app multiplies them back, so lines are counted to a thousandth
-  before whole lines are taken (`state::whole`): nine notches at zoom 1.1 are 27 lines, not 26.
+- **Herdr app's distances** (`State::pane_wheel`). A notch is three lines and trackpad travel is
+  a line per cell height (Herdr app's `scroll_delta_steps`, which are Ghostty's
+  `mouse-scroll-multiplier` defaults; Eli's config keeps them). `terminal_scroll_speed` multiplies
+  notches and trackpad travel, for the scrollback and for the wheel buttons and arrows a program
+  hears. Part of a notch counts as a whole one (Ghostty's `scrollCallback`), and a notch moves at
+  least a line. Rune divides the wheel's points by the zoom and the app multiplies them back, so
+  lines are counted to a thousandth before whole lines are taken (`state::whole`): nine notches at
+  zoom 1.1 are 27 lines, not 26. A program tracking the mouse hears whole wheel buttons, and the
+  alternate screen whole arrows, trackpad travel adding up to them (`Viewer::wheel`).
+- **Smooth scrollback** (ticket 051, Eli's rule over following Ghostty). Herdr app 0.1.18 and
+  Ghostty move the scrollback by whole lines, and herdr-frontend did too (ticket 019), but Eli
+  found scrolling a Pi session line by line janky next to Herdr app, worst as a flick sped up and
+  slowed down. Herdr app's own scroll lands on the UI thread in the frame its event comes; ours
+  went through the worker, so a scroll waited a frame or two for the snapshot, and steps bunched
+  up unevenly across frames. Now a trackpad (its momentum too) or a free-spinning wheel scrolls
+  the scrollback by the pixel, and a notch by whole lines from wherever the screen sits:
+  - The worker holds the place (`Vt::scroll_rows`): whole rows move the viewport and the rest is
+    `Snapshot::nudge`, part of a row the screen sits lower with the row above in view. It never
+    goes past the top or the bottom. Typing, any other scroll, and output that moves the viewport
+    put the screen back on its rows, except output the bottom follows: a part row left at the
+    bottom stays with it, so a slow scroll still leaves a bottom an agent is streaming to. A frame
+    a program holds (synchronized output) reports the scroll and part row from when the hold
+    began, the ones that go with its rows.
+  - Snapshots carry `OVERSCAN` (12) rows above and below the viewport (`Snapshot::above`,
+    `below`), so the window can draw a scroll before the worker has made it: each smooth scroll is
+    numbered (`Terminal::scroll_rows`), and until a snapshot's `scrolled` reaches it, the pane
+    draws it itself (`TerminalPane::ahead`, `TerminalPane::nudge`), as far as the scrollback and
+    those rows reach. The screen moves in the frame the event lands, whole rows included, and the
+    worker's snapshot catches up.
+  - The grid moves on a whole device pixel and lands at once (`instant_changes`), never easing:
+    the no-animations rule covers transitions, and this only follows the fingers. The rows beside
+    the screen are drawn from their own row caches, and the pane's clip cuts them at its edges;
+    kitty images in them draw with them. Find hits are marked only on the screen's own rows.
+  - The pointer is mapped through the nudge (`State::grid_px`), so a click lands on the cell
+    under it.
+  - `just scroll-latency` (`examples/scroll-latency.rs`) measures it: the app on a fake core, its worker on its thread,
+    frames paced at 120 Hz in real time, on a loaded M-series Mac (release build). Before
+    (whole lines through the worker), a one-row scroll showed in the next frame only 20–25% of
+    the time (p50 2 frames, 13–14 ms; worst 3–4 frames, 35–44 ms), and through a 79-row flick
+    and its momentum the screen was up to 4–8 rows off the fingers and stood still in 59–67 of
+    104 frames while they moved. After, every scroll shows in the next frame (p50 5 ms, p95
+    10 ms, worst 12 ms), and the screen stays within 0.01 row of the fingers (a device pixel's
+    rounding) with no frame standing still.
 - **Scrollbar** (`pane_scrollbars`, `view::terminal::scrollbar`): Herdr app's lane, rail and
   4-point thumb, hidden on the alternate screen, below five columns and with no scrollback.
   Dragging the thumb, or pressing beside it, scrolls with `Scroll::Row`; the bottom row is
@@ -752,8 +788,9 @@ Ghostty.
     middle button pastes.
   - Wheel: a notch is three lines (Ghostty's multiplier) and a trackpad scrolls a line per cell
     height, both times `terminal_scroll_speed`. The wheel goes to a tracking program as wheel
-    buttons; on the alternate screen it becomes arrow keys; otherwise it scrolls the scrollback,
-    whole lines only (§2 "What herdr-frontend does (ticket 019)").
+    buttons; on the alternate screen it becomes arrow keys, both in whole lines; otherwise it
+    scrolls the scrollback, smoothly by the pixel from a trackpad (§2 "What herdr-frontend does
+    (ticket 019)").
   - Right-clicks go to the program only when the terminal is labelled
     `herdr.right-click=program`; otherwise they open the terminal menu (ticket 026).
   - Only the terminal in use (the focused pane, in the window in front) sends its program
@@ -1125,8 +1162,8 @@ Each stage ends with tests in `cargo test` plus a fixture or screenshot check.
    several code points, which Rune still shapes.
 6. **Input:** keys (kitty, consumed mods, releases), IME preedit, mouse, paste, focus.
 7. **Scrollback:** viewport and scrollbar, smooth scroll with overscan, search, OSC 8 and links.
-   Built in ticket 019 (§2 "What herdr-frontend does (ticket 019)"), without pixel-smooth
-   scrolling: Ghostty scrolls whole lines.
+   Built in ticket 019 (§2 "What herdr-frontend does (ticket 019)"), and pixel-smooth trackpad
+   scrolling in ticket 051.
 8. **Copy/visual mode** (§6).
 9. **Kitty graphics.** Built in ticket 042 (§2 "Kitty graphics"), measured against Ghostty in
    `renderer-gates.md` "Kitty graphics".

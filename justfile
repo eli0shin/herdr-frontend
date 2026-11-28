@@ -65,6 +65,10 @@ icon:
 pane-budget:
     cargo run --release -p herdr-frontend --example pane-budget
 
+# Time how soon a trackpad scroll shows and how closely the screen follows a flick, at 120 Hz.
+scroll-latency:
+    cargo run --release -p herdr-frontend --example scroll-latency
+
 # Check the Rune pin against Rune's own patch list at the pinned rev.
 check-pins:
     scripts/check-rune-pins

@@ -290,17 +290,20 @@ fn unchanged_images_are_shared_between_snapshots() {
     assert_eq!(three.images.len(), 15);
 }
 
-/// Images move with their cells: three lines of output scroll the photo off the top and leave
-/// the scaled one starting two rows above the viewport, at its full size for the view to clip.
+/// Images move with their cells: three lines of output scroll the photo off the top, into the
+/// rows the snapshot carries above the viewport for a view scrolling smoothly (a view on its rows
+/// clips it away), and leave the scaled one starting two rows above the viewport, at its full
+/// size for the view to clip.
 #[test]
 fn images_scroll_with_the_text() {
     let mut vt = vt();
     vt.write(&stream("kitty-icat.bin"));
     vt.write(b"\r\n\r\n\r\n");
     let s = vt.snapshot();
+    let photo = at(&s, 0, -2);
     assert!(
-        s.images.iter().all(|p| (p.col, p.row) != (0, -2)),
-        "the photo scrolled away"
+        photo.row * 37 + (photo.offset_y + photo.height) as i32 <= 0,
+        "the photo scrolled off the screen: {photo:?}"
     );
     let scaled = at(&s, 10, -2);
     assert_eq!((scaled.width, scaled.height), (272, 148));
