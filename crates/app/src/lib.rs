@@ -129,17 +129,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let peek = view::peek::view(s, cx);
     let toasts = toast::view(s);
     let zoom = s.zoom();
-    let window = el().key("window");
-    // A space switch lands in one frame: the strip's pills, the panes, the sidebar and the
-    // picker it was chosen in, each as it is after, with no fade or slide. Colours keep their
-    // springs, so what a switch recolours lands on its own (the pills' row, the Agents list's
-    // selected row).
-    let window = if s.space_switched() {
-        window.instant_changes()
-    } else {
-        window
-    };
-    window
+    still(el().key("window"))
         .w_full()
         .h_full()
         .on_key_preview(State::preview_key)
@@ -158,6 +148,22 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .children(peek)
         .children(popup)
         .children(toasts)
+}
+
+/// `root` and everything in it with no animation (`AGENTS.md`): every change lands in the frame
+/// that draws it. Rune animates by default, and each of these, set on the root, holds for the
+/// whole tree below it, the popups, menus and toasts included:
+///
+/// - `instant_changes`: layout (a resize, the sidebar's room, a split), opacity and transforms
+///   land at once, and what comes or goes enters and leaves in one frame, with no fade;
+/// - `motion(Spring::NONE)`: colours (a selection, a pill's look, a theme) change at once;
+/// - `hover_motion_within`: a hover highlight comes and goes at once, without its 0.1 s fade.
+///
+/// Loops (the working spinner, the one motion allowed) keep turning: none of these stop them.
+fn still(root: El) -> El {
+    root.instant_changes()
+        .motion(rune::Spring::NONE)
+        .hover_motion_within(rune::Anim::INSTANT, rune::Anim::INSTANT)
 }
 
 /// Rune's tokens in the theme's colors.

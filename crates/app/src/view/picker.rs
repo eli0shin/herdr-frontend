@@ -15,13 +15,14 @@
 use herdr_shared::Displayed;
 use model::mode::ListPopup;
 use model::popups::{self, PickerRow};
-use rune::{Color, El, LoopSpec, col, el, icon, row, text};
+use rune::{Color, El, col, el, row, text};
 
 use crate::State;
 use crate::config::theme::Rgba;
-use crate::view::icons::{SEARCH, SPINNER};
+use crate::view::icons::SEARCH;
 use crate::view::list::{self, Item};
 use crate::view::overlay::{self, Place};
+use crate::view::spinner;
 
 pub const PLACE: Place = Place::Top {
     offset: 40.0,
@@ -129,10 +130,9 @@ pub fn view(s: &State, list: &ListPopup) -> El {
                 } => {
                     // Working spins, as the shipped picker's `glyph` does; the rest are marks.
                     let glyph = match status {
-                        Some(Displayed::Working) => icon(&SPINNER, 12.0)
-                            .key(format!("picker-working-{i}"))
-                            .color(c.working)
-                            .looping(LoopSpec::rotation(0.9)),
+                        Some(Displayed::Working) => {
+                            spinner::ring(format!("picker-working-{i}"), 12.0, c.working)
+                        }
                         _ => text(match status {
                             Some(Displayed::Idle) => "○",
                             Some(_) => "●",
@@ -213,5 +213,5 @@ pub fn view(s: &State, list: &ListPopup) -> El {
             Some(&SEARCH),
             None,
         ))
-        .child(list::view(ROWS, items, Some(LIST_H)).mb(6.0))
+        .child(list::view(s, ROWS, items, Some(LIST_H)).mb(6.0))
 }

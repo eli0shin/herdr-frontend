@@ -20,5 +20,7 @@ pub mod settings;
 pub mod shell;
 pub mod sidebar;
 pub mod space_picker;
+pub mod spinner;
 pub mod tabs;
 pub mod terminal;
+pub mod wheel;

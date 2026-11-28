@@ -92,6 +92,18 @@ accesskit_atspi_common = { git = "https://github.com/anomalyco/rune", rev = "491
   Expect API churn between bumps, and read [`CHANGELOG.md`][rune-changelog] (it lists changes
   that move output without a code change) plus `changelog/unreleased/` at each bump.
 
+### Asks for Rune
+
+What herdr-frontend needs from Rune that it can't do from outside, to go into an issue on
+anomalyco/rune together:
+
+- A fractional x offset on `GridRow`'s line and pinned cells, for Ghostty's sub-pixel glyph
+  centering (ticket 058; [`renderer-gates.md`](renderer-gates.md) "The 0.1 px").
+- An app-wide switch for the mouse wheel's glide, on `App` or `RunOptions`. Only
+  `Runtime::set_wheel_glide` turns it off, and an `App` never gets its `Runtime`; Reduce Motion
+  turns it off too, but also stops every loop. Until then `view::wheel` takes each of the app's
+  scroll viewports' notches itself ("No animations" below).
+
 ### Features
 
 The defaults are `accessibility`, `dbus`, `embedded-fonts`, `hunspell`, `metal-backend`,
@@ -649,23 +661,7 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   sit at the model's `pane_rects` (`Geometry { gap: 1, cell }`: split panes are whole cells)
   on the terminal's background, with each gap between them filled in the border color. Each pane
   is a slot keyed by its id (`slot-<id>`), so another tab's pane is a new slot, not this one
-  springing to a new rect. The slot and the terminal in it (`Transition::none()`, and
-  `.instant_changes()` on the terminal's grid, not its root, whose frame keeps following the
-  slot's through a resize) show whole the frame they mount and are gone the frame they
-  unmount. Rune's default entrance and exit fade every element in an input-caused commit, and
-  the old and new terminals crossfading let the border fill flash through on every agent or
-  tab click. A space switch (`ctrl-1`…`ctrl-9`, the space picker, an agent in another space)
-  lands whole: the commit that draws it puts `.instant_changes()` on the window's root, so the
-  old space's pills go and the new one's come, and the picker it was chosen in closes, in that
-  frame. `State::step` notes the commit that will draw a step that changed the shown space
-  (`rune::commit_generation()` + 1) and the view compares it with the commit it draws, since a
-  pill added or closed within a space keeps its fade and Rune can't tell the two mounts apart.
-  Colours aren't covered: the pills' row has `Spring::NONE` (below), and an Agents row's
-  selected wash and outline are an element of their own on the focused row only, with
-  `Transition::none()`, so they move at once on any focus change while the rows keep their
-  own motion; an idle agent's title, brighter while selected, has `Spring::NONE`. Escape on
-  the picker still fades it. `tests/switching.rs` checks
-  this frame by frame from `--frames` dumps. Each divider has a
+  moved to a new rect. Each divider has a
   6 pt handle centered on its gap (`on_drag`, the resize cursor) that writes sizes as it moves; a
   cancelled drag puts them back. A movable pane's 18 pt top strip shows a 28 × 18 grip while the
   pointer is on it. The tab area, the panes' parent, follows the pointer for this, so only the
@@ -674,6 +670,35 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   beside, middle: swap), drawn as a tinted preview, and the release rearranges. The tab area's
   `on_layout_tx` reports the geometry; before the first layout it comes from the window size
   (`App::on_window_geometry`, `SIZE` headless).
+- **No animations** (`AGENTS.md`). Rune animates by default: every element fades in and out
+  in an input-caused commit (`El::transition`, 0.3 s in, 0.24 s out), layout springs (a
+  resize, the sidebar's room, a split), colours spring, and a hover highlight fades out over
+  0.1 s. The pinned Rune has no app-wide switch for this: Reduce Motion (`Cx::reduced_motion`)
+  still fades opacity and colour "briefly" and holds rotating loops still, and
+  `Cx::time_scale` is clamped to 8×. What it has are three inherited settings, and the
+  window's root sets all three (`lib.rs` `still`), so they hold for every element below it,
+  the popups, menus, toasts, peek and panes included:
+  `El::instant_changes` (layout, opacity and transforms land, and what comes or goes enters
+  and leaves in the commit's frame), `El::motion(Spring::NONE)` (colours, which
+  `instant_changes` leaves on their springs, change at once) and
+  `El::hover_motion_within(Anim::INSTANT, Anim::INSTANT)` (hover tracks). Nothing below the
+  root opts out (`El::animated_changes`) or sets a spring of its own. Loops are separate from
+  all three and keep running: the working spinners (`view::spinner`) are the one motion
+  allowed. They all point the same way at once, as Herdr app's do: `LoopSpec::rotation` starts
+  each loop's turn when its element mounts, so a spinner is instead its frames stacked, each
+  shown in its slot of the turn by a `Cycle`, which Rune samples from the window's one clock
+  (the ring's arc at 36 angles, the peek bar's ten braille frames). A mouse wheel's notch eases
+  over 100 to 200 ms in Rune's own scroll viewports, and the switch for that is out of an
+  `App`'s reach ("Asks for Rune" above). So the Agents list, the popup lists, the keys help and
+  the tab strip's pills take their notches in `El::on_wheel`, which runs before Rune scrolls, and move by the
+  notch with `Tx::scroll_to_instant`, from the offset `El::on_scroll_offset` last reported
+  (`view::wheel`). A trackpad's precise deltas and momentum still go to Rune, which follows
+  them 1:1. Not covered: macOS's native `El::help` tooltips.
+  `tests/no_animations.rs` checks a sidebar toggle, the palette opening, paging and closing,
+  a menu opening and closing, a split, a resize, a toast coming and going and a wheel notch,
+  and
+  `tests/switching.rs` agent, tab and space switches, frame by frame from `--frames` dumps:
+  every frame of the window is the look before the input or after it.
 - **Input.** Every key goes through the keymap first (ticket 016, `docs/keys.md`). While
   something has focus, the window root's `on_key_preview` reads it. While nothing has focus,
   `AppSpec::on_key` reads it, and never when `tx.focused()` is set, so no key is matched twice.
@@ -687,16 +712,14 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   title with ` · N` on duplicates, else its number among the shown tabs), whether it is
   selected or zoomed (" Z"), and its status. Pills are 29 pt rows in one row (`tab-pills`)
   inside a `scroll_x` row: `scroll_x` stretches its content to the viewport, and a lone pill
-  would be that content. The pills' row has `.motion(Spring::NONE)`, and the × (and its icon)
-  `Transition::none()`, so a tab switch moves the selected look, the × and the widths in one
-  frame. A pill's
+  would be that content. A pill's
   `on_drag` renames on the second press of a double-click (`Drag::clicks`); on release it picks
   the pill under the pointer (`Tx::element_at_in` reading the pill's `El::data`) and shows its
   own tab or moves to the other's place (`Action::MoveTab`, by id). `on_secondary_press` opens
   the tab menu, the × runs `Action::CloseTabOf`, and the strip's `on_wheel` steps
   `tab.next`/`tab.prev` for a vertical delta of a point or more, leaving sideways scrolls to the
   pills. Glyphs (spinner, ×, monitor, server) are `rune::Icon`s (`view::icons`); the spinner
-  turns with `LoopSpec::rotation(0.9)`.
+  is `view::spinner`'s, which every spinner shares (**No animations** above).
 - **Overlays.** The key file reloads live from the home. The tab strip shows the prefix
   indicator. Toasts sit at the bottom right (the model's toasts, and "not yet" for unbuilt
   actions and for popups the window doesn't draw yet). The window draws two popups so far: the

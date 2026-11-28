@@ -24,13 +24,14 @@ use std::ops::Range;
 use herdr_shared::Displayed;
 use model::Action;
 use model::peek::Go;
-use rune::{Color, Cursor, Cx, Cycle, El, col, el, row, text};
+use rune::{Color, Cursor, Cx, El, col, el, row, text};
 use terminal::{Snapshot, Width};
 
 use crate::State;
 use crate::state::{PEEK, PEEK_KEY};
 use crate::view::overlay::status_color;
 use crate::view::shell::{pane_input, program_icon};
+use crate::view::spinner;
 use crate::view::terminal::look::color;
 
 /// The bar's height (`peek_terminal`'s `{ "px": 34 }` block).
@@ -38,19 +39,6 @@ pub const BAR: f32 = 34.0;
 
 /// The dialog's share of the window, each way.
 pub const SHARE: f32 = 0.8;
-
-/// The working glyph's frames, one every 90 ms.
-const SPIN: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-/// A frame shows for a tenth of the 0.9 s loop around its phase.
-const FRAME: &[(f32, f32)] = &[
-    (0.0, 1.0),
-    (0.05, 1.0),
-    (0.0501, 0.0),
-    (0.9499, 0.0),
-    (0.95, 1.0),
-    (1.0, 1.0),
-];
 
 pub fn view(s: &State, cx: &Cx<State>) -> Option<El> {
     let bar = s.model.peek_bar()?;
@@ -123,7 +111,7 @@ fn bar_view(s: &State, bar: &model::peek::PeekBar, cx: &Cx<State>) -> El {
         .unwrap_or_else(|| bar.address.clone());
     let tint = status_color(s, bar.status);
     let glyph = match bar.status {
-        Some(Displayed::Working) => spinner(s, tint),
+        Some(Displayed::Working) => spinner::braille("peek-spinner", font(400.0), tint),
         status => {
             let mark = match status {
                 Some(Displayed::Idle) => "○",
@@ -184,24 +172,6 @@ fn bar_view(s: &State, bar: &model::peek::PeekBar, cx: &Cx<State>) -> El {
         .child(el().grow(1.0))
         .children(go)
         .child(button(s, "peek-close", "✕", Action::ClosePeek))
-}
-
-/// The braille spinner: its frames stacked, each shown for its tenth of the loop.
-fn spinner(s: &State, tint: Color) -> El {
-    let frames = SPIN.iter().enumerate().map(|(i, frame)| {
-        text(*frame)
-            .font(s.ui_font(12.0, 400.0))
-            .color(tint)
-            .absolute(0.0, 0.0)
-            .cycle(Cycle {
-                period: 0.9,
-                phase: i as f32 / SPIN.len() as f32,
-                stops: FRAME,
-                still: if i == 0 { 1.0 } else { 0.0 },
-                fps: SPIN.len() as f32 / 0.9,
-            })
-    });
-    el().key("peek-spinner").size(12.0, 16.0).children(frames)
 }
 
 /// A bar button: muted, brighter under the pointer.

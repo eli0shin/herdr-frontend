@@ -132,7 +132,7 @@ pub fn filter_view(s: &State, list: &ListPopup) -> El {
             "Agents from",
             Some(overlay::note(s, "↑/↓ · Space · Enter only · Esc")),
         ))
-        .child(list::view(FILTER_ROWS, items, None))
+        .child(list::view(s, FILTER_ROWS, items, None))
 }
 
 // ---- Machines -----------------------------------------------------------------------------------
@@ -311,7 +311,7 @@ pub fn machines_view(s: &State, list: &ListPopup) -> El {
             .w_full()
             .wrap(),
         )
-        .child(list::view(MACHINES_ROWS, items, Some(MACHINES_H)))
+        .child(list::view(s, MACHINES_ROWS, items, Some(MACHINES_H)))
         .children((others == 0).then(|| {
             overlay::note(s, "No other machines yet.")
                 .key("machines-empty")
@@ -423,5 +423,5 @@ pub fn add_view(s: &State, list: &ListPopup) -> El {
             None,
         ))
         .child(overlay::note(s, heading).key("add-heading"))
-        .child(list::view(ADD_ROWS, items, Some(ADD_H)))
+        .child(list::view(s, ADD_ROWS, items, Some(ADD_H)))
 }

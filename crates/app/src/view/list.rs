@@ -16,6 +16,7 @@
 use rune::{Color, El, ScrollSpec, col};
 
 use crate::State;
+use crate::view::wheel::{self, Axis};
 
 /// One item: a row the cursor can reach (`pick`: its place among those), or a title.
 pub struct Item {
@@ -58,8 +59,9 @@ pub fn pick_key(pick: usize) -> String {
 }
 
 /// Every item, in order, in a scroll viewport keyed `key` at most `max_h` tall (as tall as its
-/// rows when they fit); each row picks itself on a press.
-pub fn view(key: &str, items: Vec<Item>, max_h: Option<f32>) -> El {
+/// rows when they fit); each row picks itself on a press, and a wheel's notch scrolls it at once
+/// ([`wheel`]).
+pub fn view(s: &State, key: &'static str, items: Vec<Item>, max_h: Option<f32>) -> El {
     let mut places: Vec<El> = Vec::new();
     let mut title: Option<El> = None;
     for item in items {
@@ -94,8 +96,9 @@ pub fn view(key: &str, items: Vec<Item>, max_h: Option<f32>) -> El {
         .min_h(0.0)
         .scroll(ScrollSpec::default())
         .children(places);
-    match max_h {
+    let list = match max_h {
         Some(h) => list.max_h(h),
         None => list,
-    }
+    };
+    wheel::notches_at_once(list, key, Axis::Y, s)
 }

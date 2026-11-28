@@ -10,14 +10,6 @@
 
 use rune::Icon;
 
-/// Working: a ring at a quarter's strength with a quarter arc on it, turned once per 900 ms
-/// (`workspace-chrome/spinner.svg`).
-pub static SPINNER: Icon = Icon {
-    name: "herdr-spinner",
-    view: 24.0,
-    body: r#"<circle cx="12" cy="12" r="9.4" fill="none" stroke="currentColor" stroke-width="3.2" stroke-opacity="0.24"/><path d="M12 2.6a9.4 9.4 0 0 1 9.4 9.4" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/>"#,
-};
-
 /// A ×: closes (`pane/close.svg`).
 pub static CLOSE: Icon = Icon {
     name: "herdr-close",

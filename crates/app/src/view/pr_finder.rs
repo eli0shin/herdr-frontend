@@ -69,7 +69,7 @@ pub fn view(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
             Some(overlay::note(s, "↑/↓ · Enter · Esc")),
         ))
         .child(overlay::field(s, "PR number or repo…", None, None))
-        .child(list::view(ROWS, items, Some(LIST_H)).gap(2.0))
+        .child(list::view(s, ROWS, items, Some(LIST_H)).gap(2.0))
         .children(empty)
 }
 

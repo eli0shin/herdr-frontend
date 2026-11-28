@@ -32,7 +32,8 @@ state in `crates/app/src/state.rs`. `crates/app/tests/sidebar.rs` and the `shell
   it has none, though it keeps its status mark. Its title and time keep its own status. The
   focused row gets a faint working-blue wash and outline, and an idle agent's title brightens
   while it's focused; both move to another row at once when the focus does.
-- **Status marks.** Working is a spinner that turns every 900 ms. Blocked is "Needs you", or a
+- **Status marks.** Working is a spinner that turns every 900 ms, at the same angle as every
+  other spinner on screen (`view::spinner`). Blocked is "Needs you", or a
   compact "!" under a priority header. Done is a dot, idle a ring.
 - **Titles.** A named tab's name. For an unnamed tab, or one named after its program, the agent's
   live terminal title, with leading marks stripped. The title is ignored if it is a path,

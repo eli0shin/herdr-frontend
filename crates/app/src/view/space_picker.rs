@@ -90,6 +90,6 @@ pub fn view(s: &State, list: &ListPopup) -> El {
             Some(overlay::note(s, "↑/↓ · Enter · Esc")),
         ))
         .child(overlay::field(s, "Go to space…", None, None))
-        .child(list::view(ROWS, items, Some(LIST_H)))
+        .child(list::view(s, ROWS, items, Some(LIST_H)))
         .children(empty)
 }
