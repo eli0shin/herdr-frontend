@@ -38,7 +38,8 @@ may tile the Herdr app window, so its screenshots can be a different size from h
   with scratch XDG directories under `/tmp/hfe-<pid>-<n>/`, every inherited `HC_*` variable
   removed. Both apps start with that environment. When the run ends, the harness stops that core with
   `hc server stop` and removes the scratch folder.
-- **Its own homes only.** herdr-frontend gets `HERDR_FRONTEND_HOME=<scratch>/frontend`. Herdr app
+- **Its own homes only.** herdr-frontend gets `HERDR_FRONTEND_HOME=<scratch>/frontend`, one
+  folder for its config and state. Herdr app
   gets `HERDR_APP_HOME=<scratch>/herdr-app`, a copy of Eli's config without his running
   window's socket, `view.json`, `window.json` and `seen.json`, and without what his use left
   behind: the mods' stores (`data/`) and `shared.json`, which starts as his tracked

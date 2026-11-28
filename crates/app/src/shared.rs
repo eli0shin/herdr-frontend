@@ -1,6 +1,6 @@
 //! herdr-frontend's app-local shared state (`feature-inventory.md` §0 "App-local shared state"),
-//! in its own home: the Agents list's sort, published order, space colors and hidden machines,
-//! and the sidebar's width and visibility. The keys have the names Eli's mods gave them
+//! in its state folder (`crate::home`): the Agents list's sort, published order, space colors
+//! and hidden machines, and the sidebar's width and visibility. The keys have the names Eli's mods gave them
 //! (`space.colors`, `agents.sort`, `dotfiles.agents.order`, `dotfiles.agents.hidden-machines`),
 //! plus `sidebar.px` and `sidebar.hidden`. Everything starts from the defaults and lives only
 //! here: herdr-frontend is a client of herdr-core and reads nothing of Herdr app's (`AGENTS.md`).
@@ -14,9 +14,9 @@ use serde_json::{Map, Value, json};
 
 use crate::home::Home;
 
-/// The shared state's file in the home.
+/// The shared state's file in the state folder.
 pub const SHARED: &str = "shared.json";
-/// The Agents list's times in the home (`eli-agents`' `changed`).
+/// The Agents list's times in the state folder (`eli-agents`' `changed`).
 pub const TIMES: &str = "agents.json";
 
 /// The sidebar's width, as Eli's saved layout has it (`feature-inventory.md` §1).
@@ -41,7 +41,7 @@ fn object(text: &str) -> Option<Map<String, Value>> {
 }
 
 impl Shared {
-    /// The home's `shared.json`; the defaults when there is none (or no home).
+    /// The state folder's `shared.json`; the defaults when there is none (or no home).
     pub fn load(home: Option<&Path>) -> Shared {
         let values = home
             .and_then(|home| std::fs::read_to_string(home.join(SHARED)).ok())
@@ -123,7 +123,7 @@ pub fn clamp_sidebar(px: f32) -> f32 {
     }
 }
 
-/// The Agents list's times: the home's `agents.json`, else none.
+/// The Agents list's times: the state folder's `agents.json`, else none.
 pub fn load_times(home: Option<&Path>) -> BTreeMap<String, Changed> {
     home.and_then(|home| std::fs::read_to_string(home.join(TIMES)).ok())
         .and_then(|text| object(&text))
@@ -136,7 +136,7 @@ pub fn times_json(times: &BTreeMap<String, Changed>) -> String {
     serde_json::to_string_pretty(&json!({ "changed": times })).expect("times always serialize")
 }
 
-/// Writes the shared state to the home in the background.
+/// Writes the shared state to the state folder in the background.
 pub fn save(home: Option<&Home>, shared: &Shared) {
     if let Some(home) = home {
         home.save(SHARED, shared.to_json());

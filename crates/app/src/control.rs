@@ -7,7 +7,7 @@
 //! tools drive the running window the way they drive `herdr-app`, with the same arguments, JSON
 //! and exit codes.
 //!
-//! The window serves `$HERDR_FRONTEND_HOME/herdr-frontend.sock` ([`Control`]), one JSON line
+//! The window serves `herdr-frontend.sock` in its state folder ([`state_home`], [`Control`]), one JSON line
 //! each way, as herdr-app serves `herdr-app.sock` (`app:src/control.rs`). A thread per connection
 //! reads the request and hands it to the UI thread; [`Control::drain`] runs it against the model
 //! there, so the model stays the one place state changes. [`client`] is the command line side.
@@ -40,23 +40,68 @@ pub const SUBCOMMANDS: [&str; 4] = ["ls", "do", "status", "commands"];
 const USAGE: &str = "usage: herdr-frontend ls | herdr-frontend commands | herdr-frontend status | \
                      herdr-frontend do <command> [--arg value ... | json]";
 
-/// herdr-frontend's home: `$HERDR_FRONTEND_HOME`, else `$XDG_CONFIG_HOME/herdr-frontend`, else
+/// herdr-frontend's config folder, the files the person writes (`crate::home`):
+/// `$HERDR_FRONTEND_HOME`, else `$XDG_CONFIG_HOME/herdr-frontend`, else
 /// `~/.config/herdr-frontend`, as herdr-app finds its own (`app:src/mods.rs` `app_dir`). Empty
 /// variables count as unset.
-pub fn home() -> PathBuf {
+pub fn config_home() -> PathBuf {
+    xdg_home("XDG_CONFIG_HOME", ".config")
+}
+
+/// herdr-frontend's state folder, the files the app writes (`crate::home`), the socket among
+/// them: `$HERDR_FRONTEND_HOME` (one folder for both), else `$XDG_STATE_HOME/herdr-frontend`,
+/// else `~/.local/state/herdr-frontend`. Empty variables count as unset.
+pub fn state_home() -> PathBuf {
+    xdg_home("XDG_STATE_HOME", ".local/state")
+}
+
+fn xdg_home(xdg: &str, fallback: &str) -> PathBuf {
     let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
     if let Some(home) = var(HOME_VAR) {
         return PathBuf::from(home);
     }
-    var("XDG_CONFIG_HOME")
+    var(xdg)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(var("HOME").unwrap_or_default()).join(".config"))
+        .unwrap_or_else(|| PathBuf::from(var("HOME").unwrap_or_default()).join(fallback))
         .join("herdr-frontend")
 }
 
-/// The window's control socket.
+/// The window's control socket, in the state folder.
 pub fn socket_path() -> PathBuf {
-    home().join(SOCKET)
+    state_home().join(SOCKET)
+}
+
+/// Where a window may be answering, in the order to try: [`socket_path`], then the config
+/// folder's socket, where a window of 0.1.1 or older still serves until it closes (right after
+/// an install, say). Without that, tools would find no window and a bare launch would open a
+/// second one.
+pub fn socket_paths() -> Vec<PathBuf> {
+    let state = socket_path();
+    let old = config_home().join(SOCKET);
+    if old == state {
+        vec![state]
+    } else {
+        vec![state, old]
+    }
+}
+
+/// A connection to the first of `sockets` that answers; with none, the first one's error.
+fn connect(sockets: &[PathBuf]) -> Result<UnixStream, (&Path, io::Error)> {
+    let mut first = None;
+    for socket in sockets {
+        match UnixStream::connect(socket) {
+            Ok(stream) => return Ok(stream),
+            Err(e) => {
+                first.get_or_insert((socket.as_path(), e));
+            }
+        }
+    }
+    Err(first.unwrap_or_else(|| {
+        (
+            Path::new(""),
+            io::Error::new(io::ErrorKind::NotFound, "no socket to try"),
+        )
+    }))
 }
 
 /// One request from a connection, and where its reply goes.
@@ -287,15 +332,15 @@ fn serve(stream: UnixStream, tx: &mpsc::Sender<Request>, wake: &(dyn Fn() + Send
     let _ = (&stream).write_all(format!("{answer}\n").as_bytes());
 }
 
-/// One window per home: a launch with no arguments asks the window serving [`socket_path`] to
+/// One window per home: a launch with no arguments asks the window serving [`socket_paths`] to
 /// come forward, as `herdr-app` does (`app:src/control.rs` `raise_running`), and opens none of
 /// its own. True when one answered on the socket, even too busy to reply in time.
 pub fn raise_running() -> bool {
-    raise_running_at(&socket_path())
+    raise_running_at(&socket_paths())
 }
 
-fn raise_running_at(path: &Path) -> bool {
-    let Ok(mut stream) = UnixStream::connect(path) else {
+fn raise_running_at(sockets: &[PathBuf]) -> bool {
+    let Ok(mut stream) = connect(sockets) else {
         return false;
     };
     let _ = stream.set_read_timeout(Some(CLIENT_TIMEOUT));
@@ -314,15 +359,20 @@ pub fn is_subcommand(args: &[String]) -> bool {
         .is_some_and(|a| SUBCOMMANDS.contains(&a.as_str()))
 }
 
-/// `herdr-frontend ls | do | status | commands`, against the window serving [`socket_path`].
+/// `herdr-frontend ls | do | status | commands`, against the window serving [`socket_paths`].
 /// Prints the reply as pretty JSON and returns the exit code: 0, 1 for an `{error}` reply, and 2
 /// for a usage error or no window (herdr-app's codes; its "no Herdr window at" message, which
 /// tools match).
 pub fn client(args: &[String]) -> i32 {
-    client_at(&socket_path(), args, &mut io::stdout(), &mut io::stderr())
+    client_at(&socket_paths(), args, &mut io::stdout(), &mut io::stderr())
 }
 
-fn client_at(socket: &Path, args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+fn client_at(
+    sockets: &[PathBuf],
+    args: &[String],
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
     let mut fail = |message: &str| {
         let _ = writeln!(err, "herdr-frontend: {message}");
         2
@@ -341,9 +391,9 @@ fn client_at(socket: &Path, args: &[String], out: &mut dyn Write, err: &mut dyn 
         },
         _ => return fail(USAGE),
     };
-    let mut stream = match UnixStream::connect(socket) {
+    let mut stream = match connect(sockets) {
         Ok(stream) => stream,
-        Err(e) => return fail(&format!("no Herdr window at {}: {e}", socket.display())),
+        Err((socket, e)) => return fail(&format!("no Herdr window at {}: {e}", socket.display())),
     };
     let _ = stream.set_read_timeout(Some(CLIENT_TIMEOUT));
     let mut line = String::new();
@@ -466,6 +516,10 @@ mod tests {
     #[test]
     fn usage_errors_and_a_missing_window_exit_2_on_stderr() {
         let socket = Path::new("/tmp/herdr-frontend-no-such.sock");
+        let sockets = [
+            socket.to_owned(),
+            PathBuf::from("/tmp/herdr-frontend-no-such-old.sock"),
+        ];
         for (list, want) in [
             (&["ls", "extra"][..], USAGE.to_owned()),
             (&["do"], USAGE.to_owned()),
@@ -479,7 +533,7 @@ mod tests {
             ),
         ] {
             let (mut out, mut err) = (Vec::new(), Vec::new());
-            assert_eq!(client_at(socket, &args(list), &mut out, &mut err), 2);
+            assert_eq!(client_at(&sockets, &args(list), &mut out, &mut err), 2);
             let err = String::from_utf8(err).unwrap();
             assert!(err.starts_with(&format!("herdr-frontend: {want}")), "{err}");
             assert!(out.is_empty());
@@ -490,11 +544,14 @@ mod tests {
     fn a_bare_launch_asks_the_window_on_its_home_to_raise() {
         let path = std::env::temp_dir().join(format!("hf-raise-{}.sock", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        assert!(!raise_running_at(&path), "no window: the launch opens one");
+        assert!(
+            !raise_running_at(std::slice::from_ref(&path)),
+            "no window: the launch opens one"
+        );
         let mut control = Control::listen(&path, || {}).unwrap();
         let asking = {
             let path = path.clone();
-            std::thread::spawn(move || raise_running_at(&path))
+            std::thread::spawn(move || raise_running_at(&[path]))
         };
         let mut model = Model::new("/home/me");
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -511,12 +568,71 @@ mod tests {
     #[test]
     fn commands_print_without_a_window() {
         let (mut out, mut err) = (Vec::new(), Vec::new());
-        let socket = Path::new("/tmp/herdr-frontend-no-such.sock");
+        let socket = PathBuf::from("/tmp/herdr-frontend-no-such.sock");
         assert_eq!(
-            client_at(socket, &args(&["commands"]), &mut out, &mut err),
+            client_at(&[socket], &args(&["commands"]), &mut out, &mut err),
             0
         );
         let listed: Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(listed, model::control::listing());
+    }
+
+    #[test]
+    fn a_window_of_an_older_version_still_answers_on_the_config_folders_socket() {
+        // Right after an install, the old window serves the config folder's socket until it
+        // closes: the CLI and a bare launch find it there when the state folder has none.
+        let dir = PathBuf::from(format!("/tmp/hf-old-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (state, old) = (dir.join("state.sock"), dir.join("old.sock"));
+        let sockets = [state.clone(), old.clone()];
+        let mut control = Control::listen(&old, || {}).unwrap();
+        let mut model = Model::new("/home/me");
+        let mut pump = |done: &dyn Fn() -> bool, control: &mut Control| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !done() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the old window never answered"
+                );
+                control.drain(&mut model, 0.0, &Map::new());
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        };
+
+        let asking = {
+            let sockets = sockets.clone();
+            std::thread::spawn(move || {
+                let (mut out, mut err) = (Vec::new(), Vec::new());
+                let code = client_at(&sockets, &args(&["ls"]), &mut out, &mut err);
+                (code, out)
+            })
+        };
+        pump(&|| asking.is_finished(), &mut control);
+        let (code, out) = asking.join().unwrap();
+        assert_eq!(code, 0);
+        let listed: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(listed, Model::new("/home/me").ls());
+
+        let asking = {
+            let sockets = sockets.clone();
+            std::thread::spawn(move || raise_running_at(&sockets))
+        };
+        pump(&|| asking.is_finished(), &mut control);
+        assert!(
+            asking.join().unwrap(),
+            "the old window raises; no second one opens"
+        );
+        assert!(control.take_raise());
+
+        // The state folder's window comes first.
+        let mut current = Control::listen(&state, || {}).unwrap();
+        let asking = std::thread::spawn(move || raise_running_at(&sockets));
+        pump(&|| asking.is_finished(), &mut current);
+        assert!(asking.join().unwrap());
+        assert!(current.take_raise());
+        assert!(!control.take_raise());
+        drop((control, current));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,12 +1,12 @@
-//! The key file: `keys.json` in herdr-frontend's home, in Eli's `keys.json` form
+//! The key file: `keys.json` in herdr-frontend's config folder, in Eli's `keys.json` form
 //! ([`Keymap::from_json`]), applied live.
 //!
 //! - With no file, the keys are Eli's ([`ELI_KEYS`], `feature-inventory.md` §22), and that file
 //!   is written so there is one to edit.
 //! - A [`Watcher`] thread reads the file every [`EVERY`] and, when its text changes, parses it
 //!   there, off the UI thread, and hands the result over with a wake. A file that can't be used
-//!   keeps the keys the app had, says why in a toast and in `keys.error` (as Herdr app's
-//!   `<name>.error` files do), which goes once the file is good again.
+//!   keeps the keys the app had, says why in a toast and in `keys.error` in the state folder (as
+//!   Herdr app's `<name>.error` files do), which goes once the file is good again.
 //! - The escape hatch (`ctrl-alt-shift-escape`) sets the file aside as `keys.json.reset-<time>`
 //!   and writes Eli's keys in its place.
 
@@ -65,11 +65,13 @@ pub struct Watcher {
 }
 
 impl Watcher {
-    /// Starts watching `dir`'s key file, waking the UI with `wake` when there is news. `known`
-    /// is the text the app has applied ([`Start::text`]): a file still the same is not news. A
-    /// missing file is written with Eli's keys.
+    /// Starts watching `dir`'s key file, waking the UI with `wake` when there is news, and
+    /// writing `keys.error` in `state`. `known` is the text the app has applied
+    /// ([`Start::text`]): a file still the same is not news. A missing file is written with
+    /// Eli's keys.
     pub fn start(
         dir: PathBuf,
+        state: PathBuf,
         known: Option<String>,
         every: Duration,
         wake: rune::Waker,
@@ -78,7 +80,7 @@ impl Watcher {
         let (reset, resets) = mpsc::channel();
         std::thread::Builder::new()
             .name("herdr-frontend-keys".into())
-            .spawn(move || watch(&dir, known, every, &resets, &news_tx, &wake))
+            .spawn(move || watch(&dir, &state, known, every, &resets, &news_tx, &wake))
             .expect("spawning the key file thread");
         Watcher { news, reset }
     }
@@ -96,6 +98,7 @@ impl Watcher {
 
 fn watch(
     dir: &Path,
+    state: &Path,
     known: Option<String>,
     every: Duration,
     resets: &Receiver<()>,
@@ -110,7 +113,7 @@ fn watch(
         write_defaults(&path);
         last = Some(ELI_KEYS.to_owned());
     }
-    errors(dir, last.as_deref());
+    errors(state, last.as_deref());
     loop {
         match resets.recv_timeout(every) {
             Ok(()) => {
@@ -147,7 +150,7 @@ fn watch(
             Some(Ok(keys)) => Loaded::Keys(keys),
             Some(Err(e)) => Loaded::Bad(e.to_string()),
         };
-        errors(dir, last.as_deref());
+        errors(state, last.as_deref());
         if news.send(loaded).is_err() {
             return;
         }
@@ -160,7 +163,9 @@ fn errors(dir: &Path, text: Option<&str>) {
     let path = dir.join(KEY_ERRORS);
     match text.map(Keymap::from_json) {
         Some(Err(e)) => {
-            if let Err(error) = std::fs::write(&path, format!("{e}\n")) {
+            let written =
+                std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&path, format!("{e}\n")));
+            if let Err(error) = written {
                 eprintln!("herdr-frontend: couldn't write {}: {error}", path.display());
             }
         }
@@ -251,6 +256,7 @@ mod tests {
         assert_eq!(start.problem, None);
         let w = Watcher::start(
             dir.clone(),
+            dir.clone(),
             start.text,
             Duration::from_millis(10),
             Arc::new(|| {}),
@@ -277,8 +283,11 @@ mod tests {
             2,
             "cmd-k and the escape hatch"
         );
+        // `keys.error` goes in the state folder, never beside the key file.
+        let state = dir.join("state");
         let w = Watcher::start(
             dir.clone(),
+            state.clone(),
             start.text,
             Duration::from_millis(10),
             Arc::new(|| {}),
@@ -298,15 +307,16 @@ mod tests {
             panic!("the file's problem")
         };
         assert_eq!(why, r#"global "cmd-j": unknown action "tab.nope""#);
-        wait_for(&dir.join(KEY_ERRORS));
+        wait_for(&state.join(KEY_ERRORS));
         assert_eq!(
-            std::fs::read_to_string(dir.join(KEY_ERRORS)).unwrap(),
+            std::fs::read_to_string(state.join(KEY_ERRORS)).unwrap(),
             format!("{why}\n")
         );
+        assert!(!dir.join(KEY_ERRORS).exists());
 
         save(&file, r#"{"global": {"cmd-j": "tab.new"}}"#);
         assert!(matches!(next(&w), Loaded::Keys(_)));
-        assert!(!dir.join(KEY_ERRORS).exists(), "the problem is gone");
+        assert!(!state.join(KEY_ERRORS).exists(), "the problem is gone");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -317,6 +327,7 @@ mod tests {
         let mine = r#"{"global": {"cmd-k": "tab.new"}}"#;
         std::fs::write(&file, mine).unwrap();
         let w = Watcher::start(
+            dir.clone(),
             dir.clone(),
             load(&dir).text,
             Duration::from_millis(10),

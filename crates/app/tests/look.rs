@@ -1,6 +1,6 @@
 //! The look and settings through Rune's real runtime with no window (`docs/settings.md`): Eli's
-//! defaults, the arctic theme on the shell, zoom and its keys, `settings.json` written back, and
-//! live reload from an isolated home.
+//! defaults, the arctic theme on the shell, zoom and its keys (saved as state, never in
+//! `settings.json`), and live reload from an isolated home.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -40,7 +40,10 @@ fn scratch(name: &str) -> PathBuf {
 
 /// The app on the demo core with its home at `home`, as `live` makes it but on a fake core.
 fn runtime_at(home: &Path) -> Runtime<State> {
-    let home = Home::at(home);
+    runtime_in(Home::at(home))
+}
+
+fn runtime_in(home: Home) -> Runtime<State> {
     let mut rt = app()
         .init(move || State::new(Box::new(Offline), Some(home), Keeper::default()))
         .headless_runtime(SIZE, Env::new(true, 2.0));
@@ -143,14 +146,13 @@ fn a_font_that_isnt_installed_falls_back_to_jetbrains_mono_and_says_so() {
 }
 
 #[test]
-fn the_zoom_keys_zoom_everything_and_write_settings_json() {
-    let home = scratch("zoom");
-    std::fs::write(
-        home.join("settings.json"),
-        r#"{"zoom": 1.1, "font_size": 17, "theme": "arctic"}"#,
-    )
-    .unwrap();
-    let mut rt = runtime_at(&home);
+fn the_zoom_keys_zoom_everything_and_save_it_as_state() {
+    let dir = scratch("zoom");
+    let (config, state) = (dir.join("config"), dir.join("state"));
+    std::fs::create_dir_all(&config).unwrap();
+    let settings = r#"{"zoom": 1.1, "font_size": 17, "theme": "arctic"}"#;
+    std::fs::write(config.join("settings.json"), settings).unwrap();
+    let mut rt = runtime_in(Home::split(&config, &state));
     let cell_before = rt.state.display().cell;
 
     rt.state.step(1.0, Action::App(AppCommand::ZoomIn));
@@ -166,32 +168,85 @@ fn the_zoom_keys_zoom_everything_and_write_settings_json() {
     let cell_after = rt.state.display().cell;
     assert!(cell_after.unwrap()[1] > cell_before.unwrap()[1]);
 
-    // Written back with the file's other keys kept.
-    until(&mut rt, "settings.json to be written", |_| {
-        std::fs::read_to_string(home.join("settings.json")).is_ok_and(|t| t.contains("1.2"))
-    });
-    let saved: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(home.join("settings.json")).unwrap())
-            .unwrap();
-    assert_eq!(saved["zoom"], 1.2);
-    assert_eq!(saved["font_size"], 17);
-    assert_eq!(saved["theme"], "arctic");
-
     for (command, zoom) in [
         (AppCommand::ZoomOut, 1.1),
         (AppCommand::ZoomOut, 1.0),
         (AppCommand::ZoomIn, 1.1),
+        (AppCommand::ZoomIn, 1.2),
         (AppCommand::ZoomReset, 1.0),
+        (AppCommand::ZoomIn, 1.1),
+        (AppCommand::ZoomIn, 1.2),
+        (AppCommand::ZoomIn, 1.3),
     ] {
         rt.state.step(2.0, Action::App(command));
         frames(&mut rt, 2);
         assert_eq!(rt.zoom(), zoom, "{command:?}");
     }
-    // The watcher reads our own writes back without moving the zoom.
+    // Saved in the state folder, over the settings' zoom it stepped from.
+    until(&mut rt, "zoom.json to be written", |_| {
+        std::fs::read_to_string(state.join("zoom.json")).is_ok_and(|t| t.contains("1.3"))
+    });
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(state.join("zoom.json")).unwrap()).unwrap();
+    assert_eq!(saved, serde_json::json!({"zoom": 1.3, "settings": 1.1}));
+    // The config folder is never written: settings.json is as it was, and nothing is added.
     std::thread::sleep(Duration::from_millis(1500));
     frames(&mut rt, 3);
-    assert_eq!(rt.zoom(), 1.0);
-    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(rt.zoom(), 1.3);
+    assert_eq!(
+        std::fs::read_to_string(config.join("settings.json")).unwrap(),
+        settings
+    );
+    let mut files: Vec<String> = std::fs::read_dir(&config)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    files.sort();
+    assert_eq!(
+        files,
+        ["keys.json", "settings.json"],
+        "keys.json: the defaults, made once"
+    );
+
+    // The next run opens at the saved zoom.
+    drop(rt);
+    let mut rt = runtime_in(Home::split(&config, &state));
+    assert_eq!(rt.zoom(), 1.3);
+
+    // An edited settings.json zoom is the zoom again, and the next run starts there.
+    std::fs::write(config.join("settings.json"), r#"{"zoom": 0.9}"#).unwrap();
+    until(&mut rt, "the new settings zoom", |rt| rt.zoom() == 0.9);
+    drop(rt);
+    let mut rt = runtime_in(Home::split(&config, &state));
+    assert_eq!(rt.zoom(), 0.9);
+
+    // Edited between runs too: a zoom set over 0.9, then settings.json says 1.1.
+    rt.state.step(3.0, Action::App(AppCommand::ZoomIn));
+    assert_eq!(rt.state.zoom(), 1.0);
+    let saved = |zoom: f64, settings: f64| {
+        let want = serde_json::json!({"zoom": zoom, "settings": settings});
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let text = std::fs::read_to_string(state.join("zoom.json")).unwrap_or_default();
+            if serde_json::from_str::<serde_json::Value>(&text).is_ok_and(|v| v == want) {
+                return;
+            }
+            assert!(Instant::now() < deadline, "zoom.json isn't {want}: {text}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    saved(1.0, 0.9);
+    drop(rt);
+    std::fs::write(config.join("settings.json"), r#"{"zoom": 1.1}"#).unwrap();
+    let rt = runtime_in(Home::split(&config, &state));
+    assert_eq!(rt.zoom(), 1.1);
+    // The stale zoom is gone, so going back to 0.9 doesn't bring its 1.0 back.
+    saved(1.1, 1.1);
+    drop(rt);
+    std::fs::write(config.join("settings.json"), r#"{"zoom": 0.9}"#).unwrap();
+    let rt = runtime_in(Home::split(&config, &state));
+    assert_eq!(rt.zoom(), 0.9);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

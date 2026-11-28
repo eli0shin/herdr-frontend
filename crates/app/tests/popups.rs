@@ -634,17 +634,17 @@ fn settings_lists_the_files_and_opens_one_in_the_editor() {
     rt.state.settle();
     assert_eq!(*rt.state.model.mode(), Mode::Normal);
     let run = runs(&fake).pop().expect("terminal.run");
-    let path = rt.state.home_dir().join("keys.json");
+    let path = rt.state.config_dir().join("keys.json");
     assert_eq!(
         run.argv[..3],
         ["/bin/sh", "-c", "exec ${EDITOR:-nvim} \"$1\""]
     );
     assert_eq!(run.argv[4], path.to_string_lossy());
-    // The last row shows the home folder (recorded here: no Finder in tests).
+    // The last row shows the config folder (recorded here: no Finder in tests).
     ch(&mut rt, "⌘", ',');
     press(&mut rt, "", Key::Up);
     press(&mut rt, "", Key::Enter);
-    assert_eq!(rt.state.revealed, [rt.state.home_dir()]);
+    assert_eq!(rt.state.revealed, [rt.state.config_dir()]);
     // The row before it opens the Machines dialog.
     ch(&mut rt, "⌘", ',');
     press(&mut rt, "", Key::Up);

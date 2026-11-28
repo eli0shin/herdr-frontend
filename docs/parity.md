@@ -159,7 +159,7 @@ cursor under popups (§1), `cmd-shift-l` (§1), the picker's spinner and the key
 | Row layout (two lines, live edge, focused wash and outline) | Pass | `app/sidebar.rs::the_sidebar_lists_agents_under_its_top_row`; [`06-agents-list--04-look-at-done`](images/parity/06-agents-list--04-look-at-done.jpg) |
 | Status marks | Pass | same; spinner, "!" pill, dot and ring match in every e2e sidebar |
 | Row title | Pass | `model/agents.rs::titles_prefer_names_then_live_titles_and_never_a_bare_tab_number` |
-| Times survive restarts, 30 s refresh | Pass | `model/agents.rs::times_are_stamped_when_the_state_changes_and_survive_in_the_tracker`; `agents.json` in the home; `agents::REFRESH_EVERY` |
+| Times survive restarts, 30 s refresh | Pass | `model/agents.rs::times_are_stamped_when_the_state_changes_and_survive_in_the_tracker`; `agents.json` in the state folder; `agents::REFRESH_EVERY` |
 | Sub-agents nest, peek on click, fold | Pass | `app/sidebar.rs::a_row_click_focuses_its_agent_and_a_sub_agent_click_peeks`, `::the_icon_or_chevron_folds_sub_agents_and_headers_never_fold` |
 | Pi orchestrator and worker nesting | Pass | `model/agents.rs::pi_workers_nest_under_their_orchestrator_while_it_or_a_worker_is_focused` |
 | Jump labels on every row | Pass | `model/agents.rs::rows_past_thirty_six_get_two_letter_labels`; [`07-agent-navigation--05-jump-bar`](images/parity/07-agent-navigation--05-jump-bar.jpg) |
@@ -283,7 +283,7 @@ panel buttons ([`14-panels--01-a-shell-tab`](images/parity/14-panels--01-a-shell
 
 | Item | Verdict | Evidence |
 | --- | --- | --- |
-| Mod storage: the Agents list's times and pins, the tab bar's panel memory | Intentional | Times are in `agents.json` in herdr-frontend's home (§6). Pins are core labels. There are no panels to remember |
+| Mod storage: the Agents list's times and pins, the tab bar's panel memory | Intentional | Times are in `agents.json` in herdr-frontend's state folder (§6). Pins are core labels. There are no panels to remember |
 | Layout clicks persist: the sidebar's shown state and width survive restarts | Pass | `app/sidebar.rs::a_fresh_home_starts_from_the_defaults_and_keeps_its_own_after` (`sidebar.px`, `sidebar.hidden`) |
 | `view.json`: space, tab, pane, zoom, settled tabs, recent spaces, seen attention | Pass | `model/modes.rs::the_view_is_saved_when_it_changes_and_restores_where_its_ids_still_are`, `::saved_attention_comes_back_while_the_agent_says_the_same_word`; [`19-housekeeping--03-restart`](images/parity/19-housekeeping--03-restart.jpg) (both reopen on the blocked agent's tab) |
 

@@ -1,7 +1,7 @@
 //! The settings dialog (`cmd-,`, `ctrl-g c`, the palette's "Settings"). herdr-frontend is set up
 //! by files (`docs/settings.md`, `docs/keys.md`), so this lists them instead of editing values:
-//! each file of the home with its path, what is wrong with the files now, and a row that shows
-//! the home folder in Finder. Enter (or a click) on a file opens it in a new tab running
+//! each file of the config folder with its path, what is wrong with the files now, and a row that
+//! shows the config folder in Finder. Enter (or a click) on a file opens it in a new tab running
 //! `$EDITOR`, else Neovim ([`model::Action::EditFile`]); the window follows the saved file live.
 
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ pub const PLACE: Place = Place::Dialog {
 /// The list's scroll viewport.
 pub const ROWS: &str = "settings-rows";
 
-/// One row: a file to edit, or the home folder to show.
+/// One row: a file to edit, or the config folder to show.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Row {
     File {
@@ -36,10 +36,10 @@ pub enum Row {
     Reveal(PathBuf),
 }
 
-/// The home's files: settings, keys, programs, and the theme's file when the theme came from
-/// one, or the settings name a theme that isn't built in (its file is to be made).
+/// The config folder's files: settings, keys, programs, and the theme's file when the theme came
+/// from one, or the settings name a theme that isn't built in (its file is to be made).
 pub fn rows(s: &State) -> Vec<Row> {
-    let home = s.home_dir();
+    let home = s.config_dir();
     let mut files = vec![
         (SETTINGS.to_owned(), "Zoom, fonts, theme and colors"),
         (model::KEY_FILE.to_owned(), "The keymap"),
@@ -84,7 +84,7 @@ pub fn view(s: &State, list: &ListPopup) -> El {
                     "Status, add, rename and remove the machines reached over ssh".to_owned(),
                     &SERVER,
                 ),
-                Row::Reveal(home) => ("Show the home folder".to_owned(), shown(home), &FOLDER),
+                Row::Reveal(home) => ("Show the config folder".to_owned(), shown(home), &FOLDER),
             };
             Item::row(
                 row()
