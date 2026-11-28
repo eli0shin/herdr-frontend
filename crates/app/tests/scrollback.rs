@@ -352,8 +352,19 @@ fn a_drag_right_after_a_scroll_selects_the_row_under_the_pointer() {
     frames_until(&mut rt, |_| true);
     let lines: String = (1..=100).map(|i| format!("line {i}\r\n")).collect();
     fake.output("t1", format!("\x1bc{lines}").as_bytes());
+    // At rest at the bottom, and at its pane's grid: until the pane's resize lands, the bottom
+    // (and the rows drawn) are the core's first grid's.
+    let (_, rect, _) = rt
+        .state
+        .shown_panes()
+        .into_iter()
+        .find(|(pane, ..)| pane == "pn-1")
+        .expect("pn-1 is shown");
+    let fits = rt.state.grid_for(rect);
     frames_until(&mut rt, |s| {
-        s.line(0).starts_with("line ") && s.scrollbar.at_bottom
+        s.line(0).starts_with("line ")
+            && s.scrollbar.at_bottom
+            && (s.cols, s.rows) == (fits.columns, fits.rows)
     });
     let bottom = shown(&rt).scrollbar.offset;
     let line = rt.state.face(2.0).cell_pt().1;
