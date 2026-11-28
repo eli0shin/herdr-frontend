@@ -94,6 +94,26 @@ fn replay_at(bytes: &[u8], cols: u16, rows: u16, theme: &Theme, cell: (u32, u32)
     vt.snapshot()
 }
 
+/// Two hundred numbered lines in seven colors, in a `cols` × `rows` terminal with `face`'s
+/// cell, scrolled smoothly `up` rows up from the bottom (part of a row included): what a
+/// trackpad leaves on screen.
+pub fn scrolled_in(cols: u16, rows: u16, theme: &Theme, face: &Face, up: f32) -> Snapshot {
+    let mut vt = Vt::new(&Config {
+        cols,
+        rows,
+        cell_width: face.metrics.cell_width,
+        cell_height: face.metrics.cell_height,
+        theme: theme.clone(),
+        ..Config::default()
+    });
+    let lines: String = (1..=200)
+        .map(|i| format!("\x1b[3{}mline {i}\x1b[0m of the scrollback\r\n", 1 + i % 7))
+        .collect();
+    vt.write(lines.as_bytes());
+    vt.scroll_rows(up, 1);
+    vt.snapshot()
+}
+
 /// The screen file and grid the `screen-file` scene shows, from `HERDR_FRONTEND_SCREEN` (a file
 /// of program output) and `HERDR_FRONTEND_GRID` (`COLSxROWS`, 80x30 if unset): how the Ghostty
 /// pixel diff draws what Ghostty drew.

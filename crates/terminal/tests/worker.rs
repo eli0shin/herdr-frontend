@@ -400,6 +400,37 @@ fn typing_drops_the_selection_and_returns_to_the_bottom() {
     assert!(s.screen.iter().all(|row| row.selection.is_none()));
 }
 
+/// Smooth scrolls are numbered, and the first snapshot that has moved by one says so, even
+/// one that didn't move (the top stopped it). Typing at the bottom puts the part row away.
+#[test]
+fn smooth_scrolls_are_numbered_and_typing_puts_the_screen_back_on_its_rows() {
+    let (terminal, wakes) = spawn(Config {
+        rows: 5,
+        ..config()
+    });
+    let lines: Vec<u8> = (1..=20)
+        .flat_map(|i| format!("line {i}\r\n").into_bytes())
+        .collect();
+    terminal.write(lines);
+    let first = terminal.scroll_rows(2.5);
+    let s = snapshot_where(&terminal, &wakes, |s| s.scrolled >= first);
+    assert_eq!((s.scrolled, s.nudge), (first, 0.5));
+    let second = terminal.scroll_rows(-2.0);
+    assert_eq!(second, first + 1);
+    let s = snapshot_where(&terminal, &wakes, |s| s.scrolled >= second);
+    assert!(s.scrollbar.at_bottom);
+    assert_eq!(s.nudge, 0.5, "half a row up from the bottom");
+
+    terminal.key(KeyEvent::text(GHOSTTY_KEY_A, "a"));
+    assert_eq!(sync(&terminal), [Output::Input(b"a".to_vec())]);
+    snapshot_where(&terminal, &wakes, |s| s.nudge == 0.0);
+
+    terminal.scroll(Scroll::Top);
+    let third = terminal.scroll_rows(1.0);
+    let s = snapshot_where(&terminal, &wakes, |s| s.scrolled >= third);
+    assert_eq!((s.scrollbar.offset, s.nudge), (0, 0.0), "nowhere to go");
+}
+
 #[test]
 fn input_goes_out_as_it_is_in_order_with_keys() {
     let (terminal, _wakes) = spawn(config());

@@ -32,7 +32,7 @@ mod input;
 mod snapshot;
 mod vt;
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -53,7 +53,7 @@ pub use snapshot::{
 };
 pub use vt::{
     AUTOSCROLL_EVERY, ClipboardLocation, ColorScheme, Config, Event, IMAGE_STORAGE_LIMIT, Link,
-    Progress, Scroll, Scrollback, Theme, Vt,
+    ON_ROW, OVERSCAN, Progress, Scroll, Scrollback, Theme, Vt,
 };
 
 /// Called from the worker thread when there is something new for the UI: a snapshot to take or
@@ -96,6 +96,10 @@ enum Request {
         cell_height: u32,
     },
     Scroll(Scroll),
+    ScrollRows {
+        rows: f32,
+        seq: u64,
+    },
     Scrollback(Scrollback),
     Theme(Theme),
     Reset,
@@ -148,6 +152,8 @@ pub struct Terminal {
     handoff: Arc<Mutex<Handoff>>,
     output: Receiver<Output>,
     worker: Option<JoinHandle<()>>,
+    /// The last [`Terminal::scroll_rows`] number given out.
+    scrolls: AtomicU64,
 }
 
 impl Terminal {
@@ -184,6 +190,7 @@ impl Terminal {
             handoff,
             output,
             worker: Some(worker),
+            scrolls: AtomicU64::new(0),
         }
     }
 
@@ -220,6 +227,15 @@ impl Terminal {
 
     pub fn scroll(&self, scroll: Scroll) {
         self.send(Request::Scroll(scroll));
+    }
+
+    /// Scrolls the scrollback by `rows` rows, up for positive, part of a row included
+    /// ([`Vt::scroll_rows`]): a trackpad over the scrollback. Returns the request's number; the
+    /// first snapshot whose [`Snapshot::scrolled`] has reached it has moved by it.
+    pub fn scroll_rows(&self, rows: f32) -> u64 {
+        let seq = self.scrolls.fetch_add(1, Ordering::Relaxed) + 1;
+        self.send(Request::ScrollRows { rows, seq });
+        seq
     }
 
     pub fn set_scrollback(&self, limits: Scrollback) {
@@ -513,6 +529,11 @@ impl Worker {
                 self.vt.scroll(scroll);
                 true
             }
+            // Published even when nothing moved, so the UI learns the scroll was handled.
+            Request::ScrollRows { rows, seq } => {
+                self.vt.scroll_rows(rows, seq);
+                true
+            }
             Request::Scrollback(limits) => {
                 self.vt.set_scrollback(limits);
                 true
@@ -652,8 +673,10 @@ impl Worker {
     }
 
     /// The person typed into the program, as Ghostty and Herdr app treat it: the selection
-    /// goes and the viewport returns to the bottom. True if either changed the screen.
+    /// goes and the viewport returns to the bottom, on its rows. True if that changed the
+    /// screen.
     fn typed(&mut self) -> bool {
+        let nudged = self.vt.drop_nudge();
         let selected = self.vt.has_selection();
         if selected {
             self.vt.clear_selection();
@@ -662,7 +685,7 @@ impl Worker {
         if scrolled {
             self.vt.scroll(Scroll::Bottom);
         }
-        selected || scrolled
+        selected || scrolled || nudged
     }
 
     fn out(&mut self, output: Output) {

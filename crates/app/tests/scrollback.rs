@@ -1,5 +1,5 @@
 //! Scrollback, find and links on a fake core, through Rune's real runtime with no window: the
-//! wheel at Eli's zoom and the scroll speed, the trackpad's whole lines, the scrollbar, the find
+//! wheel at Eli's zoom and the scroll speed, smooth trackpad scrolling, the scrollbar, the find
 //! bar (`cmd-f`), Cmd-hover underlines and Cmd-click opening links, select all and copy on
 //! select (`docs/research/feature-inventory.md` §17).
 
@@ -218,10 +218,18 @@ fn the_scroll_speed_multiplies_the_wheel() {
     assert_eq!(s.scrollbar.offset, s.scrollbar.total - s.scrollbar.len - 3);
 }
 
-/// A trackpad scrolls whole lines, as Ghostty does: its travel adds up to a line per cell
-/// height, and what's left over waits for more.
+fn screen_el(rt: &Runtime<State>) -> ElementInfo {
+    rt.elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("screen") && e.path.contains("pane-pn-1/"))
+        .expect("t1's grid")
+}
+
+/// A trackpad scrolls the scrollback by the pixel, with Herdr app's distances (a line per cell
+/// height of travel): between two rows the screen sits part of a row low, with part of the row
+/// above in view. Its momentum moves it on the same way.
 #[test]
-fn a_trackpad_scrolls_the_scrollback_by_whole_lines() {
+fn a_trackpad_scrolls_the_scrollback_by_the_pixel() {
     let (mut rt, fake, _) = runtime();
     hundred_lines(&mut rt, &fake);
     let (x, y) = cell(&rt, 2, 2);
@@ -232,31 +240,157 @@ fn a_trackpad_scrolls_the_scrollback_by_whole_lines() {
         rt.wheel_event(WheelEvent::new(0.0, line * lines).at(x, y).precise(true));
         frames(rt, 3);
     };
-    up(&mut rt, 1.5);
-    assert_eq!(typed(&fake, from), b"", "the scrollback is the terminal's");
-    assert_eq!(shown(&rt).scrollbar.offset, bottom - 1);
-    up(&mut rt, 0.5);
-    assert_eq!(
-        shown(&rt).scrollbar.offset,
-        bottom - 2,
-        "the half left over"
-    );
-    let grid = rt
-        .elements()
-        .into_iter()
-        .find(|e| e.key.as_deref() == Some("screen") && e.path.contains("pane-pn-1/"))
-        .unwrap();
+    // Where the grid sits on its rows: at the pane's bottom, under the space whole rows leave.
+    let rest = screen_el(&rt).rect[1];
     let pane = element(&rt, "pane-pn-1").unwrap();
     assert!(
-        (grid.rect[1] + grid.rect[3] - (pane.rect[1] + pane.rect[3])).abs() <= 0.5,
-        "on its rows at the pane's bottom, never part of one: {:?} in {:?}",
-        grid.rect,
-        pane.rect
+        rest > pane.rect[1],
+        "the pane leaves space above whole rows"
     );
 
-    // Back down past the bottom: following output again.
+    // A line and a half up.
+    up(&mut rt, 1.5);
+    assert_eq!(typed(&fake, from), b"", "the scrollback is the terminal's");
+    let s = shown(&rt);
+    assert_eq!((s.scrollbar.offset, s.nudge), (bottom - 1, 0.5));
+    // The screen sits half a row lower, on a device pixel, with the row above over it.
+    let half = (line * 0.5 * 2.0).round() / 2.0;
+    let grid = screen_el(&rt);
+    assert_eq!(grid.rect[1] - rest, half);
+    let above = element(&rt, "above").expect("the row above");
+    assert_eq!(grid.rect[1] - above.rect[1], line);
+    assert_eq!(above.rect[3], line, "one row");
+    // It slides under the grid's top edge: the space above stays the terminal's background,
+    // drawn over it.
+    let margin = element(&rt, "top-margin").expect("the space above the grid");
+    assert_eq!(margin.rect[1], pane.rect[1]);
+    assert_eq!(margin.rect[1] + margin.rect[3], rest);
+    let order = |key: &str| {
+        rt.elements()
+            .iter()
+            .position(|e| e.key.as_deref() == Some(key) && e.path.contains("pane-pn-1"))
+    };
+    assert!(
+        order("top-margin") > order("above"),
+        "drawn over the row above"
+    );
+
+    // Momentum, after the fingers lift, carries on by the pixel.
+    let mut coast = WheelEvent::new(0.0, line * 0.5).at(x, y).precise(true);
+    coast.momentum = true;
+    rt.wheel_event(coast);
+    frames(&mut rt, 3);
+    let s = shown(&rt);
+    assert_eq!((s.scrollbar.offset, s.nudge), (bottom - 2, 0.0));
+    assert_eq!(screen_el(&rt).rect[1], rest, "on its rows again");
+    assert!(element(&rt, "above").is_none());
+
+    // A click lands on the cell under the pointer wherever the screen sits.
+    up(&mut rt, 0.5);
+    let (cx, cy) = cell(&rt, 0, 0);
+    rt.pointer_down(cx, cy);
+    rt.pointer_up(cx, cy);
+    frames(&mut rt, 2);
+    rt.pointer_down(cx, cy);
+    rt.pointer_up(cx, cy);
+    frames(&mut rt, 3);
+    let s = shown(&rt);
+    assert_eq!(
+        s.screen[0].selection,
+        Some((0, 3)),
+        "the double click took the word in the screen's first row"
+    );
+    press(&mut rt, Key::Escape, NONE);
+
+    // Down to the bottom and half a row up, then typing: back on the rows.
+    up(&mut rt, -3.0);
+    up(&mut rt, 0.5);
+    assert_eq!(shown(&rt).nudge, 0.5);
+    press(&mut rt, Key::Text("x".into()), NONE);
+    frames(&mut rt, 3);
+    assert_eq!(
+        shown(&rt).nudge,
+        0.0,
+        "typing puts the screen back on its rows"
+    );
+    assert_eq!(screen_el(&rt).rect[1], rest);
+
+    // Back down past the bottom: on a row again, following output.
+    up(&mut rt, 1.5);
     up(&mut rt, -4.0);
-    assert!(shown(&rt).scrollbar.at_bottom);
+    let s = shown(&rt);
+    assert!(s.scrollbar.at_bottom);
+    assert_eq!(s.nudge, 0.0);
+    assert!(element(&rt, "above").is_none());
+}
+
+/// Frames, a few milliseconds apart, until `done` holds for `t1`'s shown snapshot: the
+/// terminal answers on its worker thread.
+fn frames_until(rt: &mut Runtime<State>, done: impl Fn(&terminal::Snapshot) -> bool) {
+    for _ in 0..400 {
+        rt.invalidate();
+        rt.frame(1.0 / 120.0);
+        let shown = rt.state.viewers.get("t1").and_then(|v| v.pane.as_ref());
+        if shown.is_some_and(|p| done(&p.snapshot)) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("t1 never showed what was waited for");
+}
+
+/// A selection made right after a smooth scroll, before the worker's snapshot of it has come
+/// back, lands on the row drawn under the pointer: the worker has moved by the scroll when the
+/// selection reaches it, so only its own part row is taken off the pointer.
+#[test]
+fn a_drag_right_after_a_scroll_selects_the_row_under_the_pointer() {
+    let fake = demo_core();
+    let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
+    rt.state.with_settings(Settings::fixture());
+    // No `settle`: the terminal answers on its worker thread, as in the window.
+    rt.state.connect(Box::new(fake.clone()));
+    frames_until(&mut rt, |_| true);
+    let lines: String = (1..=100).map(|i| format!("line {i}\r\n")).collect();
+    fake.output("t1", format!("\x1bc{lines}").as_bytes());
+    frames_until(&mut rt, |s| {
+        s.line(0).starts_with("line ") && s.scrollbar.at_bottom
+    });
+    let bottom = shown(&rt).scrollbar.offset;
+    let line = rt.state.face(2.0).cell_pt().1;
+    let grid = screen_el(&rt);
+
+    // Two and a half rows up, and at once, with no frame between, a drag along a row: the
+    // frame that handles both draws the screen 2.5 rows low, ahead of the worker.
+    let (x, y) = (grid.rect[0] + 2.0, grid.rect[1] + 2.0 * line);
+    rt.wheel_event(WheelEvent::new(0.0, line * 2.5).at(x, y).precise(true));
+    // The worker's rows will sit half a row low: its sixth is drawn 5.5 rows down.
+    let row_y = grid.rect[1] + (0.5 + 5.5) * line;
+    rt.pointer_down(x, row_y);
+    rt.pointer_move(x + 60.0, row_y);
+    rt.pointer_up(x + 60.0, row_y);
+    frames_until(&mut rt, |s| s.screen.iter().any(|r| r.selection.is_some()));
+    let s = shown(&rt);
+    assert_eq!((s.scrollbar.offset, s.nudge), (bottom - 2, 0.5));
+    let selected: Vec<usize> = (0..s.screen.len())
+        .filter(|&i| s.screen[i].selection.is_some())
+        .collect();
+    assert_eq!(selected, [5], "the row under the pointer, {:?}", s.line(5));
+}
+
+/// A notch moves whole lines from wherever a trackpad left the screen: the part row stays.
+#[test]
+fn a_notch_after_a_trackpad_keeps_the_part_row() {
+    let (mut rt, fake, _) = runtime();
+    hundred_lines(&mut rt, &fake);
+    let (x, y) = cell(&rt, 2, 2);
+    let line = rt.state.face(2.0).cell_pt().1;
+    let bottom = shown(&rt).scrollbar.offset;
+    rt.wheel_event(WheelEvent::new(0.0, line * 0.25).at(x, y).precise(true));
+    frames(&mut rt, 3);
+    rt.wheel_xy(x, y, 0.0, 40.0);
+    frames(&mut rt, 3);
+    let s = shown(&rt);
+    assert_eq!((s.scrollbar.offset, s.nudge), (bottom - 3, 0.25));
 }
 
 #[test]

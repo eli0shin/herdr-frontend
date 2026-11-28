@@ -30,6 +30,15 @@ pub use images::STORAGE_LIMIT as IMAGE_STORAGE_LIMIT;
 pub use link::Link;
 pub use select::AUTOSCROLL_EVERY;
 
+/// The scrollback rows a snapshot carries above and below the viewport ([`Snapshot::above`],
+/// [`Snapshot::below`]): enough for a view scrolling smoothly to draw the rows a fast trackpad
+/// flick moves past before the worker has caught up with it.
+pub const OVERSCAN: u16 = 12;
+
+/// Within this much of a row is on it: what a smooth scroll's float sums can be off by. A view
+/// that works out where the worker's rows are snaps the same way.
+pub const ON_ROW: f32 = 1e-3;
+
 /// How a terminal starts.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
@@ -197,6 +206,31 @@ struct Effects {
     hold: Option<Instant>,
     /// `state` holds a frame captured at the start of a hold that no snapshot has read yet.
     captured: bool,
+    /// Where smooth scrolling left the viewport ([`Vt::scroll_rows`]), and where it was when the
+    /// current hold began: a held frame shows the rows of then, so it reports that scroll.
+    smooth: Smooth,
+    held_smooth: Smooth,
+}
+
+/// The part of a row a smooth scroll left in view, and the last smooth scroll handled.
+#[derive(Clone, Copy, Debug, Default)]
+struct Smooth {
+    /// Rows the viewport sits below its top row, under one ([`Snapshot::nudge`]).
+    nudge: f32,
+    /// The viewport's offset the part row was left at, and whether it was at the bottom then:
+    /// at the bottom it follows the output, and the part row with it.
+    offset: u64,
+    at_bottom: bool,
+    /// [`Snapshot::scrolled`].
+    scrolled: u64,
+}
+
+impl Smooth {
+    /// Whether the part row still belongs to a viewport at `bar`: it stayed where it was left,
+    /// or it was left at the bottom and is still there, following the output.
+    fn holds_at(&self, bar: Scrollbar) -> bool {
+        bar.offset == self.offset || (self.at_bottom && bar.at_bottom)
+    }
 }
 
 /// Terminal data read together with each render-state update, so it describes the same
@@ -271,6 +305,19 @@ impl Vt {
                 ghostty_render_state_row_iterator_new(ptr::null(), &mut rows_iter),
                 "ghostty_render_state_row_iterator_new",
             );
+            // Rows around the viewport, for a view scrolling by less than a row or ahead of us.
+            let overscan = GhosttyRenderStateOverscan {
+                above: OVERSCAN,
+                below: OVERSCAN,
+            };
+            ok(
+                ghostty_render_state_set(
+                    state,
+                    GHOSTTY_RENDER_STATE_OPT_OVERSCAN,
+                    (&raw const overscan).cast(),
+                ),
+                "RENDER_STATE_OPT_OVERSCAN",
+            );
             let mut cells: GhosttyRenderStateRowCells = ptr::null_mut();
             ok(
                 ghostty_render_state_row_cells_new(ptr::null(), &mut cells),
@@ -322,6 +369,8 @@ impl Vt {
                 meta: Meta::default(),
                 hold: None,
                 captured: false,
+                smooth: Smooth::default(),
+                held_smooth: Smooth::default(),
             })));
             let userdata: *mut Effects = effects.as_ptr();
             set(
@@ -496,7 +545,67 @@ impl Vt {
         }
     }
 
+    /// Moves the viewport. The part of a row a smooth scroll left in view goes: the screen sits
+    /// on its rows again.
     pub fn scroll(&mut self, scroll: Scroll) {
+        self.effects_mut().smooth.nudge = 0.0;
+        self.move_viewport(scroll);
+    }
+
+    /// Scrolls the scrollback by `rows` rows, up for positive, as a trackpad does: whole rows
+    /// move the viewport and the rest shows as the viewport sitting that much lower, with part
+    /// of the row above in view ([`Snapshot::nudge`]). It never goes past the top or the
+    /// bottom. `seq` is the request's number, for [`Snapshot::scrolled`]. Any other scroll, or
+    /// output that moves the viewport (other than following it at the bottom), drops the part
+    /// row.
+    pub fn scroll_rows(&mut self, rows: f32, seq: u64) {
+        self.effects_mut().smooth.scrolled = seq;
+        if !rows.is_finite() {
+            return;
+        }
+        let smooth = self.effects().smooth;
+        let bar = self.scrollbar();
+        let from = bar.offset;
+        let held = if smooth.holds_at(bar) {
+            smooth.nudge
+        } else {
+            0.0
+        };
+        let at = held + rows;
+        let whole = (at + ON_ROW).floor();
+        let mut nudge = at - whole;
+        if nudge < ON_ROW {
+            nudge = 0.0;
+        }
+        let whole = whole as i64;
+        if whole != 0 {
+            self.move_viewport(Scroll::Delta(-whole as isize));
+        }
+        let bar = self.scrollbar();
+        // At the top there's no row above to show part of; stopped by the top or the bottom,
+        // no part of a row past it.
+        if bar.offset == 0 || bar.offset as i64 != from as i64 - whole {
+            nudge = 0.0;
+        }
+        let smooth = &mut self.effects_mut().smooth;
+        smooth.nudge = nudge;
+        smooth.offset = bar.offset;
+        smooth.at_bottom = bar.at_bottom;
+    }
+
+    /// Drops the part of a row a smooth scroll left in view, so the screen sits on its rows
+    /// again. True if there was one.
+    pub fn drop_nudge(&mut self) -> bool {
+        std::mem::take(&mut self.effects_mut().smooth.nudge) != 0.0
+    }
+
+    /// The scrollback and the viewport, as they are now.
+    fn scrollbar(&self) -> Scrollbar {
+        // SAFETY: `term` is live.
+        unsafe { read_meta(self.term) }.scrollbar
+    }
+
+    fn move_viewport(&mut self, scroll: Scroll) {
         let (tag, value) = match scroll {
             Scroll::Top => (
                 GHOSTTY_TERMINAL_SCROLL_VIEWPORT_TOP,
@@ -625,7 +734,9 @@ impl Vt {
                 dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL || self.built_with != Some((colors, cols));
 
             let mut screen = Vec::with_capacity(rows as usize);
-            let mut rows_by_id = HashMap::with_capacity(rows as usize);
+            let (mut above, mut below) = (Vec::new(), Vec::new());
+            let mut rows_by_id =
+                HashMap::with_capacity(usize::from(rows) + 2 * usize::from(OVERSCAN));
             let mut rebuilt = false;
             ok(
                 ghostty_render_state_get(
@@ -644,6 +755,8 @@ impl Vt {
                 ) == GHOSTTY_SUCCESS;
                 let id = RowId(u128::from(raw_id.bits[0]) << 64 | u128::from(raw_id.bits[1]));
                 let row_dirty: bool = row_get(self.rows_iter, GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY);
+                // Overscan rows above the viewport are negative, those below from `rows` on.
+                let y: i32 = row_get(self.rows_iter, GHOSTTY_RENDER_STATE_ROW_DATA_VIEWPORT_Y);
                 let mut range = GhosttyRenderStateRowSelection {
                     size: size_of::<GhosttyRenderStateRowSelection>(),
                     ..Default::default()
@@ -655,7 +768,11 @@ impl Vt {
                 ) == GHOSTTY_SUCCESS)
                     .then_some((range.start_x, range.end_x));
 
-                let matches = self.matches_on(screen.len() as u16);
+                // Find hits are the viewport's.
+                let matches = match u16::try_from(y) {
+                    Ok(y) if y < rows => self.matches_on(y),
+                    _ => Vec::new(),
+                };
                 // A kept row may carry an old hover; it's put right below.
                 let kept = (has_id && !full && !row_dirty)
                     .then(|| self.rows_by_id.get(&id))
@@ -672,7 +789,13 @@ impl Vt {
                 if has_id {
                     rows_by_id.insert(id, row.clone());
                 }
-                screen.push(row);
+                if y < 0 {
+                    above.push(row);
+                } else if y >= i32::from(rows) {
+                    below.push(row);
+                } else {
+                    screen.push(row);
+                }
             }
             self.rows_by_id = rows_by_id;
             self.built_with = Some((colors, cols));
@@ -712,6 +835,20 @@ impl Vt {
                 "ghostty_render_state_clean",
             );
 
+            // The part row shows only while the viewport stays where it was left (or follows the
+            // output at the bottom it was left at), under a row. A held frame shows the rows and
+            // the scroll of when the hold began.
+            let smooth = if self.effects().hold.is_none() {
+                let smooth = &mut self.effects_mut().smooth;
+                if smooth.holds_at(meta.scrollbar) && !above.is_empty() {
+                    smooth.offset = meta.scrollbar.offset;
+                } else {
+                    smooth.nudge = 0.0;
+                }
+                *smooth
+            } else {
+                self.effects().held_smooth
+            };
             self.generation += 1;
             self.shown = screen.clone();
             self.refresh_hover();
@@ -738,6 +875,10 @@ impl Vt {
                 cell_width: self.effects().size.cell_width,
                 cell_height: self.effects().size.cell_height,
                 screen,
+                above,
+                below,
+                nudge: smooth.nudge,
+                scrolled: smooth.scrolled,
                 dirty: if full {
                     Dirty::Full
                 } else if rebuilt {
@@ -1434,6 +1575,7 @@ unsafe extern "C" fn on_render_hold(term: GhosttyTerminal, userdata: *mut c_void
         if held {
             // The terminal holds exactly the frame the program wants left on screen.
             effects.meta = update(effects.state, term);
+            effects.held_smooth = effects.smooth;
             effects.hold = Some(Instant::now());
             effects.captured = true;
         } else {

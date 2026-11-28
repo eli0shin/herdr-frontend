@@ -52,7 +52,7 @@
 //! encoded here: the FOCUS frames above are the core's to turn into `CSI I` and `CSI O`.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -177,8 +177,11 @@ pub struct Viewer {
     pub preedit: Option<String>,
     /// The find bar: open or not, and its query, which stays while it's closed.
     pub find: Option<FindBar>,
-    /// Trackpad travel not yet a whole line, in points.
+    /// Trackpad travel not yet a whole line, in points, while the wheel goes to the program.
     wheel: f32,
+    /// Smooth scrolls sent to the worker that the shown snapshot doesn't show yet: each
+    /// request's number and its rows, up for positive ([`Terminal::scroll_rows`]).
+    scrolls: VecDeque<(u64, f32)>,
     /// Cmd is held over the grid, so the link under the pointer is underlined.
     hovering_link: bool,
 }
@@ -192,6 +195,8 @@ pub struct FindBar {
 
 impl Viewer {
     fn show(&mut self, snapshot: terminal::Snapshot) {
+        let scrolled = snapshot.scrolled;
+        self.scrolls.retain(|&(seq, _)| seq > scrolled);
         match &mut self.pane {
             Some(pane) => pane.show(snapshot),
             None => {
@@ -200,6 +205,22 @@ impl Viewer {
                 pane.preedit = self.preedit.clone();
                 self.pane = Some(pane);
             }
+        }
+        self.ahead();
+    }
+
+    /// Scrolls the scrollback smoothly by `rows`, up for positive: the worker moves the
+    /// viewport, and the pane draws the move at once, before the worker's snapshot shows it.
+    fn scroll_rows(&mut self, rows: f32) {
+        let seq = self.terminal.scroll_rows(rows);
+        self.scrolls.push_back((seq, rows));
+        self.ahead();
+    }
+
+    /// Tells the pane how far ahead of its snapshot the window has scrolled.
+    fn ahead(&mut self) {
+        if let Some(pane) = &mut self.pane {
+            pane.ahead = self.scrolls.iter().map(|&(_, rows)| rows).sum();
         }
     }
 
@@ -483,8 +504,8 @@ pub struct State {
     /// What a find field edits when its terminal is gone (Rune asks for a field's text by
     /// key).
     spare_edit: TextEdit,
-    /// The pointer over a terminal, in device pixels from its grid's corner: where Cmd
-    /// pressed with no motion underlines a link.
+    /// The pointer over a terminal, in points in its pane: where Cmd pressed with no motion
+    /// underlines a link.
     pointer: Option<(String, f32, f32)>,
     /// The commit ([`rune::commit_generation`]) that draws the last step that showed another
     /// space: [`State::space_switched`].
@@ -2169,6 +2190,7 @@ impl State {
             preedit: None,
             find: None,
             wheel: 0.0,
+            scrolls: VecDeque::new(),
             hovering_link: false,
         }
     }
@@ -3055,16 +3077,33 @@ impl State {
         }
     }
 
-    /// The pointer in device pixels from the grid's top left, from points in the pane.
+    /// The pointer in device pixels from the grid's top left, from points in the pane, for what
+    /// goes to the worker (the mouse, selections, links). Scrolling smoothly, the screen is drawn
+    /// where the worker's viewport is once it has every scroll sent so far, and requests reach it
+    /// in order after them: only its own part row is left to take off.
     fn grid_px(&self, address: &str, x: f32, y: f32) -> (f32, f32) {
-        let padding = self
-            .viewers
-            .get(address)
-            .and_then(|v| v.pane.as_ref())
-            .map_or(Padding::default(), |p| p.padding);
+        self.px_from(address, x, y, TerminalPane::worker_nudge_px)
+    }
+
+    /// [`State::grid_px`] for what's looked up in the shown snapshot, whose screen the pane
+    /// draws its whole nudge lower while the worker hasn't caught up.
+    fn shown_px(&self, address: &str, x: f32, y: f32) -> (f32, f32) {
+        self.px_from(address, x, y, TerminalPane::nudge_px)
+    }
+
+    fn px_from(
+        &self,
+        address: &str,
+        x: f32,
+        y: f32,
+        nudge: fn(&TerminalPane, &crate::view::terminal::font::Face) -> f32,
+    ) -> (f32, f32) {
+        let pane = self.viewers.get(address).and_then(|v| v.pane.as_ref());
+        let padding = pane.map_or(Padding::default(), |p| p.padding);
+        let nudge = pane.map_or(0.0, |p| nudge(p, &self.face(self.scale)));
         (
             x * self.scale - padding.left as f32,
-            y * self.scale - padding.top as f32,
+            y * self.scale - padding.top as f32 - nudge,
         )
     }
 
@@ -3079,7 +3118,7 @@ impl State {
         };
         let in_use = d.phase == Phase::Down && self.use_pane(pane, &address, tx);
         if d.phase == Phase::Down && tx.button() == PointerButton::Primary && tx.mods().cmd {
-            let (x, y) = self.grid_px(&address, d.x, d.y);
+            let (x, y) = self.shown_px(&address, d.x, d.y);
             if let Some((target, _)) = self.address_at(&address, x, y) {
                 self.press = None;
                 self.step(tx.clock(), Action::Peek(target));
@@ -3093,6 +3132,7 @@ impl State {
         };
         let mods = tx.mods();
         let (x, y) = self.grid_px(&address, d.x, d.y);
+        let shown = self.shown_px(&address, d.x, d.y);
         let button = match tx.button() {
             PointerButton::Middle => MouseButton::Middle,
             PointerButton::Secondary => MouseButton::Right,
@@ -3115,7 +3155,9 @@ impl State {
         match d.phase {
             // Cmd-click on the underlined link opens it, whatever the program does with the
             // mouse; anywhere else Cmd-click is a click (Ghostty's `mouseButtonCallback`).
-            Phase::Down if mods.cmd && button == MouseButton::Left && viewer.link_at(x, y) => {
+            Phase::Down
+                if mods.cmd && button == MouseButton::Left && viewer.link_at(shown.0, shown.1) =>
+            {
                 viewer.terminal.open_link(x, y);
                 self.press = None;
             }
@@ -3186,13 +3228,17 @@ impl State {
         Some((address, word))
     }
 
-    /// Cmd held with the pointer at `(x, y)` over terminal `address`'s grid, or not: the link
-    /// or terminal address there is underlined, the address first, as Cmd-click peeks it before
-    /// opening a link. Without Cmd the underline goes.
+    /// Cmd held with the pointer at `(x, y)` (points in the pane) over terminal `address`'s
+    /// grid, or not: the link or terminal address there is underlined, the address first, as
+    /// Cmd-click peeks it before opening a link. Without Cmd the underline goes.
     fn hover_link(&mut self, address: &str, at: Option<(f32, f32)>) {
         let word = at
-            .and_then(|(x, y)| self.address_at(address, x, y))
+            .and_then(|(x, y)| {
+                let (x, y) = self.shown_px(address, x, y);
+                self.address_at(address, x, y)
+            })
             .map(|(_, word)| word);
+        let at = at.map(|(x, y)| self.grid_px(address, x, y));
         if let Some(viewer) = self.viewers.get_mut(address) {
             viewer.terminal.hover(at, word);
             viewer.hovering_link = at.is_some();
@@ -3217,10 +3263,10 @@ impl State {
         {
             self.hover_link(&was, None);
         }
-        self.pointer = Some((address.clone(), x, y));
+        self.pointer = Some((address.clone(), p.x, p.y));
         // With Cmd held the link under the pointer is underlined, until Cmd or the pointer goes.
         if mods.cmd || self.viewers.get(&address).is_some_and(|v| v.hovering_link) {
-            self.hover_link(&address, mods.cmd.then_some((x, y)));
+            self.hover_link(&address, mods.cmd.then_some((p.x, p.y)));
         }
         if self.in_use() == Some(address.as_str())
             && let Some(viewer) = self.viewers.get(&address)
@@ -3267,12 +3313,14 @@ impl State {
         s.after_input(tx);
     }
 
-    /// The wheel over pane `pane`, as Ghostty scrolls: a notch is three lines, and trackpad
-    /// travel adds up to a line per cell height, both times `terminal_scroll_speed`; whole lines
-    /// only, never part of one. A program tracking the mouse hears wheel buttons (Shift keeps
-    /// the wheel the terminal's); on the alternate screen, which has no scrollback, the arrows
-    /// (xterm's alternate scroll); otherwise the scrollback moves. Only the terminal in use sends
-    /// the program anything: over another pane the wheel moves the scrollback alone.
+    /// The wheel over pane `pane`, as Herdr app and Ghostty count it: a notch is three lines,
+    /// and trackpad travel is a line per cell height, both times `terminal_scroll_speed`. A
+    /// program tracking the mouse hears wheel buttons (Shift keeps the wheel the terminal's); on
+    /// the alternate screen, which has no scrollback, the arrows (xterm's alternate scroll);
+    /// both in whole lines. Otherwise the scrollback moves: a notch by whole lines, a trackpad
+    /// (and its momentum) or a free-spinning wheel smoothly, by the pixel, with part of a row in
+    /// view between rows, in the frame the event lands. Only the terminal in use sends the
+    /// program anything: over another pane the wheel moves the scrollback alone.
     pub fn pane_wheel(&mut self, pane: &str, ev: &WheelEvent, tx: &mut Tx) -> bool {
         let Some(address) = self.surface_address(pane) else {
             return false;
@@ -3297,7 +3345,17 @@ impl State {
         if !in_use && (alternate || to_program) {
             return true;
         }
-        let lines = if ev.notch || !ev.precise {
+        let notched = ev.notch || !ev.precise;
+        if !notched && !alternate && !to_program {
+            // Rune's delta and the cell are both in the zoomed view's points.
+            let rows = dy * speed / line;
+            if rows != 0.0 && rows.is_finite() {
+                viewer.scroll_rows(rows);
+                self.after_input(tx);
+            }
+            return true;
+        }
+        let lines = if notched {
             // Rune hands the delta over in the zoomed view's points; a notch is 40 window points.
             let ticks = dy * zoom / WHEEL_NOTCH;
             if ticks == 0.0 {
@@ -3348,10 +3406,9 @@ impl State {
                     .key(terminal::KeyEvent::press(arrow, terminal::Mods::NONE));
             }
         } else {
-            let delta = n as isize;
-            viewer
-                .terminal
-                .scroll(Scroll::Delta(if up { -delta } else { delta }));
+            // Whole lines from wherever a trackpad left the screen, drawn at once too.
+            let viewer = self.viewers.get_mut(&address).expect("found above");
+            viewer.scroll_rows(lines as f32);
         }
         self.after_input(tx);
         true

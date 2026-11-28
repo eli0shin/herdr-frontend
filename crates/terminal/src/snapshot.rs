@@ -22,7 +22,7 @@ impl Rgb {
 }
 
 /// One frame of a terminal, as the program left it (or as it was when a render hold began).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
     /// Counts the snapshots this terminal has published, starting at 1.
     pub generation: u64,
@@ -33,6 +33,18 @@ pub struct Snapshot {
     pub cell_height: u32,
     /// The rows of the viewport, top to bottom. There are always `rows` of them.
     pub screen: Vec<Arc<Row>>,
+    /// The scrollback rows just above the viewport and just below it, top to bottom
+    /// (render-state overscan, at most [`crate::OVERSCAN`] each): what a view scrolling smoothly
+    /// shows part of between two rows, and the rows it shows while it's ahead of the worker.
+    /// Fewer near the top of the scrollback, and none below while the viewport is at the bottom.
+    pub above: Vec<Arc<Row>>,
+    pub below: Vec<Arc<Row>>,
+    /// Rows the screen sits below the viewport's top, scrolling smoothly, under one: that much
+    /// of the last row of [`Snapshot::above`] shows, and as much of the last screen row is out of
+    /// view ([`crate::Terminal::scroll_rows`]).
+    pub nudge: f32,
+    /// The last [`crate::Terminal::scroll_rows`] this frame has moved by (0 before any).
+    pub scrolled: u64,
     /// How much changed since the previous snapshot.
     pub dirty: Dirty,
     pub cursor: Cursor,
