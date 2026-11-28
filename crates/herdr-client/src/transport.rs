@@ -25,6 +25,9 @@ use crate::error::{Error, StartupError};
 /// Stderr kept from `hc connect`: enough for its startup error and any warnings.
 const STDERR_KEEP: usize = 64 * 1024;
 
+/// What a terminal that resumes programs (OSC 7577) gives its first process to sign reports with.
+const RESUME_TOKEN: &str = "OSC7577_TOKEN";
+
 /// Where a connection goes.
 #[derive(Clone, Debug)]
 pub enum Transport {
@@ -94,6 +97,10 @@ impl HcCommand {
                 None => command.env_remove(key),
             };
         }
+        // The resume token of the terminal herdr-frontend was started from, if any, belongs to
+        // that terminal alone (OSC 7577, `docs/research/osc-7577.md`). A core that `hc connect`
+        // starts would hand it to every terminal it runs.
+        command.env_remove(RESUME_TOKEN);
         command.args(args);
         command
     }
@@ -557,6 +564,17 @@ mod tests {
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             [OsStr::new("server"), OsStr::new("stop")]
+        );
+    }
+
+    #[test]
+    fn hc_never_gets_a_resume_token() {
+        let hc = HcCommand::new("/x/hc").env("OSC7577_TOKEN", "from-the-outer-terminal");
+        let command = hc.command(["connect"]);
+        let envs: Vec<_> = command.get_envs().collect();
+        assert_eq!(
+            envs.iter().find(|(key, _)| *key == "OSC7577_TOKEN"),
+            Some(&(OsStr::new("OSC7577_TOKEN"), None))
         );
     }
 }

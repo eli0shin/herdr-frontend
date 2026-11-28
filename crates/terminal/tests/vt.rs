@@ -133,6 +133,21 @@ fn clipboard_writes_can_be_denied() {
     assert_eq!(vt.take_events(), []);
 }
 
+#[test]
+fn program_resume_reports_are_left_to_the_core() {
+    // OSC 7577 (`docs/research/osc-7577.md`): herdr-core checks the report against the token it
+    // gave the terminal and keeps the command. The viewer has no token, so it draws nothing,
+    // answers nothing and raises nothing, whichever terminator the program uses.
+    let mut vt = Vt::new(&config());
+    // The spec's example: `nvim -S /home/user/.local/state/nvim/sessions/8f2c1d.vim`.
+    let set = "pid=74877:time=1795543200:argv=bnZpbQ==,LVM=,L2hvbWUvdXNlci8ubG9jYWwvc3RhdGUvbnZpbS9zZXNzaW9ucy84ZjJjMWQudmlt:mac=9dbb99bfb856749a87563839d7ce9062818d78cf25909db93f309e0cd3b1909b";
+    let clear = "pid=74877:time=1795543200:clear=1:mac=0000000000000000000000000000000000000000000000000000000000000000";
+    vt.write(format!("a\x1b]7577;{set}\x1b\\b\x1b]7577;{clear}\x07c").as_bytes());
+    assert_eq!(vt.snapshot().text(), "abc");
+    assert_eq!(vt.take_events(), []);
+    assert_eq!(replies(&mut vt), "");
+}
+
 /// Standard base64 with padding, for OSC 52 payloads.
 fn base64(data: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

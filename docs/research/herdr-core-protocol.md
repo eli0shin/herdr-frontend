@@ -212,7 +212,7 @@ doc.get, doc.set, events.subscribe` (`app:src/hc.rs:209` `USES`).
 | | `terminal.list {all?, labels?}` | A one-shot list. It is not needed once subscribed, because the snapshot replaces it. Its result also carries `machines` (MachineView). |
 | | `terminal.get {terminal, caller?}` | One record, live or finished. herdr-app uses it before adopting a terminal and before deciding a pane's terminal is gone (§3.5). Don't pass `caller` from a UI: it marks a child's news as seen by that parent. |
 | | `terminal.kill`, `terminal.rm` | Close a pane, or clear a finished record. |
-| | `terminal.keep {terminal, keep}` | Whether a lost program is replaced with a shell in place (never a re-run of the original command). herdr-app keeps every terminal it shows. |
+| | `terminal.keep {terminal, keep}` | Whether a lost terminal comes back in place: hc 0.1.22 opens a shell; newer cores rerun the program's OSC 7577 resume command if it sent one, else open a shell ([`osc-7577.md`](osc-7577.md)). herdr-app keeps every terminal it shows. |
 | | `terminal.label {terminal, labels}` | Set `k=v`; `k=` removes the label. Labels are free-form and the core never interprets them (§3.4). |
 | | `terminal.read {terminal, lines?}` | The screen plus history as text, without attaching: previews, search, or a launch-failure toast (`app:src/window.rs` `notify_launch_failure`). |
 | | `terminal.attach {terminal, cols, rows, history?, display?, observe?, resize_notifications?, resumed?, caller?}` | Framed mode only. Returns `{channel, terminal, resize_notifications, automatic_input}`. The first paint (screen, history, latest status and title, and `CSI ?9001h/l`) is followed by raw output. herdr-app asks for `history: 2000`. See §4. |
