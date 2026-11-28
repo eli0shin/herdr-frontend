@@ -26,7 +26,9 @@
 //! - A pane that becomes the pane in use re-asserts the size: RESIZE even at the grid told
 //!   already, and the mode-2048 size report again when the program has that mode on, since such
 //!   a program goes by the last report any viewer sent it (`docs/interop.md` "Two viewers and
-//!   in-band size reports").
+//!   in-band size reports"). A program that turns that mode on in the pane in use gets the same
+//!   re-assert a moment later, after every other viewer has answered the enable at its own grid
+//!   ([`REASSERT_AFTER`]).
 //! - A click in the pane in use takes the size back when the core holds it at another grid
 //!   (Herdr app attached, refit or reattached it). Nothing else takes it back without real use
 //!   or a change of the pane's grid.
@@ -109,6 +111,14 @@ pub const HISTORY: u64 = 2000;
 /// Ghostty's resize coalescing: RESIZE goes at most this often while a pane changes size.
 pub const RESIZE_EVERY: f64 = 0.025;
 
+/// When the pane in use re-asserts its size after its program turns in-band size reports (mode
+/// 2048) on, in seconds from the moment this window's terminal parsed the enable. Every viewer
+/// gets the enable at about the same time and answers it with its own grid, and the program
+/// goes by the last answer, so this window's has to come after the others'. Herdr app answers as
+/// its UI thread takes in the output, within a frame or two; the second re-assert covers a
+/// viewer slowed by a busy thread or a network (the Herdr iOS app).
+pub const REASSERT_AFTER: [f64; 2] = [0.1, 1.0];
+
 /// The gap between split panes, in points: Eli's layout's 1 px.
 pub const SPLIT_GAP: f32 = 1.0;
 
@@ -180,6 +190,9 @@ pub struct Viewer {
     sized: bool,
     /// When it last sent RESIZE (app clock).
     resized_at: f64,
+    /// When it re-asserts its size (app clock), soonest first: its program turned in-band size
+    /// reports on while it was the pane in use ([`REASSERT_AFTER`]).
+    reasserts: Vec<f64>,
     /// The core's grid changed away from `told_grid` since it was told: another viewer took the
     /// size.
     moved: bool,
@@ -2226,6 +2239,7 @@ impl State {
             told_grid: None,
             sized: false,
             resized_at: f64::NEG_INFINITY,
+            reasserts: Vec::new(),
             moved: false,
             focus_sent: false,
             automatic_input: false,
@@ -2309,9 +2323,28 @@ impl State {
                     self.link.send(&old, Out::Focus(false));
                 }
                 viewer.focus_sent = false;
+                // A pane that isn't in use doesn't re-assert for its program's enable.
+                viewer.reasserts.clear();
             }
             reassert.clone_from(&in_use);
             self.in_use = in_use;
+        } else if let Some(address) = &self.in_use
+            && let Some(viewer) = self.viewers.get_mut(address)
+            && viewer.reasserts.first().is_some_and(|&at| now >= at)
+        {
+            // Its program turned in-band size reports on a moment ago, and the other viewers
+            // have answered by now. One that took the size meanwhile (Herdr app attached or
+            // refit it) keeps it, as it does with no real use: its answer is at the pty's grid.
+            viewer.reasserts.retain(|&at| now < at);
+            if viewer.moved {
+                viewer.reasserts.clear();
+            }
+            if let Some(&next) = viewer.reasserts.first() {
+                self.ui.wake = Some(self.ui.wake.map_or(next, |w| w.min(next)));
+            }
+            if !viewer.moved {
+                reassert = Some(address.clone());
+            }
         }
 
         // Every terminal drawn in the window in front holds its pane's grid. None does while the
@@ -2352,7 +2385,8 @@ impl State {
             // mouse-down do: RESIZE even at the grid told last, so the core takes it back from
             // any other viewer, and the in-band size report again for a program with mode 2048
             // on. Such a program ignores SIGWINCH and lays out at the last report it heard,
-            // which may be another viewer's at that viewer's grid (`docs/interop.md`).
+            // which may be another viewer's at that viewer's grid (`docs/interop.md`). The
+            // pane in use does the same a moment after its program turns that mode on.
             let reasserting = reassert.as_deref() == Some(address.as_str());
             if reasserting {
                 viewer.told_grid = None;
@@ -2440,6 +2474,7 @@ impl State {
         let mut changed = false;
         let mut links = Vec::new();
         let mut yanked = Vec::new();
+        let mut reports_on = Vec::new();
         let rounds = if self.synchronous { 4 } else { 1 };
         for _ in 0..rounds {
             if self.synchronous {
@@ -2463,6 +2498,9 @@ impl State {
                             yanked.push(viewer.address.clone());
                         }
                         Output::Link(link) => links.push((viewer.address.clone(), link.target)),
+                        Output::Event(terminal::Event::SizeReportsOn) => {
+                            reports_on.push(viewer.address.clone());
+                        }
                         Output::Reply(_) | Output::Input(_)
                             if viewer.attach == Attach::Attached =>
                         {
@@ -2498,6 +2536,23 @@ impl State {
         for address in yanked {
             self.step(self.now, Event::CopyYanked(address));
             changed = true;
+        }
+        // The program in the pane in use turned in-band size reports on. This window's terminal
+        // answered already (the reply above), but another viewer's answer may reach the program
+        // after it: re-assert the size once the others have answered ([`State::fit`]). A pane
+        // that isn't in use, or whose size another viewer took, leaves the answers be, as
+        // before.
+        for address in reports_on {
+            if self.in_use.as_deref() != Some(address.as_str()) {
+                continue;
+            }
+            let now = self.now;
+            if let Some(viewer) = self.viewers.get_mut(&address)
+                && !viewer.moved
+            {
+                viewer.reasserts = REASSERT_AFTER.iter().map(|after| now + after).collect();
+                self.wake_at(now + REASSERT_AFTER[0]);
+            }
         }
         // A Cmd-click found a link: the model decides what opens it.
         for (address, link) in links {

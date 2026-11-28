@@ -23,6 +23,7 @@ What herdr-frontend does (`crates/app/src/state.rs`):
 | A pane is shown in the window while the window is in front: its tab is shown, the peek opens on it, or the window comes to the front | FACTS (if the cell or colors changed), then RESIZE with the pane's grid. Every shown pane does this, not just the focused one. |
 | A shown pane's grid changes while the window is in front (split, close, divider drag, keyboard resize, sidebar toggle, window resize, zoom, font) | RESIZE, at most every 25 ms per pane, always ending with the final grid. Every pane whose grid changed sends its own. |
 | A pane becomes the pane in use: focus moves to it, the window comes to the front with it focused, or a tab or space switch shows it focused | RESIZE with its pane's grid, even when that grid was told already, so the core takes it back from any other viewer, then FOCUS(1). If the program has mode 2048 on, the in-band size report again after them, as AUTOMATIC_INPUT from herdr-frontend's terminal (a resize to a new grid sends it on its own). |
+| The program in the pane in use turns mode 2048 on, or on again (Neovim started in a focused pane) | herdr-frontend's terminal answers at once, as every viewer's does. Then, 100 ms and again 1 s after its terminal parsed the enable, the same re-assert as a pane becoming the pane in use: RESIZE with its pane's grid, then the in-band size report again. It doesn't when another viewer took the pane's size: that viewer keeps it until real use, and its answer is at the pty's grid. A pane that isn't in use leaves the answers be. |
 | The pane stops being in use (another pane, the window to the background) | FOCUS(0). |
 | A pane stops being shown, or the window goes to the background | Nothing. It doesn't take the size again until it is shown in the front window again. |
 | A click in the pane in use after another viewer moved its grid | RESIZE, which takes the size back. Herdr app does the same on a mouse-down. |
@@ -100,17 +101,30 @@ the last word back when the pane is used:
   another viewer told it before. Herdr app's focus applies its grid too, and its mouse-down
   sends RESIZE. A program that only goes by SIGWINCH needs nothing more: the pty is at the
   leader's grid.
+- **A program turning the mode on in the pane in use gets the re-assert too.** Neovim started in
+  a pane that's already focused makes no focus change, and every viewer's terminal answers its
+  enable at about the same time, so herdr-frontend's answer can come before Herdr app's. So
+  herdr-frontend re-asserts the size a moment later, when the other answers are in: 100 ms
+  after its own terminal parsed the enable, and again after 1 s. Herdr app answers as its UI
+  thread takes the output in, within a frame or two; the second one covers a viewer slowed by
+  a busy thread or a network, such as the Herdr iOS app. Each is RESIZE with the pane's grid,
+  then herdr-frontend's report again. Neovim may draw once at the other viewer's grid in
+  between, and is back at herdr-frontend's within the 100 ms. It doesn't re-assert when another
+  viewer took the pane's size (Herdr app attached or refit it): that viewer keeps it until real
+  use, as anywhere else, and its answer is then at the pty's grid. A pane that isn't in use
+  leaves the answers be: its program goes by the last one, until the pane is focused.
 
 What's left, with Herdr app open:
 
 - Herdr app never follows `size` events, so its copy of a terminal stays at the grid it attached
   or last refit it at. Once herdr-frontend changes that pane's grid (a split, the sidebar, the
-  window, zoom), the two answers differ again. Neovim started in that pane while it's already
-  focused is no focus change, so nothing re-asserts the size: if Herdr app answers last, Neovim
-  lays out at Herdr app's stale grid.
+  window, zoom), the two answers differ again. In a pane that isn't in use, a program turning
+  mode 2048 on keeps whichever answer came last, Herdr app's stale grid included.
+- An answer from another viewer that comes more than 1 s after the enable stands, in the pane in
+  use too.
 - Herdr app refitting a terminal to its own window answers last the same way.
 
-Either way Neovim keeps Herdr app's grid until the pane is focused again in herdr-frontend, or
+Each way Neovim keeps Herdr app's grid until the pane is focused again in herdr-frontend, or
 its grid changes. Quitting Herdr app ends it.
 
 ## Tests
@@ -132,7 +146,9 @@ its grid changes. Quitting Herdr app ends it.
   queries at its own grid. A terminal the app opens in a new tab starts at its pane's grid, so a
   viewer attaching it at the record's grid right away gets the app's grid, not 200×120. After
   the other viewer's report came last, focusing the pane in the app makes the program's last
-  report the app's grid again.
+  report the app's grid again. A program that turns mode 2048 on in the pane in use, with the
+  other viewer answering right after the app, ends at the app's grid; in a pane that isn't in
+  use it keeps the other viewer's answer.
 - `crates/app/tests/resize_redraw.rs`: a program that redraws its whole screen on SIGWINCH, in
   a shown pane, while the window grows and shrinks. After each resize the app shows exactly
   the core's screen at the core's grid.

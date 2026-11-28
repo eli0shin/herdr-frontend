@@ -5,7 +5,7 @@
 use herdr_frontend::config::settings::Settings;
 use herdr_frontend::fixtures::{self, demo_core};
 use herdr_frontend::link::{Fake, Out};
-use herdr_frontend::state::Attach;
+use herdr_frontend::state::{Attach, REASSERT_AFTER};
 use herdr_frontend::{SIZE, State, app};
 use rune::{ElementInfo, Env, Key, KeyEvent, Mods, Runtime};
 
@@ -457,6 +457,64 @@ fn without_automatic_input_the_pane_in_use_stops_answering_once_another_viewer_m
     fake.output("t1", b"\x1b[5n");
     frames(&mut rt, 3);
     assert_eq!(data(&fake, typed), [Out::Input(b"\x1b[0n".to_vec())]);
+}
+
+#[test]
+fn turning_size_reports_on_in_the_pane_in_use_re_asserts_the_size_after_the_other_answers() {
+    let (mut rt, fake) = runtime();
+    assert_eq!(rt.state.in_use(), Some("t1"));
+    let (cols, rows) = grid_of(&rt, "pn-1");
+    let report = |fake: &Fake, address: &str| -> Vec<u8> {
+        let Some(Out::Automatic(bytes)) = fake.sent_to(address).last().cloned() else {
+            panic!("no report: {:?}", fake.sent_to(address));
+        };
+        assert!(bytes.starts_with(b"\x1b[48;"), "{bytes:?}");
+        bytes
+    };
+    let since = |fake: &Fake, address: &str, from: usize| fake.sent_to(address)[from..].to_vec();
+
+    // The program in the pane in use turns the mode on: the terminal answers at once, as every
+    // viewer's does.
+    let before = fake.sent_to("t1").len();
+    fake.output("t1", b"\x1b[?2048h");
+    frames(&mut rt, 2);
+    let ours = report(&fake, "t1");
+    assert_eq!(since(&fake, "t1", before), [Out::Automatic(ours.clone())]);
+
+    // Once the other viewers have answered, it re-asserts: RESIZE, so the core takes this
+    // window's grid, then this window's report again. Then again, for a slow viewer.
+    // The test's frames are 1/60 s apart.
+    let reassert = [Out::Resize { cols, rows }, Out::Automatic(ours.clone())];
+    let mut at = 2;
+    for after in REASSERT_AFTER {
+        let due = (after * 60.0).round() as usize;
+        let before = fake.sent_to("t1").len();
+        frames(&mut rt, due - 2 - at);
+        assert_eq!(since(&fake, "t1", before), [], "not before {after} s");
+        frames(&mut rt, 5);
+        assert_eq!(since(&fake, "t1", before), reassert, "at {after} s");
+        at = due + 3;
+    }
+    let before = fake.sent_to("t1").len();
+    frames(&mut rt, 120);
+    assert_eq!(since(&fake, "t1", before), [], "that's all");
+
+    // In a pane that isn't in use, the answers stand.
+    let before = fake.sent_to("t2").len();
+    fake.output("t2", b"\x1b[?2048h");
+    frames(&mut rt, 2);
+    let theirs = report(&fake, "t2");
+    frames(&mut rt, 120);
+    assert_eq!(since(&fake, "t2", before), [Out::Automatic(theirs)]);
+
+    // Nor does the pane in use take the size back from another viewer that took it.
+    fake.resize_elsewhere("t1", 50, 10);
+    frames(&mut rt, 2);
+    fake.output("t1", b"\x1b[?2048h");
+    frames(&mut rt, 2);
+    let before = fake.sent_to("t1").len();
+    frames(&mut rt, 120);
+    assert_eq!(since(&fake, "t1", before), []);
 }
 
 #[test]
