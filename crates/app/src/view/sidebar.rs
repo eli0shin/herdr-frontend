@@ -348,7 +348,7 @@ pub(crate) fn chip(key: &str) -> El {
 fn agent(s: &State, list: &List, r: &AgentRow, jumping: bool, cx: &Cx<State>) -> El {
     let c = &s.chrome;
     let live = r.status != Displayed::Idle;
-    let edge = live.then(|| tone(c, r.status));
+    let own = live.then(|| tone(c, r.status));
     let quiet = a(c.dim, 0xD9);
     let small = |size: f32| s.ui_font(size, 400.0);
     let pic = program_pic(s, &r.address, 16.0, cx).map(|pic| {
@@ -452,7 +452,7 @@ fn agent(s: &State, list: &List, r: &AgentRow, jumping: bool, cx: &Cx<State>) ->
         text(t.clone())
             .key("ago")
             .font(small(12.5))
-            .color(edge.unwrap_or(quiet))
+            .color(own.unwrap_or(quiet))
     });
     let line2 = row()
         .key("line2")
@@ -479,12 +479,12 @@ fn agent(s: &State, list: &List, r: &AgentRow, jumping: bool, cx: &Cx<State>) ->
         .min_w(0.0)
         .child(line1)
         .child(line2);
-    let edge = edge.map(|t| {
+    let edge = r.edge.map(|status| {
         el().key("edge")
             .pin(Some(0.0), Some(8.0), None, Some(8.0))
             .w(2.5)
             .radius(2.0)
-            .fill(t)
+            .fill(tone(c, status))
     });
     // The selected row: a faint wash and a thin outline under what it shows. They are their
     // own element, on the selected row only, so they move to another row at once when the
