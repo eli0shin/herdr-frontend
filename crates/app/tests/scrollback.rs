@@ -305,6 +305,59 @@ fn a_trackpad_scrolls_the_scrollback_by_the_pixel() {
     assert!(element(&rt, "above").is_none());
 }
 
+/// Frames, a few milliseconds apart, until `done` holds for `t1`'s shown snapshot: the
+/// terminal answers on its worker thread.
+fn frames_until(rt: &mut Runtime<State>, done: impl Fn(&terminal::Snapshot) -> bool) {
+    for _ in 0..400 {
+        rt.invalidate();
+        rt.frame(1.0 / 120.0);
+        let shown = rt.state.viewers.get("t1").and_then(|v| v.pane.as_ref());
+        if shown.is_some_and(|p| done(&p.snapshot)) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("t1 never showed what was waited for");
+}
+
+/// A selection made right after a smooth scroll, before the worker's snapshot of it has come
+/// back, lands on the row drawn under the pointer: the worker has moved by the scroll when the
+/// selection reaches it, so only its own part row is taken off the pointer.
+#[test]
+fn a_drag_right_after_a_scroll_selects_the_row_under_the_pointer() {
+    let fake = demo_core();
+    let mut rt = app().headless_runtime(SIZE, Env::new(true, 2.0));
+    rt.state.with_settings(Settings::fixture());
+    // No `settle`: the terminal answers on its worker thread, as in the window.
+    rt.state.connect(Box::new(fake.clone()));
+    frames_until(&mut rt, |_| true);
+    let lines: String = (1..=100).map(|i| format!("line {i}\r\n")).collect();
+    fake.output("t1", format!("\x1bc{lines}").as_bytes());
+    frames_until(&mut rt, |s| {
+        s.line(0).starts_with("line ") && s.scrollbar.at_bottom
+    });
+    let bottom = shown(&rt).scrollbar.offset;
+    let line = rt.state.face(2.0).cell_pt().1;
+    let grid = screen_el(&rt);
+
+    // Two and a half rows up, and at once, with no frame between, a drag along a row: the
+    // frame that handles both draws the screen 2.5 rows low, ahead of the worker.
+    let (x, y) = (grid.rect[0] + 2.0, grid.rect[1] + 2.0 * line);
+    rt.wheel_event(WheelEvent::new(0.0, line * 2.5).at(x, y).precise(true));
+    // The worker's rows will sit half a row low: its sixth is drawn 5.5 rows down.
+    let row_y = grid.rect[1] + (0.5 + 5.5) * line;
+    rt.pointer_down(x, row_y);
+    rt.pointer_move(x + 60.0, row_y);
+    rt.pointer_up(x + 60.0, row_y);
+    frames_until(&mut rt, |s| s.screen.iter().any(|r| r.selection.is_some()));
+    let s = shown(&rt);
+    assert_eq!((s.scrollbar.offset, s.nudge), (bottom - 2, 0.5));
+    let selected: Vec<usize> = (0..s.screen.len())
+        .filter(|&i| s.screen[i].selection.is_some())
+        .collect();
+    assert_eq!(selected, [5], "the row under the pointer, {:?}", s.line(5));
+}
+
 /// A notch moves whole lines from wherever a trackpad left the screen: the part row stays.
 #[test]
 fn a_notch_after_a_trackpad_keeps_the_part_row() {

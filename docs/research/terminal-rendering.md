@@ -601,8 +601,11 @@ Ghostty does. Install the selection with `OPT_SELECTION` so the render state rep
     the no-animations rule covers transitions, and this only follows the fingers. The rows beside
     the screen are drawn from their own row caches, and the pane's clip cuts them at its edges;
     kitty images in them draw with them. Find hits are marked only on the screen's own rows.
-  - The pointer is mapped through the nudge (`State::grid_px`), so a click lands on the cell
-    under it.
+  - The pointer is mapped through the nudge, so a click lands on the cell under it. What goes
+    to the worker (the mouse, selections, links, hover) reaches it after every scroll sent before
+    it, so only the worker's own part row is taken off (`State::grid_px`); what's looked up in the
+    shown snapshot (the underlined link, a terminal address to peek) takes off the whole nudge
+    the pane draws (`State::shown_px`).
   - `just scroll-latency` (`examples/scroll-latency.rs`) measures it: the app on a fake core, its worker on its thread,
     frames paced at 120 Hz in real time, on a loaded M-series Mac (release build). Before
     (whole lines through the worker), a one-row scroll showed in the next frame only 20–25% of

@@ -504,8 +504,8 @@ pub struct State {
     /// What a find field edits when its terminal is gone (Rune asks for a field's text by
     /// key).
     spare_edit: TextEdit,
-    /// The pointer over a terminal, in device pixels from its grid's corner: where Cmd
-    /// pressed with no motion underlines a link.
+    /// The pointer over a terminal, in points in its pane: where Cmd pressed with no motion
+    /// underlines a link.
     pointer: Option<(String, f32, f32)>,
     /// The commit ([`rune::commit_generation`]) that draws the last step that showed another
     /// space: [`State::space_switched`].
@@ -3077,12 +3077,30 @@ impl State {
         }
     }
 
-    /// The pointer in device pixels from the grid's top left, from points in the pane. Scrolling
-    /// smoothly, the grid sits its nudge lower.
+    /// The pointer in device pixels from the grid's top left, from points in the pane, for what
+    /// goes to the worker (the mouse, selections, links). Scrolling smoothly, the screen is drawn
+    /// where the worker's viewport is once it has every scroll sent so far, and requests reach it
+    /// in order after them: only its own part row is left to take off.
     fn grid_px(&self, address: &str, x: f32, y: f32) -> (f32, f32) {
+        self.px_from(address, x, y, TerminalPane::worker_nudge_px)
+    }
+
+    /// [`State::grid_px`] for what's looked up in the shown snapshot, whose screen the pane
+    /// draws its whole nudge lower while the worker hasn't caught up.
+    fn shown_px(&self, address: &str, x: f32, y: f32) -> (f32, f32) {
+        self.px_from(address, x, y, TerminalPane::nudge_px)
+    }
+
+    fn px_from(
+        &self,
+        address: &str,
+        x: f32,
+        y: f32,
+        nudge: fn(&TerminalPane, &crate::view::terminal::font::Face) -> f32,
+    ) -> (f32, f32) {
         let pane = self.viewers.get(address).and_then(|v| v.pane.as_ref());
         let padding = pane.map_or(Padding::default(), |p| p.padding);
-        let nudge = pane.map_or(0.0, |p| p.nudge_px(&self.face(self.scale)));
+        let nudge = pane.map_or(0.0, |p| nudge(p, &self.face(self.scale)));
         (
             x * self.scale - padding.left as f32,
             y * self.scale - padding.top as f32 - nudge,
@@ -3100,7 +3118,7 @@ impl State {
         };
         let in_use = d.phase == Phase::Down && self.use_pane(pane, &address, tx);
         if d.phase == Phase::Down && tx.button() == PointerButton::Primary && tx.mods().cmd {
-            let (x, y) = self.grid_px(&address, d.x, d.y);
+            let (x, y) = self.shown_px(&address, d.x, d.y);
             if let Some((target, _)) = self.address_at(&address, x, y) {
                 self.press = None;
                 self.step(tx.clock(), Action::Peek(target));
@@ -3114,6 +3132,7 @@ impl State {
         };
         let mods = tx.mods();
         let (x, y) = self.grid_px(&address, d.x, d.y);
+        let shown = self.shown_px(&address, d.x, d.y);
         let button = match tx.button() {
             PointerButton::Middle => MouseButton::Middle,
             PointerButton::Secondary => MouseButton::Right,
@@ -3136,7 +3155,9 @@ impl State {
         match d.phase {
             // Cmd-click on the underlined link opens it, whatever the program does with the
             // mouse; anywhere else Cmd-click is a click (Ghostty's `mouseButtonCallback`).
-            Phase::Down if mods.cmd && button == MouseButton::Left && viewer.link_at(x, y) => {
+            Phase::Down
+                if mods.cmd && button == MouseButton::Left && viewer.link_at(shown.0, shown.1) =>
+            {
                 viewer.terminal.open_link(x, y);
                 self.press = None;
             }
@@ -3207,13 +3228,17 @@ impl State {
         Some((address, word))
     }
 
-    /// Cmd held with the pointer at `(x, y)` over terminal `address`'s grid, or not: the link
-    /// or terminal address there is underlined, the address first, as Cmd-click peeks it before
-    /// opening a link. Without Cmd the underline goes.
+    /// Cmd held with the pointer at `(x, y)` (points in the pane) over terminal `address`'s
+    /// grid, or not: the link or terminal address there is underlined, the address first, as
+    /// Cmd-click peeks it before opening a link. Without Cmd the underline goes.
     fn hover_link(&mut self, address: &str, at: Option<(f32, f32)>) {
         let word = at
-            .and_then(|(x, y)| self.address_at(address, x, y))
+            .and_then(|(x, y)| {
+                let (x, y) = self.shown_px(address, x, y);
+                self.address_at(address, x, y)
+            })
             .map(|(_, word)| word);
+        let at = at.map(|(x, y)| self.grid_px(address, x, y));
         if let Some(viewer) = self.viewers.get_mut(address) {
             viewer.terminal.hover(at, word);
             viewer.hovering_link = at.is_some();
@@ -3238,10 +3263,10 @@ impl State {
         {
             self.hover_link(&was, None);
         }
-        self.pointer = Some((address.clone(), x, y));
+        self.pointer = Some((address.clone(), p.x, p.y));
         // With Cmd held the link under the pointer is underlined, until Cmd or the pointer goes.
         if mods.cmd || self.viewers.get(&address).is_some_and(|v| v.hovering_link) {
-            self.hover_link(&address, mods.cmd.then_some((x, y)));
+            self.hover_link(&address, mods.cmd.then_some((p.x, p.y)));
         }
         if self.in_use() == Some(address.as_str())
             && let Some(viewer) = self.viewers.get(&address)

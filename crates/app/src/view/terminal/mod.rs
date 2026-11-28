@@ -115,6 +115,14 @@ impl TerminalPane {
         (self.nudge() * face.metrics.cell_height as f32).round()
     }
 
+    /// The part of [`TerminalPane::nudge_px`] the worker's own viewport sits low by, under a
+    /// cell: by the time anything sent now reaches the worker, it has moved by every scroll sent
+    /// before it, whole rows included, and only its part row is left.
+    pub fn worker_nudge_px(&self, face: &Face) -> f32 {
+        self.nudge_px(face)
+            .rem_euclid(face.metrics.cell_height.max(1) as f32)
+    }
+
     /// How many kitty images the pane holds pixels for: the ones its last view drew.
     pub fn images_held(&self) -> usize {
         self.images.borrow().len()
