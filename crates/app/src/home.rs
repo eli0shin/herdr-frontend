@@ -339,13 +339,18 @@ mod tests {
         home.save_now(VIEW, "{}".into());
         assert_eq!(home.read(VIEW).as_deref(), Some("{}"));
         assert!(dir.join("state").join(VIEW).exists());
-        assert!(!dir.join("config").exists(), "the config folder is never written");
+        assert!(
+            !dir.join("config").exists(),
+            "the config folder is never written"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn an_older_versions_state_moves_out_of_the_config_folder() {
-        let dir = scratch("migrate");
+        // Under `/tmp`: a socket's path must stay short.
+        let dir = PathBuf::from(format!("/tmp/hf-home-{}-migrate", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         let (config, state) = (dir.join("config"), dir.join("state"));
         std::fs::create_dir_all(&config).unwrap();
         std::fs::create_dir_all(&state).unwrap();
@@ -363,7 +368,11 @@ mod tests {
         migrate(&config, &state);
         for name in MOVED {
             assert!(!config.join(name).exists(), "{name} left in config");
-            let want = if name == WINDOW { "newer".to_owned() } else { format!("old {name}") };
+            let want = if name == WINDOW {
+                "newer".to_owned()
+            } else {
+                format!("old {name}")
+            };
             assert_eq!(std::fs::read_to_string(state.join(name)).unwrap(), want);
         }
         assert!(!config.join(crate::control::SOCKET).exists());

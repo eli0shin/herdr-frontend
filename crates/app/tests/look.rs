@@ -202,7 +202,11 @@ fn the_zoom_keys_zoom_everything_and_save_it_as_state() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     files.sort();
-    assert_eq!(files, ["keys.json", "settings.json"], "keys.json: the defaults, made once");
+    assert_eq!(
+        files,
+        ["keys.json", "settings.json"],
+        "keys.json: the defaults, made once"
+    );
 
     // The next run opens at the saved zoom.
     drop(rt);
