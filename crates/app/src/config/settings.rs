@@ -31,6 +31,19 @@ pub const UI_FONT_SIZE: f32 = 13.0;
 /// Eli's terminal and panel font family, as installed (`~/Library/Fonts/OperatorMono-*.otf`).
 pub const FONT: &str = "Operator Mono";
 
+/// The faces of Operator Mono the panels draw with, by style name as [`Settings::font_styles`]:
+/// Medium where the terminals have Book. Herdr app draws its panels in Book through CoreText
+/// with font smoothing on, which thickens light text on a dark canvas by about a third. The
+/// window here draws without smoothing, as Ghostty does, so Medium, which carries about a
+/// third more ink than Book, gives the panels the weight Herdr app's have
+/// (`docs/settings.md` "Fonts").
+pub const PANEL_STYLES: [Option<&str>; 4] = [
+    Some("Medium"),
+    Some("Bold"),
+    Some("Medium Italic"),
+    Some("Bold Italic"),
+];
+
 /// Light or dark: Eli's is always dark.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]

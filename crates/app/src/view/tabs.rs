@@ -188,6 +188,9 @@ fn pill(s: &State, tab: &Tab, p: TabPill, cx: &Cx<State>) -> El {
         .items_center()
         .radius(RADIUS)
         .border(1.0, if p.active { c.border } else { c.chrome })
+        // Its border takes room, as GPUI's does in eli-tabs, so a pill is as wide as Herdr
+        // app's; a Rune border otherwise takes none.
+        .border_layout()
         .fill(if p.active { c.raised } else { c.chrome })
         .hover(c.hover)
         .focusable(false)

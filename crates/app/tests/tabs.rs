@@ -133,10 +133,11 @@ fn a_lone_tab_is_a_pill_as_wide_as_its_contents() {
     frames(&mut rt, 3);
     let pill = element(&rt, "tab-tb-1").expect("the pill");
     let close = inside(&rt, "tab-tb-1/tab-close").expect("its ×");
-    // The pill ends 10 pt past its ×, as eli-tabs' pill does, not at the strip's end.
+    // The pill ends 11 pt past its ×, as eli-tabs' pill does (10 pt of padding and its 1 pt
+    // border, which GPUI lays out inside the pill), not at the strip's end.
     assert_eq!(
         pill.rect[0] + pill.rect[2],
-        close.rect[0] + close.rect[2] + 10.0,
+        close.rect[0] + close.rect[2] + 11.0,
         "{:?}",
         pill.rect
     );

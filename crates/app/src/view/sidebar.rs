@@ -29,7 +29,7 @@ use crate::config::theme::{Chrome, Rgba};
 use crate::view::icons::{
     CHECK, CHEVRON_DOWN, CHEVRON_RIGHT, CLOCK, GIT_PULL_REQUEST, LAYERS, MONITOR, SPINNER,
 };
-use crate::view::shell::{BAR, icon_in};
+use crate::view::shell::{BAR, program_icon};
 use herdr_shared::Displayed;
 
 /// The list's live titles: a touch under white (`LIVE_TITLE`).
@@ -264,12 +264,13 @@ fn mark(s: &State, status: Option<Displayed>, compact: bool) -> El {
     }
 }
 
-/// An agent's program icon, `size` points: a one-color glyph in the foreground (eli-agents'
-/// `icon(p, size, t.foreground)`; only the tab bar uses the program's color).
+/// An agent's program icon, `size` points: a one-color glyph in the program's color (Pi
+/// purple), else the foreground, as the tab bar draws it. Eli's choice over eli-agents, which
+/// draws every glyph in the foreground (`icon(p, size, t.foreground)`).
 pub(crate) fn program_pic(s: &State, address: &str, size: f32, cx: &Cx<State>) -> Option<El> {
     let record = s.model.world().terminal(address)?;
     let program = s.config.programs.of_terminal(record);
-    icon_in(s, &program, size, s.chrome.foreground, cx)
+    program_icon(s, &program, size, s.chrome.foreground, cx)
 }
 
 /// A worker's tree line: an elbow to its first line, going on for all but the last.
@@ -491,9 +492,10 @@ fn agent(s: &State, list: &List, r: &AgentRow, jumping: bool, cx: &Cx<State>) ->
     // focused agent changes (a click, a space or tab switch) rather than fading out on one row
     // and in on the other, and the row's own motion (folds, re-sorts) stays as it is. The wash
     // gives way to the hover's fill, as the row's own fill would.
+    // Pinned over the row's 1 pt border, outside its padding box.
     let selected = r.focused.then(|| {
         el().key("selected")
-            .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+            .pin(Some(-1.0), Some(-1.0), Some(-1.0), Some(-1.0))
             .radius(8.0)
             .border(1.0, a(c.working, 0x73))
             .transition(Transition::none())
@@ -514,8 +516,10 @@ fn agent(s: &State, list: &List, r: &AgentRow, jumping: bool, cx: &Cx<State>) ->
         .px(8.0)
         .py(4.0)
         .radius(8.0)
-        // Every row has the border so none shifts.
+        // Every row has the border so none shifts. It takes room, as GPUI's does in
+        // eli-agents, so a row is as tall as Herdr app's; a Rune border otherwise takes none.
         .border(1.0, Color::TRANSPARENT)
+        .border_layout()
         .hover_fill(c.hover)
         .hover_group()
         .cursor(Cursor::Pointer)

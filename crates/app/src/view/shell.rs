@@ -74,8 +74,9 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
 }
 
 /// A program's icon at `size` points: a one-color glyph in the program's color (else `ink`), or
-/// a picture in its own colors, as the tab bar draws it (`eli-tabs`). `None` when it has none,
-/// or before the images can be made.
+/// a picture in its own colors, as the tab bar draws it (`eli-tabs`), and the Agents list, the
+/// PR finder and the peek with it (Pi purple wherever it shows). `None` when it has none, or
+/// before the images can be made.
 pub fn program_icon(
     s: &State,
     program: &Program,
@@ -91,9 +92,8 @@ pub fn program_icon(
     icon_in(s, program, size, tint, cx)
 }
 
-/// [`program_icon`] with a one-color glyph always in `ink`, as the Agents list, the PR finder
-/// and the peek draw it (their mods' `icon(p, size, t.foreground)`).
-pub fn icon_in(
+/// [`program_icon`] with a one-color glyph in `ink`.
+fn icon_in(
     s: &State,
     program: &Program,
     size: f32,
