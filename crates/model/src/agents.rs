@@ -161,6 +161,9 @@ pub struct AgentRow {
     pub pane: String,
     pub title: String,
     pub status: Displayed,
+    /// The status its left border shows, `None` for none: its own while live; an
+    /// orchestrator's is the section its workers lift it to; a worker under one has none.
+    pub edge: Option<Displayed>,
     pub focused: bool,
     pub pinned: bool,
     /// Under a priority header, blocked shows a compact "!".
@@ -1051,11 +1054,21 @@ impl Tracker {
                 let watch = watches.get(a.address);
                 let space = (line.is_none() && full).then(|| a.space_name.clone());
                 let when = self.since(a.address);
+                // An orchestrator's border is its section's, so an idle one a worker lifts to
+                // Working reads blue; its workers have none, so the open tree reads as one.
+                let edge = if line.is_some() {
+                    None
+                } else if ws > 0 {
+                    section(rank_of(a)).1
+                } else {
+                    (a.status != Displayed::Idle).then_some(a.status)
+                };
                 AgentRow {
                     address: a.address.to_owned(),
                     pane: a.pane.to_owned(),
                     title,
                     status: a.status,
+                    edge,
                     focused: a.focused,
                     pinned: a.pinned,
                     compact: by_priority && !a.pinned,

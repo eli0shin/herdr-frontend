@@ -547,6 +547,97 @@ fn pi_workers_nest_under_their_orchestrator_while_it_or_a_worker_is_focused() {
     assert_eq!(row(&list, "t1").workers, 1);
 }
 
+/// Each agent row's left border, as `address:status` (`-` for none).
+fn edges(list: &List) -> Vec<String> {
+    agent_rows(list)
+        .iter()
+        .map(|a| format!("{}:{}", a.address, a.edge.map_or("-", |s| s.as_str())))
+        .collect()
+}
+
+#[test]
+fn an_orchestrator_has_its_sections_border_and_its_workers_none() {
+    let mut core = orchestration();
+    let mut m = connected(&mut core);
+    let mut tracker = Tracker::default();
+    // Focus a worker so the workers show.
+    drive(&mut m, &mut core, Action::FocusAgent("t4".into()));
+    let worker = |address: &str, state| {
+        pi(
+            address,
+            state,
+            json!({"role": "worker", "orchestration": "o1"}),
+        )
+    };
+
+    // A working worker puts its idle orchestrator in Working, with the working border.
+    let list = build(&mut tracker, &m, &Opts::default());
+    assert_eq!(
+        lines(&list),
+        [
+            "# Working 1",
+            "orchestrate [idle] 1",
+            "├ worker a [working] 2",
+            "└ worker b [idle] 3",
+            "# Idle 1",
+            "stray [idle] 4",
+        ]
+    );
+    assert_eq!(edges(&list), ["t1:working", "t2:-", "t4:-", "t5:-"]);
+
+    // A blocked worker puts it in Needs you, with that border; the worker keeps its status mark.
+    update(&mut m, &mut core, vec![worker("t2", Blocked)]);
+    let list = build(&mut tracker, &m, &Opts::default());
+    assert_eq!(lines(&list)[..2], ["# Needs you 1", "orchestrate [idle] 1"]);
+    assert_eq!(row(&list, "t2").status, Displayed::Blocked);
+    assert_eq!(edges(&list), ["t1:blocked", "t2:-", "t4:-", "t5:-"]);
+
+    // A done worker doesn't lift it: it stays idle, with no border, and the worker has none.
+    update(&mut m, &mut core, vec![worker("t2", Done)]);
+    let list = build(&mut tracker, &m, &Opts::default());
+    // (At the same time, the stray was seen later, so it leads.)
+    assert_eq!(
+        lines(&list),
+        [
+            "# Idle 2",
+            "stray [idle] 1",
+            "orchestrate [idle] 2",
+            "├ worker a [done] 3",
+            "└ worker b [idle] 4",
+        ]
+    );
+    assert_eq!(edges(&list), ["t5:-", "t1:-", "t2:-", "t4:-"]);
+
+    // An orchestrator that finished while nobody looked, with a working worker, sits in Done,
+    // with the done border.
+    let orchestrator = |state| {
+        pi(
+            "t1",
+            state,
+            json!({"role": "orchestrator", "orchestration": "o1"}),
+        )
+    };
+    update(&mut m, &mut core, vec![orchestrator(Working)]);
+    update(
+        &mut m,
+        &mut core,
+        vec![orchestrator(Idle), worker("t2", Working)],
+    );
+    let list = build(&mut tracker, &m, &Opts::default());
+    assert_eq!(lines(&list)[..2], ["# Done 1", "orchestrate [done] 1"]);
+    assert_eq!(edges(&list), ["t1:done", "t2:-", "t4:-", "t5:-"]);
+
+    // An agent without workers keeps its own: working is blue, idle has none.
+    let stray = pi(
+        "t5",
+        Working,
+        json!({"role": "worker", "orchestration": "gone"}),
+    );
+    update(&mut m, &mut core, vec![stray]);
+    let list = build(&mut tracker, &m, &Opts::default());
+    assert_eq!(row(&list, "t5").edge, Some(Displayed::Working));
+}
+
 #[test]
 fn titles_prefer_names_then_live_titles_and_never_a_bare_tab_number() {
     let doc = doc(vec![named_space(

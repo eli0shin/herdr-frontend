@@ -232,6 +232,41 @@ fn the_published_order_follows_the_rows() {
 }
 
 #[test]
+fn an_open_orchestration_has_one_border_its_sections() {
+    let (mut rt, _) = runtime();
+    rt.state.step(0.0, model::Action::FocusAgent("t13".into()));
+    rt.state.settle();
+    frames(&mut rt, 2);
+    let edge = |address: &str| at(&rt, &format!("ag-{address}/edge"));
+    // The idle orchestrator sits in Working for its working worker, and is drawn so.
+    assert!(edge("t12"), "the orchestrator has its section's border");
+    let o = rt.state.list.rows.iter().find_map(|r| match r {
+        Row::Agent(a) if a.address == "t12" => Some((a.status, a.edge)),
+        _ => None,
+    });
+    assert_eq!(
+        o,
+        Some((
+            herdr_shared::Displayed::Idle,
+            Some(herdr_shared::Displayed::Working)
+        ))
+    );
+    // Its working and done workers have none, but keep their status marks.
+    for (w, mark) in [("t13", "spinner"), ("t14", "done")] {
+        assert!(
+            has(&rt, &format!("ag-{w}")) && !edge(w),
+            "{w} has no border"
+        );
+        assert!(
+            at(&rt, &format!("ag-{w}/body/line1/{mark}")),
+            "{w}'s {mark}"
+        );
+    }
+    // A live agent without workers keeps its own.
+    assert!(edge("t10") && edge("t11"));
+}
+
+#[test]
 fn a_row_click_focuses_its_agent_and_a_sub_agent_click_peeks() {
     let (mut rt, _) = runtime();
     click(&mut rt, "ag-t11");
