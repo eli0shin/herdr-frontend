@@ -37,6 +37,20 @@ snap scene="hello" *args: build
 e2e *args:
     HERDR_E2E=1 cargo test -p herdr-frontend --test e2e -- {{args}}
 
+# Time keys from input to the screen in the release app on an isolated core, stage by stage, with the
+# frame pacing (opens a window on your display; docs/latency.md). `--summarize <trace>` reports a
+# trace you recorded by hand.
+latency *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Cargo runs the test from crates/app: relative paths in the arguments mean where you ran just.
+    export HERDR_LATENCY_CWD="{{invocation_directory()}}"
+    case " {{args}} " in
+        *" --summarize "*) exec cargo test -q -p herdr-frontend --test latency -- {{args}} ;;
+    esac
+    cargo build --release -p herdr-frontend
+    HERDR_LATENCY=1 cargo test -p herdr-frontend --test latency -- --app "$PWD/target/release/herdr-frontend" {{args}}
+
 # Compare the terminal renderer with Ghostty.app, pixel by pixel (opens a Ghostty window per screen).
 ghostty-diff *screens:
     scripts/ghostty-diff {{screens}}

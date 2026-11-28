@@ -49,3 +49,10 @@ objc2-core-text = { version = "0.3.2", default-features = false, features = ["st
 name = "e2e"
 path = "tests/e2e/main.rs"
 harness = false
+
+# Input-to-frame latency on this Mac (`docs/latency.md`): a real window on the person's display, so
+# it runs only under `just latency` (`HERDR_LATENCY=1`); plain `cargo test` builds it and skips.
+[[test]]
+name = "latency"
+path = "tests/latency/main.rs"
+harness = false

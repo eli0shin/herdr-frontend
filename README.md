@@ -112,6 +112,10 @@ skip without one. CI installs the pinned hc release.
 writes `target/e2e/<run>/index.html`. `docs/e2e.md` describes what it runs and what it never
 touches.
 
+`just latency` times keys from input to the screen in the release app on an isolated core, stage
+by stage, with the frame pacing. `HERDR_FRONTEND_LATENCY=<file>` traces the same for keys and
+clicks you make by hand (`docs/latency.md`).
+
 Rune is pinned to one `dev` rev in `Cargo.toml`; bump it as `docs/research/rune.md` §1 describes.
 
 Releases are versioned with Changesets, which needs [Bun](https://bun.sh): each user-visible PR

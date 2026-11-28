@@ -24,6 +24,7 @@
 //! draws ([`face`], [`metrics`]), with the grid and padding math in [`size`].
 
 pub mod face;
+pub mod latency;
 pub mod links;
 pub mod metrics;
 pub mod size;
@@ -36,7 +37,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub use face::{DesiredSize, FaceError};
 pub use metrics::{FaceMetrics, Metrics, Modifier, Modifiers};
@@ -128,6 +129,8 @@ enum Request {
     CopyEnd,
     /// The UI took the snapshot in the handoff and the worker has a newer frame waiting.
     Publish,
+    /// Everything sent before this is handled: say so.
+    Handled(Sender<()>),
     /// Snapshot everything handled so far, now, and empty the handoff.
     SnapshotNow(Sender<Snapshot>),
     /// The terminal is dropped: stop, even while [`Writer`]s keep the channel open.
@@ -142,8 +145,13 @@ struct Handoff {
     waiting: bool,
 }
 
+/// Numbers each terminal, for [`latency`].
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
 /// A terminal on its own worker thread. Dropping it stops the thread.
 pub struct Terminal {
+    /// This terminal among the process's, for [`latency`].
+    id: u64,
     requests: Sender<Request>,
     /// Bytes written and not parsed yet.
     pending: Arc<AtomicUsize>,
@@ -166,11 +174,13 @@ impl Terminal {
         let pending = Arc::new(AtomicUsize::new(0));
         let stopping = Arc::new(AtomicBool::new(false));
         let (worker_pending, worker_stopping) = (pending.clone(), stopping.clone());
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let worker = thread::Builder::new()
             .name("terminal".into())
             .spawn(move || {
                 // A `Vt` never leaves the thread that made it.
                 Worker {
+                    id,
                     vt: Vt::new(&config),
                     inbox,
                     outbox,
@@ -184,6 +194,7 @@ impl Terminal {
             })
             .expect("spawn the terminal worker");
         Terminal {
+            id,
             requests,
             pending,
             stopping,
@@ -192,6 +203,11 @@ impl Terminal {
             worker: Some(worker),
             scrolls: AtomicU64::new(0),
         }
+    }
+
+    /// This terminal among the process's: what [`latency`] follows an interaction by.
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     /// Feeds the program's output (herdr-core DATA frames).
@@ -204,6 +220,7 @@ impl Terminal {
     /// this handle or the terminal itself.
     pub fn writer(&self) -> Writer {
         Writer {
+            id: self.id,
             requests: self.requests.clone(),
             pending: self.pending.clone(),
         }
@@ -350,16 +367,29 @@ impl Terminal {
             drop(handoff);
             self.send(Request::Publish);
         }
+        if snapshot.is_some() {
+            latency::mark(latency::Stage::Taken, self.id);
+        }
         snapshot
     }
 
     /// A snapshot of everything this thread sent the worker so far, waiting up to `timeout` for
     /// it. The handoff is emptied, so the next [`Terminal::take_snapshot`] has only what changes
     /// after. It blocks: for tests and scenes that need a settled screen, never a UI frame.
-    pub fn snapshot_now(&self, timeout: std::time::Duration) -> Option<Snapshot> {
+    pub fn snapshot_now(&self, timeout: Duration) -> Option<Snapshot> {
         let (tx, rx) = mpsc::channel();
         self.send(Request::SnapshotNow(tx));
         rx.recv_timeout(timeout).ok()
+    }
+
+    /// Waits up to `timeout` for the worker to handle everything this thread sent it so far:
+    /// true once it has, so the input it encoded is in [`Terminal::output`]. An idle worker
+    /// answers in microseconds; one busy parsing a flood of output may not in time, and its
+    /// encoded input then comes out as usual, after the waker runs.
+    pub fn handled(&self, timeout: Duration) -> bool {
+        let (tx, rx) = mpsc::channel();
+        self.send(Request::Handled(tx));
+        rx.recv_timeout(timeout).is_ok()
     }
 
     /// Replies, encoded input and events, in order. Drain it whenever the waker runs.
@@ -378,6 +408,7 @@ impl Terminal {
 /// dropped, writes go nowhere.
 #[derive(Clone)]
 pub struct Writer {
+    id: u64,
     requests: Sender<Request>,
     pending: Arc<AtomicUsize>,
 }
@@ -399,6 +430,9 @@ impl Writer {
 
     fn send(&self, bytes: Vec<u8>, parsed: Option<Parsed>) {
         let n = bytes.len();
+        if n > 0 {
+            latency::mark(latency::Stage::Echo, self.id);
+        }
         self.pending.fetch_add(n, Ordering::AcqRel);
         if self.requests.send(Request::Write(bytes, parsed)).is_err() {
             self.pending.fetch_sub(n, Ordering::AcqRel);
@@ -426,6 +460,7 @@ impl Drop for Terminal {
 }
 
 struct Worker {
+    id: u64,
     vt: Vt,
     inbox: Receiver<Request>,
     outbox: Sender<Output>,
@@ -510,6 +545,9 @@ impl Worker {
         let changed = match request {
             Request::Write(bytes, parsed) => {
                 self.vt.write(&bytes);
+                if !bytes.is_empty() {
+                    latency::mark(latency::Stage::Parsed, self.id);
+                }
                 self.pending.fetch_sub(bytes.len(), Ordering::AcqRel);
                 if let Some(parsed) = parsed {
                     parsed();
@@ -635,6 +673,10 @@ impl Worker {
                 self.vt.copy_end();
                 was
             }
+            Request::Handled(reply) => {
+                let _ = reply.send(());
+                false
+            }
             Request::Publish | Request::Stop => false,
             Request::SnapshotNow(reply) => {
                 self.flush();
@@ -668,6 +710,7 @@ impl Worker {
 
     fn input(&mut self, bytes: Vec<u8>) {
         if !bytes.is_empty() {
+            latency::mark(latency::Stage::Encoded, self.id);
             self.out(Output::Input(bytes));
         }
     }
@@ -713,6 +756,7 @@ impl Worker {
         let snapshot = self.vt.snapshot();
         self.changed = false;
         self.handoff.lock().expect("handoff lock").snapshot = Some(snapshot);
+        latency::mark(latency::Stage::Published, self.id);
         (self.waker)();
     }
 }
