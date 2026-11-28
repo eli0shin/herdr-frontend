@@ -87,8 +87,8 @@ version PR merges is the only one that tags that version, since a later run tags
 `.github/workflows/release-artifacts.yml` builds each release's macOS download and uploads it to
 the release:
 
-- `herdr-frontend-<version>-macos.dmg`: `herdr-frontend.app`, one universal binary for Apple
-  silicon and Intel, beside an Applications link to drag it onto;
+- `herdr-frontend-<version>-macos.dmg`: `herdr-frontend.app`, an arm64 binary for Apple silicon
+  only (no Intel build), beside an Applications link to drag it onto;
 - `herdr-frontend-<version>-macos.dmg.sha256`, its SHA-256 (`shasum -a 256 -c` checks it).
 
 It takes the release's `tag` and runs:
@@ -140,20 +140,23 @@ the account's included Actions usage. `ci.yml` stays on Linux.
 `scripts/release-macos [<out-dir>]` (default `target/dist`; `just package` runs it):
 
 1. Sets up signing (below) before building, so bad secrets fail in a minute, not after the build.
-2. `scripts/bundle-macos --universal`: release builds for `aarch64-apple-darwin` and
-   `x86_64-apple-darwin` (it adds the rustup targets), joined with `lipo` into
-   `target/universal-apple-darwin/release/herdr-frontend.app`. Intel is cheap: the
-   libghostty-vt xcframework's macOS slice is already universal, and `ghostty-vt-sys` thins it to
-   each target. It costs a second build, about 4.5 minutes here (fat LTO); the final link peaks at
-   2.6 GB, well inside the runner's 7 GB.
+2. `scripts/bundle-macos`: the release build for the runner, `aarch64-apple-darwin`, into
+   `target/release/herdr-frontend.app`, the same bundle `just bundle` makes. herdr-frontend is
+   Apple silicon only, so it fails unless `lipo -archs` reports `arm64` alone, and its
+   `Info.plist` says so: `LSArchitecturePriority` is `arm64` alone, `LSRequiresNativeExecution`
+   keeps it off Rosetta, and `LSMinimumSystemVersion` is the binary's own minimum macOS (its
+   `LC_BUILD_VERSION` minos, from `vtool`). The libghostty-vt xcframework's macOS slice is
+   universal; `ghostty-vt-sys` thins it to arm64. The build takes about 4.5 minutes here (fat
+   LTO); the final link peaks at 2.6 GB, well inside the runner's 7 GB.
 3. Signs the app (below), with the hardened runtime and `assets/macos/herdr-frontend.entitlements`.
 4. With the Developer ID: zips the app with `ditto`, notarizes the zip, staples the ticket to the
-   app, and checks it with `spctl --assess --type execute`.
-5. Builds the .dmg with `hdiutil` (UDZO, compressed), signs it, notarizes and staples it, and checks
-   it with `spctl --assess --type open`.
+   app (stapler can't staple a zip; only an .app or a .dmg), and checks it with
+   `spctl --assess --type execute`.
+5. Builds the .dmg with `hdiutil` (UDZO, compressed) from the stapled app, signs it, notarizes
+   and staples it, and checks it with `spctl --assess --type open`.
 6. Mounts the .dmg read-only and checks what a download gets: the Applications link, the app's
-   signature, both architectures, the license files, the stapled ticket when notarized, and that
-   the app's own `--version` reports the version being released.
+   signature, that the binary is arm64 alone, the license files, the stapled ticket when
+   notarized, and that the app's own `--version` reports the version being released.
 7. Writes the SHA-256 file and prints both paths. On Actions it also writes `dmg`, `sha256` and
    `signing` to the step's outputs.
 
@@ -256,14 +259,17 @@ password itself; the next release run does that first, in its first minute.
 
 ### Checking it without the secrets
 
-- `just package` runs `scripts/release-macos` with no secrets: the universal build, the ad hoc
+- `just package` runs `scripts/release-macos` with no secrets: the arm64 build, the ad hoc
   signature with the hardened runtime, the .dmg and its checks, as the release job runs them.
 - `just package-dry-run` (`scripts/release-signing-dry-run`) runs the Developer ID path with a
   throwaway self-signed "Developer ID Application: herdr-frontend dry run (DRYRUN0000)" certificate,
   passed through the same six variables. It covers the temporary keychain, the import, the
   identity check, signing the app and the .dmg with a secure timestamp, and putting the search
   list back. It skips notarization (`RELEASE_SKIP_NOTARIZE=1`), since the notary service only takes
-  a real Developer ID, then checks the signatures' authority, timestamp and hardened runtime.
+  a real Developer ID: `release-macos` runs the same notarize steps up to the submission, checks
+  that what each staples is an .app or a .dmg, and logs what it would submit and staple. The dry
+  run checks that log's order (the app's zip and stapling the app, then the .dmg, built after,
+  and stapling it), then the signatures' authority, timestamp and hardened runtime.
 
 What only a real run shows: the Developer ID chain on the runner, `notarytool`'s credentials check,
 notarization and stapling, and `spctl`'s verdict.

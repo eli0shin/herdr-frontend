@@ -1,9 +1,9 @@
 name: release artifacts
 
 # Builds a GitHub Release's macOS download and uploads it to the release: herdr-frontend.app for
-# Apple silicon and Intel in a .dmg, signed with the Developer ID, notarized and stapled, with a
-# SHA-256 file (docs/release.md "Artifacts"). version.yml calls it right after changesets tags a
-# release; run it by hand (Actions > release artifacts > Run workflow) to redo a release's.
+# Apple silicon in a .dmg, signed with the Developer ID, notarized and stapled, with a SHA-256 file
+# (docs/release.md "Artifacts"). version.yml calls it right after changesets tags a release; run it
+# by hand (Actions > release artifacts > Run workflow) to redo a release's.
 on:
   workflow_call:
     inputs:
@@ -74,10 +74,10 @@ jobs:
         with:
           ref: refs/tags/${{ inputs.tag }}
       - name: toolchain
-        # The channel rust-toolchain.toml pins, with both macOS targets for the universal binary.
+        # The channel rust-toolchain.toml pins, for the runner's own aarch64-apple-darwin: the app
+        # is Apple silicon only.
         run: |
           rustup toolchain install
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin
           rustup show
       - name: build, sign, notarize
         id: package
@@ -128,7 +128,7 @@ jobs:
           $start
           ### Install
 
-          Download \`$dmg\` (Apple silicon and Intel; its SHA-256 is in \`$dmg.sha256\`), open it and drag herdr-frontend into Applications. For the \`herdr-frontend\` command:
+          Download \`$dmg\` (Apple silicon; its SHA-256 is in \`$dmg.sha256\`), open it and drag herdr-frontend into Applications. For the \`herdr-frontend\` command:
 
           \`\`\`sh
           ln -sfn /Applications/herdr-frontend.app/Contents/MacOS/herdr-frontend ~/.local/bin/herdr-frontend

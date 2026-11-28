@@ -12,9 +12,9 @@ Status: under construction. See `docs/` for research and the plan.
 ## Install
 
 Each [GitHub Release](https://github.com/eli0shin/herdr-frontend/releases) has
-`herdr-frontend-<version>-macos.dmg`, one app for Apple silicon and Intel, notarized by Apple (the
-release notes say so when it isn't). Open it, drag herdr-frontend into Applications, and link the
-command:
+`herdr-frontend-<version>-macos.dmg`, the app for Apple silicon Macs (there's no Intel build),
+notarized by Apple (the release notes say so when it isn't). Open it, drag herdr-frontend into
+Applications, and link the command:
 
 ```sh
 ln -sfn /Applications/herdr-frontend.app/Contents/MacOS/herdr-frontend ~/.local/bin/herdr-frontend
@@ -44,7 +44,7 @@ downloaded from elsewhere.
 
 ## Develop
 
-macOS only for now. Needs [rustup](https://rustup.rs) (the toolchain comes from
+macOS on Apple silicon only. Needs [rustup](https://rustup.rs) (the toolchain comes from
 `rust-toolchain.toml`) and [just](https://just.systems).
 
 ```sh
@@ -52,7 +52,7 @@ just run          # open the window on your herdr-core
 just test         # pin check, fmt, clippy, tests and bindings check, as CI runs them
 just snap [scene] # render a scene headless to target/snap/<scene>.png
 just bundle       # build target/release/herdr-frontend.app (`just install` installs it)
-just package      # build the release .dmg, universal, in target/dist/ (docs/release.md)
+just package      # build the release .dmg, arm64, in target/dist/ (docs/release.md)
 just icon         # regenerate assets/icon/herdr-frontend.icns from its SVG (needs ImageMagick)
 just e2e          # the full app and Herdr app through every scenario, screenshots side by side
 just ghostty-diff # compare the terminal renderer with Ghostty.app (opens Ghostty windows)
