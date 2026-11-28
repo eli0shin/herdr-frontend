@@ -2,13 +2,17 @@
 """Write the synthetic fixture screens the renderer scenes and the Ghostty pixel diff draw.
 
     python3 -I make.py
+    python3 -I make.py long    # prints the long-line screen at this terminal's width
 
 Each screen is the bytes a program would write to an 80x30 terminal, ending with the cursor
 parked where the screen's scene expects it. `nvim-splits.bin` is a recording instead; its
-command line is in `README.md`.
+command line is in `README.md`. The long-line screen fits whatever terminal it's printed in, so it
+isn't a file: `scripts/ghostty-diff long` prints it in Ghostty and records it.
 """
 
 import os
+import shutil
+import sys
 
 ESC = "\x1b"
 CSI = ESC + "["
@@ -132,7 +136,37 @@ def styles():
     return "".join(out)
 
 
+def long(cols):
+    """Lines as wide as the terminal, `cols` columns: each glyph must stay on its cell to the
+    line's end (scripts/ghostty-diff long). Text in each style, Nerd Font icons the way oil.nvim
+    and a statusline show them, spread to the right edge, and the cursor near the end of the first
+    line."""
+    words = "The quick brown fox jumps over the lazy dog. 0123456789 "
+
+    def fill(text):
+        return (text * (cols // len(text) + 1))[:cols]
+
+    out = [CSI + "H" + CSI + "2J"]
+    for codes in ((), (1,), (3,), (1, 3)):
+        out.append(sgr(*codes) + fill(words) + RESET + "\r\n")
+    out.append(fill("o") + "\r\n")
+    # An icon, a blank cell and a name, as oil.nvim lists files, every 30 columns.
+    entries = ((33, "\ue60b", "agents.json"), (34, "\uf15b", "core.sock"))
+    for color, icon, name in entries:
+        entry = sgr(color) + icon + RESET + " " + name + " " * (28 - len(name))
+        out.append(entry * (cols // 30) + "\r\n")
+    # A statusline: the branch icon and a path, again across the line.
+    status = "\ue0a0 main  crates/app/src/e2e.rs  "
+    out.append(sgr(30, 44) + " NORMAL " + RESET + " " + fill(status)[: cols - 9] + "\r\n")
+    out.append(CSI + f"1;{max(cols - 10, 1)}H")
+    return "".join(out)
+
+
 def main():
+    if sys.argv[1:] == ["long"]:
+        sys.stdout.write(long(shutil.get_terminal_size().columns))
+        sys.stdout.flush()
+        return
     here = os.path.dirname(os.path.abspath(__file__))
     for name, screen in (("colors", colors()), ("boxes", boxes()), ("styles", styles())):
         path = os.path.join(here, name + ".bin")

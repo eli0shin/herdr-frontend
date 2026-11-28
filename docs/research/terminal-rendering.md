@@ -460,6 +460,11 @@ Port `ghostty:src/font/Metrics.zig:227-330` (`calc`) and its inputs from
 All values are whole device pixels. The grid is laid out in device pixels, so column `k` starts
 at exactly `k × cell_width`.
 
+The row's text must be drawn at that same `px`: the tracking that puts the line's glyphs one cell
+apart comes from this face's advance. The app's zoom makes the scale fractional (2.2), where
+`round(72 × scale)` and `72 × scale` differ, so the line is shaped at `px / scale` points, not at
+`points` (`Face::text_points`, ticket 046, `renderer-gates.md` "Zoomed scales").
+
 Worked example, JetBrains Mono (bundled by herdr-app; `upm 1000`, typo 1020/−300/0,
 `USE_TYPO_METRICS` set, ASCII max advance 600) at 14 pt:
 

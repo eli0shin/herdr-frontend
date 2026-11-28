@@ -6,7 +6,7 @@
 # report.md.
 #
 #   scripts/ghostty-diff [--reuse] [SCREEN...]   screens: colors boxes nvim nvim-checklist styles
-#                                                images (default: all)
+#                                                long images (default: all)
 #
 # `--reuse` keeps each screen's last Ghostty capture and only draws and compares ours again, so a
 # renderer fix can be checked without opening Ghostty.
@@ -15,8 +15,10 @@
 # (a 17 x 37 px cell), except `styles`: regular, bold, italic and bold italic in Operator Mono
 # Book at 18.7 pt (a 21 x 45 px cell), each style the face its style name picks, from
 # fixtures/styles.ghostty for Ghostty and fixtures/styles.json for ours. It needs Operator Mono
-# installed. `images` is `kitten icat`'s kitty graphics recording (crates/terminal/tests/images.rs),
-# reported by image as well.
+# installed. `long` is lines as wide as Ghostty's window (fixtures/make.py `long`) in the same font:
+# text in each style, Nerd Font icons and a statusline, each glyph on its cell to the line's end.
+# `images` is `kitten icat`'s kitty graphics recording (crates/terminal/tests/images.rs), reported
+# by image as well.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,7 +28,7 @@ if [ "${1:-}" = "--reuse" ]; then
     shift
 fi
 screens=("$@")
-[ ${#screens[@]} -gt 0 ] || screens=(colors boxes nvim nvim-checklist styles images)
+[ ${#screens[@]} -gt 0 ] || screens=(colors boxes nvim nvim-checklist styles long images)
 
 cargo build --quiet -p herdr-frontend --bins
 bin=target/debug
@@ -38,7 +40,7 @@ for screen in "${screens[@]}"; do
     mkdir -p "$out"
     # The cell in device pixels, and the settings ours draws with (none: Ghostty's defaults).
     cell_w=17 cell_h=37 settings=""
-    if [ "$screen" = styles ]; then
+    if [ "$screen" = styles ] || [ "$screen" = long ]; then
         cell_w=21 cell_h=45 settings=$fixtures/styles.json
     fi
     if $reuse; then
@@ -54,6 +56,10 @@ for screen in "${screens[@]}"; do
             styles)
                 scripts/ghostty-capture "$out" --config "$fixtures/styles.ghostty" -- \
                     cat "$fixtures/styles.bin"
+                ;;
+            long)
+                scripts/ghostty-capture "$out" --config "$fixtures/styles.ghostty" -- \
+                    python3 -I "$fixtures/make.py" long
                 ;;
             nvim)
                 # Neovim with no user config, in a scratch home, splits and a visual selection as in
@@ -100,6 +106,13 @@ for screen in "${screens[@]}"; do
     if [ "$screen" = styles ]; then
         regions=(--region regular=13,2,52,4 --region bold=13,7,52,4 --region italic=13,12,52,4
             --region bold-italic=13,17,52,4)
+    fi
+    # Each line of the long screen, and the last 40 columns of all of them, where a drift along the
+    # line would show most.
+    if [ "$screen" = long ]; then
+        regions=(--region regular=0,0,$cols,1 --region bold=0,1,$cols,1 --region italic=0,2,$cols,1
+            --region bold-italic=0,3,$cols,1 --region o=0,4,$cols,1 --region icons=0,5,$cols,2
+            --region statusline=0,7,$cols,1 --region tail=$((cols - 40)),0,40,8)
     fi
     # The snap's size in points: the grid at half a cell's pixels a cell, rounded up.
     width=$(( (cols * cell_w + 1) / 2 ))

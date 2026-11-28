@@ -38,9 +38,10 @@ Follow-ups for later tickets:
 The renderer lives in `crates/app/src/view/terminal/`:
 
 - `font.rs`: registers a font's faces with Rune and measures Ghostty's whole-pixel cell for it at
-  a display scale (`terminal::Metrics`, ticket 010). The row text style is the face at its point
-  size, one cell tall, with tracking of `cell − advance` so glyphs land exactly one cell apart, and
-  `calt` and `liga` off. It also says which characters the regular face has glyphs for.
+  a display scale (`terminal::Metrics`, ticket 010). The row text style is the face at the pixel
+  size its cell was measured at (`Face::text_points`, the point size adjusted for Ghostty's
+  whole-number DPI; see [Zoomed scales](#zoomed-scales)), one cell tall, with tracking of
+  `cell − advance` so glyphs land exactly one cell apart, and `calt` and `liga` off. It also says which characters the regular face has glyphs for.
 - `rows.rs`: the `GridRow` builder, a port of Ghostty's `rebuildRow` color rules onto the grid.
   - Inverse swaps foreground and background, defaults included.
   - Selection takes `selection-background`. When that isn't set, it's the default background on
@@ -188,6 +189,32 @@ By kind of cell:
   cell's top for JetBrains Mono, 36 for Operator Mono). The −0.3 px of the first, smoothed run was
   the smoothing's dilation.
 - **Weight.** The same: the ratio is 1.000 with font smoothing off (it was 1.294 with it on).
+
+### Zoomed scales
+
+Ticket 046. All of the above is at 2x. The app's zoom multiplies the display scale (Eli's 1.1
+makes it 2.2), and at a scale that isn't a whole number the line drifted off the grid: about
+0.05 px per column at 2.2 and −0.03 px at 2.4, so by the end of a 200-column line glyphs sat a
+quarter to half a cell from their columns, the cursor and selection over the wrong letters. The
+cell is measured at Ghostty's DPI, `round(scale × 72)` (158 at 2.2, not 158.4), and the tracking
+that spaces the line's glyphs one cell apart was taken from that face's advance, but Rune shaped
+the line at `points × scale` pixels, a slightly bigger or smaller face. At 1x and 2x the DPI is
+exact, so the two agreed. `Face::text_points` now draws the line (and the cursor's and the IME's
+text) at the cell's own pixel size.
+
+Measured with `--snap` on a 200-column line of `|`, the mean distance between neighboring glyphs
+over the line, against the cell:
+
+| font | scale | cell (px) | before | after |
+| --- | --- | --- | --- | --- |
+| Operator Mono Book 18.7 pt | 2.2 | 23 | 23.0529 | 23.0000 |
+| Operator Mono Book 18.7 pt | 2.4 | 25 | 24.9698 | 25.0000 |
+| Operator Mono Book 17 pt | 2.2, 2.4, 2.6, 3 | 21, 22, 24, 28 | | exact |
+| JetBrains Mono 14 pt | 1, 2, 2.2, 2.4, 2.6, 3 | 8, 17, 18, 20, 22, 25 | | within 0.0005 |
+
+`tests/glyph_placement.rs` draws a long line at 2.2 with the cursor at columns 0, 40, 100 and
+160 and checks the glyph's ink lies inside the cursor's cell, centered in it. Before the fix it
+failed at column 40.
 
 ## Gate 2: sprites
 

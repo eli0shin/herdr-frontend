@@ -3,7 +3,9 @@
 //!
 //! Rune lays a grid row's narrow cells out as one shaped line, so the text style gets tracking
 //! that spaces glyphs exactly one cell apart, a line height of one cell, and ligatures off
-//! (`docs/research/terminal-rendering.md` §2 "Font fallback and shaping").
+//! (`docs/research/terminal-rendering.md` §2 "Font fallback and shaping"). It draws the face at
+//! the pixel size the cell was measured at ([`Face::text_points`]), so the tracking holds at every
+//! scale and each glyph stays on its column across the whole line.
 //!
 //! An installed family (`config::fonts`) is registered as its private family: Rune picks each
 //! style's face by weight and slant within it, so regular, bold, italic and bold italic each draw
@@ -214,12 +216,12 @@ impl Face {
         )
     }
 
-    /// The style a row's line is shaped with: the face at its size, one cell tall, glyphs one
-    /// cell apart, no ligatures.
+    /// The style a row's line is shaped with: the face at the size its cell was measured at, one
+    /// cell tall, glyphs one cell apart, no ligatures.
     pub fn style(&self) -> TextStyle {
         let (cell_w, cell_h) = self.cell_pt();
         let advance = (self.advance_px / f64::from(self.scale)) as f32;
-        TextStyle::new(self.points, 400.0)
+        TextStyle::new(self.text_points(), 400.0)
             .family(Family::Named(self.family))
             .lh(cell_h)
             .tracking(cell_w - advance)
@@ -256,6 +258,18 @@ impl Face {
     /// The face's size in device pixels (Ghostty's `points × dpi / 72`).
     pub fn pixels(&self) -> f64 {
         f64::from(DesiredSize::new(self.points, self.scale).pixels())
+    }
+
+    /// The point size Rune draws the face at so its glyphs come out [`Face::pixels`] tall, the
+    /// size the cell and the tracking were measured at.
+    ///
+    /// Ghostty's DPI is `round(scale × 72)`, so at a scale that isn't a whole number (a zoomed
+    /// view: 2.2 at zoom 1.1 on a 2x display) the face is a little bigger or smaller than
+    /// `points × scale` pixels. Shaped at `points`, every glyph's advance would differ from the
+    /// one the tracking corrects by a fraction of a pixel, and the error would add up along the
+    /// line until glyphs sat cells away from their columns.
+    pub fn text_points(&self) -> f32 {
+        (self.pixels() / f64::from(self.scale)) as f32
     }
 
     /// What identifies this face's layouts in a row cache: rows built for another face, size,
