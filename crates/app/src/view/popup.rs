@@ -26,16 +26,18 @@ use rune::{Cx, El};
 use crate::State;
 use crate::view::overlay;
 use crate::view::{
-    dialog, help, jump, machines, menu, new_space, palette, picker, pr_finder, settings,
+    dialog, help, jump, list, machines, menu, new_space, palette, picker, pr_finder, settings,
     space_picker,
 };
 
 /// What a list popup lists now: per item whether (and as which row) the cursor can reach it,
-/// where the cursor starts for its query, and how many items show at once.
+/// where the cursor starts for its query, and where its rows are: the scroll viewport's key and
+/// the key of a row's place in it, which the window reveals when the cursor moves.
 pub struct Listing {
     pub picks: Vec<Option<usize>>,
     pub start: usize,
-    pub shown: usize,
+    pub key: &'static str,
+    pub row_key: fn(usize) -> String,
 }
 
 impl Listing {
@@ -43,11 +45,13 @@ impl Listing {
         self.picks.iter().filter(|p| p.is_some()).count()
     }
 
-    fn flat(rows: usize, start: usize, shown: usize) -> Listing {
+    /// Rows only, no titles, in [`crate::view::list`] under `key`.
+    fn flat(rows: usize, start: usize, key: &'static str) -> Listing {
         Listing {
             picks: (0..rows).map(Some).collect(),
             start,
-            shown,
+            key,
+            row_key: list::pick_key,
         }
     }
 }
@@ -72,13 +76,17 @@ pub fn drawn(popup: Popup) -> bool {
 /// What a drawn list popup lists; `None` for one the window doesn't draw.
 pub fn listing(s: &State, list: &ListPopup) -> Option<Listing> {
     Some(match list.popup {
-        Popup::Help => Listing::flat(help::shown(s, list).len(), 0, usize::MAX),
+        Popup::Help => Listing {
+            row_key: help::row_key,
+            ..Listing::flat(help::shown(s, list).len(), 0, help::ROWS)
+        },
         Popup::Palette => {
             let rows = palette::rows(s, list);
             Listing {
                 picks: palette::picks(&rows, !list.query.trim().is_empty()),
                 start: 0,
-                shown: palette::SHOWN,
+                key: palette::ROWS,
+                row_key: list::pick_key,
             }
         }
         Popup::Picker => {
@@ -96,30 +104,29 @@ pub fn listing(s: &State, list: &ListPopup) -> Option<Listing> {
             Listing {
                 picks,
                 start: model::popups::picker_cursor(&rows, &list.query),
-                shown: picker::SHOWN,
+                key: picker::ROWS,
+                row_key: list::pick_key,
             }
         }
         Popup::SpacePicker => {
             let rows = space_picker::rows(s, list);
             let start = model::popups::space_cursor(&rows, &list.query);
-            Listing::flat(rows.len(), start, space_picker::SHOWN)
+            Listing::flat(rows.len(), start, space_picker::ROWS)
         }
-        Popup::NewSpace => Listing::flat(new_space::rows(s, list).len(), 0, new_space::SHOWN),
-        Popup::PrFinder => Listing::flat(pr_finder::rows(s, list).len(), 0, pr_finder::SHOWN),
-        Popup::Settings => {
-            let n = settings::rows(s).len();
-            Listing::flat(n, 0, n)
-        }
+        Popup::NewSpace => Listing::flat(new_space::rows(s, list).len(), 0, new_space::ROWS),
+        Popup::PrFinder => Listing::flat(pr_finder::rows(s, list).len(), 0, pr_finder::ROWS),
+        Popup::Settings => Listing::flat(settings::rows(s).len(), 0, settings::ROWS),
         Popup::AgentMachines => {
-            let n = machines::filter_rows(s).len();
-            Listing::flat(n, 0, n)
+            Listing::flat(machines::filter_rows(s).len(), 0, machines::FILTER_ROWS)
         }
         Popup::Machines => {
             let rows = machines::machines_rows(s);
             let start = machines::start(s, &rows);
-            Listing::flat(rows.len(), start, machines::SHOWN)
+            Listing::flat(rows.len(), start, machines::MACHINES_ROWS)
         }
-        Popup::MachineAdd => Listing::flat(machines::add_rows(s, list).len(), 0, machines::SHOWN),
+        Popup::MachineAdd => {
+            Listing::flat(machines::add_rows(s, list).len(), 0, machines::ADD_ROWS)
+        }
         _ => return None,
     })
 }

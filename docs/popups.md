@@ -57,10 +57,14 @@ Either opens where the right-click was. The keyboard goes to
 the popup's text field (`popup-filter`), or to the box itself when it has none (confirm, menus,
 settings). The field is one `TextEdit` in the state: a list's filter, or the prompt's name.
 
-`crates/app/src/view/list.rs` is the list the pickers, the palette and settings share. Rows the
-cursor reaches and group titles it skips are `Item`s; a window of rows follows the cursor, moving
-only as far as it must (a row that opens a group shows with its title), as Herdr app's lists
-scroll. A press on a row picks it; the wheel moves the cursor a row per 32 points.
+`crates/app/src/view/list.rs` is the list the pickers, the palette, settings and the machine
+dialogs share: one flat column of every row and group title, always laid out (nothing windowed,
+folded or drawn only once on screen), in a Rune scroll viewport of a fixed most height (the
+palette's and the picker's 320 points, ten rows). The wheel and the trackpad scroll the viewport
+and leave the cursor where it is; a list that fits doesn't scroll. When the cursor moves (a key),
+the list opens or its query changes, the window asks Rune to reveal the cursor's row, which
+scrolls only as far as it must (a row that opens a group shows with its title), as Herdr app's
+lists scroll; core news never scrolls it back. A press on a row picks it.
 
 ## Matching
 
@@ -104,11 +108,11 @@ The new-space picker and the PR finder keep their mods' own matching:
 
 | Popup | Keys | Size | Rows | Enter |
 | --- | --- | --- | --- | --- |
-| Command palette | `cmd-shift-p` | 620 wide, 60 from the top, ≤ 0.85 | Empty: up to 5 recent commands, then every group (Tab, Pane, Space, Layout, Terminal, Agent, Window, App), each with its first key. Typed: matches, best first, recent first among equals, each with its group. 10 show; ↑/↓ stop at the ends; Page Up/Down move 10. | Runs it (`Action::FromPalette`), remembered among the recent commands in the saved view. A command that needs a name asks in the prompt. |
+| Command palette | `cmd-shift-p` | 620 wide, 60 from the top, ≤ 0.85 | Empty: up to 5 recent commands, then every group (Tab, Pane, Space, Layout, Terminal, Agent, Window, App), each with its key (below). Typed: matches, best first, recent first among equals, each with its group. 10 show and the rest scroll; ↑/↓ stop at the ends; Page Up/Down move 10. | Runs it (`Action::FromPalette`), remembered among the recent commands in the saved view. A command that needs a name asks in the prompt. |
 | Tab and agent picker | `cmd-p` | 640 wide, 40 from the top, ≤ 0.8 | Spaces with an agent first (one that needs you first), each under its avatar (first emoji or letter, in the space's color, as the sidebar keeps it) and its tabs: status glyph (a spinner while working), name (semibold when shown), "needs you" / "finished", the agents' programs and "+N" sub-agents. Then "earlier: N quiet spaces ▾", then "new tab", "new space" and "new space on <machine>" per connected machine. 10 show. | Shows the tab; makes a tab or space. "earlier" unfolds and stays open. Ctrl+D closes the selected tab. |
-| Space picker | `ctrl-g s` | 520 wide, 40 from the top, ≤ 0.6 | Number (1-9), status glyph, name (semibold when shown), machine when remote, "N tabs". Opens on the shown space, and goes back to it when the field empties. 12 show, with "↑ N more" / "↓ N more". | Shows the space, on its first terminal tab when its selected tab is an agent's or the review's. |
-| New space in a folder | `cmd-n`, `ctrl-g ctrl-s` | 640 wide, 40 from the top, ≤ 0.6; "New space" or "New space on <machine>" | The focused terminal's folder ("here"), then `zoxide query -l` in frecency order, then the `repos` config's paths zoxide hasn't seen ("repo"). Each row: the folder's name (semibold), its parent (dim, `~` for home) and its tag. 12 show, with "↓ N more"; "Loading folders…" until the lookups answer. | Makes a space there and shows it (`space.new {machine, folder}`). With nothing matching, where plain `space.new` starts; while loading with nothing matching, Enter waits. |
-| PR finder | `ctrl-g f` | 620 wide, 40 from the top, ≤ 0.6; "Find a PR" | Agents watching a PR, in the Agents list's order, minus hidden machines. Each reads like an Agents row without status, jump label or time: icon, title, the space in its color, the ticket and "N workers" for an orchestrator, up to 3 matched PR chips and "+N", the machine; a live agent keeps its status edge. 9 show, with "↓ N more". Empty: "No agent is watching a PR" / "No agent watches a PR like that". | Focuses that agent (a click too). |
+| Space picker | `ctrl-g s` | 520 wide, 40 from the top, ≤ 0.6 | Number (1-9), status glyph, name (semibold when shown), machine when remote, "N tabs". Opens on the shown space, and goes back to it when the field empties. 12 show; the rest scroll. | Shows the space, on its first terminal tab when its selected tab is an agent's or the review's. |
+| New space in a folder | `cmd-n`, `ctrl-g ctrl-s` | 640 wide, 40 from the top, ≤ 0.6; "New space" or "New space on <machine>" | The focused terminal's folder ("here"), then `zoxide query -l` in frecency order, then the `repos` config's paths zoxide hasn't seen ("repo"). Each row: the folder's name (semibold), its parent (dim, `~` for home) and its tag. 12 show; the rest scroll; "Loading folders…" until the lookups answer. | Makes a space there and shows it (`space.new {machine, folder}`). With nothing matching, where plain `space.new` starts; while loading with nothing matching, Enter waits. |
+| PR finder | `ctrl-g f` | 620 wide, 40 from the top, ≤ 0.6; "Find a PR" | Agents watching a PR, in the Agents list's order, minus hidden machines. Each reads like an Agents row without status, jump label or time: icon, title, the space in its color, the ticket and "N workers" for an orchestrator, up to 3 matched PR chips and "+N", the machine; a live agent keeps its status edge. About 9 show; the rest scroll. Empty: "No agent is watching a PR" / "No agent watches a PR like that". | Focuses that agent (a click too). |
 | Prompt | `f2`, `ctrl-g r`, `shift-f2`, the terminal menu's Rename | 380 wide dialog | "Rename tab" / "Rename space" / "Rename pane", a "Name" field holding the name, selected, and a hint ("empty: its number" / "empty: named after its folder" / "empty: unnamed"), Cancel and Save. A second rename closes it. | Saves the trimmed name; empty goes back to the automatic one (a pane: no name). |
 | Confirm | `ctrl-g x`, closing a space's last tab | 380 wide dialog | "Close space?", "<name> — N tabs, M terminals", Cancel and Confirm. | Closes the space and ends its terminals. |
 | Tab menu | right-click a tab | 200 wide menu | Rename, New tab, Close, each with its icon and key. | Runs the item. |
@@ -122,7 +126,12 @@ The new-space picker and the PR finder keep their mods' own matching:
 | Machines | the palette, the settings dialog's Machines row | 520 wide dialog | This computer and each machine: its line, hc version and what it needs run; "Add a machine". | Opens the machine's menu (Connect now, Copy <command>, Rename, Remove), or the add dialog. |
 | Add a machine | the palette, the Machines dialog | 560 wide dialog | A `user@host` field over the ssh config's hosts not added yet, then "Add <typed>". A row says when it's connecting and what went wrong. | Adds the machine and stays open; copies `hc machine add <target>` when it needs a terminal. |
 
-Menus show each item's `global` key, as the keys help lists it (single keys before sequences).
+A key shown beside a command (the palette's rows, menu items, the keys help's first key) is its
+prefix key when it has one, since Eli drives almost everything by his `ctrl-g` prefix: New tab
+shows `ctrl-g t`, not `cmd-t`; Close tab `ctrl-g shift-q`; Rename tab `ctrl-g r`. A command with
+no sequence shows its other key (Zoom pane: `cmd-shift-enter`). Only `global` and `layout:eli`
+keys count (`model::help::hint`). There is no command to reset the keys: the key file is the
+keymap, and the built-in escape hatch (`docs/keys.md`) stays a key only.
 "Send right-clicks to pane" sets the terminal's `herdr.right-click=program` label, which Herdr
 app reads too; "Use Herdr right-click menu" clears it. "Send back to <parent>" is
 `terminal.park`: the terminal's `herdr.space` and `herdr.tab` labels are cleared, then keep is

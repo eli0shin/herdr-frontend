@@ -8,7 +8,9 @@ use herdr_proto::{StatusState, Terminal};
 use herdr_shared::{Displayed, Document};
 use model::mode::{Confirmed, ListPopup, PopupState, Rename};
 use model::popups::{self, PickerRow};
-use model::{Action, Effect, Event, MenuIcon, Mode, Popup, PopupAction, Request, Split};
+use model::{
+    Action, AppCommand, Effect, Event, MenuIcon, Mode, Popup, PopupAction, Request, Split,
+};
 use serde_json::json;
 use support::*;
 
@@ -242,7 +244,25 @@ fn the_palette_lists_recent_commands_first_then_every_group() {
     let rows = popups::palette_rows(&m, "");
     assert_eq!(rows[0].title, "New tab");
     assert_eq!(rows[0].head, "Tab");
-    assert_eq!(rows[0].key.as_deref(), Some("cmd-t"));
+    // Eli's prefix key, not cmd-t; with none, another (zoom has only cmd-shift-enter).
+    assert_eq!(rows[0].key.as_deref(), Some("ctrl-g t"));
+    let key_of = |title: &str| {
+        rows.iter()
+            .find(|r| r.title == title)
+            .unwrap_or_else(|| panic!("no {title}"))
+            .key
+            .clone()
+    };
+    assert_eq!(key_of("Next tab").as_deref(), Some("ctrl-g n"));
+    assert_eq!(key_of("Previous tab").as_deref(), Some("ctrl-g p"));
+    assert_eq!(key_of("Close tab").as_deref(), Some("ctrl-g shift-q"));
+    assert_eq!(key_of("Rename tab").as_deref(), Some("ctrl-g r"));
+    assert_eq!(key_of("Zoom pane").as_deref(), Some("cmd-shift-enter"));
+    // There are no defaults to reset to, only Eli's keys.
+    assert!(
+        rows.iter()
+            .all(|r| r.action != Action::App(AppCommand::Reset))
+    );
     let groups: Vec<&str> = rows.iter().map(|r| r.head).collect();
     let mut order: Vec<&str> = groups.clone();
     order.dedup();
@@ -389,7 +409,7 @@ fn the_tab_menu_renames_makes_and_closes_tabs() {
     assert_eq!(menu.items[0].hint, Some(Action::TabRename));
     assert_eq!(
         model::help::hint(m.keymap(), menu.items[1].hint.as_ref().unwrap()).as_deref(),
-        Some("cmd-t")
+        Some("ctrl-g t")
     );
     // ↑ wraps to Close; Enter runs it (tb1 isn't the space's last tab).
     press(&mut m, "up");

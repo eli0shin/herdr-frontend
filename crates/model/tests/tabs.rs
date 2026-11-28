@@ -209,10 +209,10 @@ fn right_click_opens_the_tab_menu_with_its_items_and_key_hints() {
     assert_eq!(
         rows,
         [
-            // Herdr app's hint: the first `global` key, in sorted order.
+            // Eli's prefix keys.
             ("Rename".into(), Some("ctrl-g r".into())),
-            ("New tab".into(), Some("cmd-t".into())),
-            ("Close".into(), Some("cmd-w".into())),
+            ("New tab".into(), Some("ctrl-g t".into())),
+            ("Close".into(), Some("ctrl-g shift-q".into())),
         ]
     );
     assert!(m.mode().holds_keyboard());

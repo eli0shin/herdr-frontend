@@ -20,7 +20,7 @@ use rune::{Color, El, LoopSpec, col, el, icon, row, text};
 use crate::State;
 use crate::config::theme::Rgba;
 use crate::view::icons::{SEARCH, SPINNER};
-use crate::view::list::{self, Item, More};
+use crate::view::list::{self, Item};
 use crate::view::overlay::{self, Place};
 
 pub const PLACE: Place = Place::Top {
@@ -29,8 +29,11 @@ pub const PLACE: Place = Place::Top {
     height: 0.8,
 };
 
-/// Rows shown at once: the list's 320 points of 32-point rows.
-pub const SHOWN: usize = 10;
+/// The list's height: 320 points, ten 32-point rows (`cfg/mods/picker/main.js`); more scroll.
+pub const LIST_H: f32 = 320.0;
+
+/// The list's scroll viewport.
+pub const ROWS: &str = "picker-rows";
 
 /// The picker's space colors (`cfg/mods/picker/main.js` `MARK`), in the order a new space gets
 /// them (`PROJECT_COLORS`).
@@ -210,5 +213,5 @@ pub fn view(s: &State, list: &ListPopup) -> El {
             Some(&SEARCH),
             None,
         ))
-        .child(list::view(s, "picker-rows", items, SHOWN, More::None).mb(6.0))
+        .child(list::view(ROWS, items, Some(LIST_H)).mb(6.0))
 }

@@ -248,6 +248,8 @@ struct Ui {
     focus_key: Option<String>,
     /// URLs and paths for the system's opener.
     open: Vec<String>,
+    /// A list row to scroll into view: the list's scroll viewport and the row's place in it.
+    reveal: Option<(&'static str, String)>,
 }
 
 /// A divider being dragged: the sizes beside it before, put back if the drag is cancelled after
@@ -380,14 +382,13 @@ pub struct State {
     pub keys_every: Duration,
     /// The open popup's text field: its filter, or the prompt's name.
     pub popup_field: TextEdit,
-    /// The first item the open list shows ([`crate::view::list::follow`]).
-    pub list_top: usize,
+    /// The open list's cursor when its row was last revealed: a cursor that moves brings its
+    /// row into view, and the wheel's scrolling stays until it does.
+    list_cursor: Option<usize>,
     /// The picker's quiet spaces are unfolded ("earlier").
     pub picker_earlier: bool,
     /// Where the last right-click was, in view points: where a menu opens.
     pub menu_at: Option<(f32, f32)>,
-    /// Wheel travel over the open list not yet a whole row, in points.
-    list_wheel_travel: f32,
     /// What is wrong with `keys.json` now, for the settings dialog.
     keys_problem: Option<String>,
     /// Shows a folder in Finder: set for a live window only, so tests and scenes never open
@@ -395,7 +396,7 @@ pub struct State {
     pub reveal: Option<fn(&std::path::Path)>,
     /// The folders the settings dialog asked to show.
     pub revealed: Vec<std::path::PathBuf>,
-    /// Something only the view shows changed (a toast, the prefix indicator): draw a frame.
+    /// Something only the view shows changed (a toast): draw a frame.
     redraw: bool,
     /// Which Option keys act as Alt in terminals: both, as Eli's Ghostty has it
     /// (`macos-option-as-alt = true`).
@@ -573,12 +574,11 @@ impl State {
             keys_read,
             keys_every: keyfile::EVERY,
             popup_field: TextEdit::default(),
-            list_top: 0,
+            list_cursor: None,
             picker_earlier: false,
             menu_at: None,
             hello: None,
             machines: Default::default(),
-            list_wheel_travel: 0.0,
             keys_problem: None,
             reveal: None,
             revealed: Vec::new(),
@@ -943,8 +943,7 @@ impl State {
                 };
                 if was.is_none() {
                     self.popup_field = TextEdit::default();
-                    self.list_top = 0;
-                    self.list_wheel_travel = 0.0;
+                    self.list_cursor = None;
                     self.picker_earlier = false;
                     if list.popup == Popup::MachineAdd {
                         // Each opening starts fresh, as the mod does: a target that needed a
@@ -997,9 +996,10 @@ impl State {
         }
     }
 
-    /// Tells the model what the open list shows now, and moves the window to its cursor.
-    /// `start`: the query is new (or the list just opened), so the cursor goes where it starts.
-    /// With no drawn list open, nothing.
+    /// Tells the model what the open list shows now, and reveals the cursor's row when the
+    /// cursor moved, the list opened or its query changed (never otherwise, so where the wheel
+    /// scrolled the list stays). `start`: the query is new (or the list just opened), so the
+    /// cursor goes where it starts. With no drawn list open, nothing.
     fn relist(&mut self, start: bool) {
         let model::Mode::Popup(PopupState::List(list)) = self.model.mode().clone() else {
             return;
@@ -1020,9 +1020,11 @@ impl State {
                 self.step(self.now, Event::PopupCursor(listing.start));
             }
         }
-        if let model::Mode::Popup(PopupState::List(l)) = self.model.mode() {
-            self.list_top =
-                crate::view::list::follow(&listing.picks, l.cursor, self.list_top, listing.shown);
+        if let model::Mode::Popup(PopupState::List(l)) = self.model.mode()
+            && (start || self.list_cursor != Some(l.cursor))
+        {
+            self.list_cursor = Some(l.cursor);
+            self.ui.reveal = Some((listing.key, (listing.row_key)(l.cursor)));
         }
     }
 
@@ -1238,30 +1240,6 @@ impl State {
             (_, Ok(())) => self.toast(Toast::new(Level::Success, call.done(), "")),
         }
         self.relist(false);
-    }
-
-    /// The wheel over the open list: each 32 points move the cursor a row, so the window follows.
-    pub fn list_wheel(&mut self, dy: f32, tx: &mut Tx) -> bool {
-        const ROW: f32 = 32.0;
-        self.list_wheel_travel += dy;
-        let rows = (self.list_wheel_travel / ROW).trunc();
-        if rows == 0.0 {
-            return true;
-        }
-        self.list_wheel_travel -= rows * ROW;
-        // Content moving down (fingers down) shows rows above.
-        let (up, n) = (rows > 0.0, rows.abs() as usize);
-        let step = if up {
-            PopupAction::Up
-        } else {
-            PopupAction::Down
-        };
-        for _ in 0..n {
-            self.step(tx.clock(), Action::Popup(step.clone()));
-        }
-        self.pump(tx.clock());
-        self.apply_ui(tx);
-        true
     }
 
     /// Shows a toast. One about an agent on a machine the Agents list hides closes at once, so
@@ -1632,6 +1610,9 @@ impl State {
         }
         if let Some(at) = self.ui.wake.take() {
             tx.wake_at(at);
+        }
+        if let Some((list, row)) = self.ui.reveal.take() {
+            tx.scroll_into_view_in(list, row);
         }
         for key in self.ui.keys.drain(..) {
             tx.send_key(key);

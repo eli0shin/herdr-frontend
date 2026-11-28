@@ -29,7 +29,6 @@ pub(crate) const SCENES: &[Scene] = &[
     ("shell-connecting", shell_connecting),
     ("shell-core-down", shell_core_down),
     ("shell-keys-help", shell_keys_help),
-    ("shell-prefix", shell_prefix),
     ("shell-not-yet", shell_not_yet),
     ("shell-tabs", shell_tabs),
     ("shell-spaces", busy),
@@ -117,12 +116,6 @@ fn shell_keys_help(s: &mut State) {
         0.0,
         model::Action::Popup(model::PopupAction::Query("pane".into())),
     );
-}
-
-/// The demo core part-way through a sequence: `ctrl-g` pressed, the indicator waiting.
-fn shell_prefix(s: &mut State) {
-    shell(s);
-    s.step(0.0, model::Event::key(model::Chord::ctrl('g'), true));
 }
 
 /// The demo core after a key whose feature isn't built: its "not yet" toast.

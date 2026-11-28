@@ -85,7 +85,7 @@ pub fn rows(keymap: &Keymap) -> Vec<HelpRow> {
         }
     }
     for row in &mut rows {
-        row.keys.sort_by_key(|k| (k.contains(' '), k.clone()));
+        row.keys.sort_by_key(|k| key_order(k));
     }
     rows.sort_by(|a, b| order(a).cmp(&order(b)));
     rows
@@ -96,15 +96,23 @@ pub fn filtered<'a>(rows: &'a [HelpRow], query: &str) -> Vec<&'a HelpRow> {
     rows.iter().filter(|r| r.matches(query)).collect()
 }
 
-/// The key a context menu shows beside an item that runs `action`: its first sequence in `global`
-/// (`cfg/mods/menu/main.js` `shortcut`). Herdr app lists a section's keys sorted, as the key file
-/// reads them, so `ctrl-g r` comes before `f2`.
+/// The key shown beside a command that runs `action` (a context menu's items; the palette's
+/// rows take the same key from [`rows`]): its first `global` or `layout:eli` key in
+/// [`key_order`], so its prefix sequence when it has one (`ctrl-g t`, not `cmd-t`).
 pub fn hint(keymap: &Keymap, action: &Action) -> Option<String> {
     keymap
-        .bindings()
-        .iter()
-        .find(|b| b.context == Context::Global && b.action.as_ref() == Some(action))
+        .effective()
+        .filter(|b| matches!(b.context, Context::Global | Context::Layout))
+        .filter(|b| b.action.as_ref() == Some(action))
         .map(|b| sequence(&b.keys))
+        .min_by_key(|k| key_order(k))
+}
+
+/// The order a command's keys show in, wherever keys are shown (the keys help, the palette,
+/// menus): sequences first, as Eli drives almost everything by his prefix (`ctrl-g t` before
+/// `cmd-t`), then single keys; alphabetically within each.
+fn key_order(keys: &str) -> (bool, String) {
+    (!keys.contains(' '), keys.to_owned())
 }
 
 /// A sequence in Eli's syntax: `ctrl-g s`.
@@ -297,24 +305,37 @@ mod tests {
     }
 
     #[test]
-    fn menu_hints_are_the_first_global_key() {
+    fn hints_are_the_prefix_key_else_another() {
         let keys = Keymap::eli();
-        assert_eq!(hint(&keys, &Action::TabRename).as_deref(), Some("ctrl-g r"));
-        assert_eq!(hint(&keys, &Action::TabNew).as_deref(), Some("cmd-t"));
-        assert_eq!(hint(&keys, &Action::TabClose).as_deref(), Some("cmd-w"));
-        assert_eq!(hint(&keys, &Action::RenameTabOf("tb1".into())), None);
+        let hint = |action: Action| hint(&keys, &action);
+        assert_eq!(hint(Action::TabRename).as_deref(), Some("ctrl-g r"));
+        assert_eq!(hint(Action::TabNew).as_deref(), Some("ctrl-g t"));
+        assert_eq!(hint(Action::TabClose).as_deref(), Some("ctrl-g shift-q"));
+        // `layout:eli` binds ctrl-g n and ctrl-g p to the next and previous tab.
+        assert_eq!(hint(Action::TabNext).as_deref(), Some("ctrl-g n"));
+        assert_eq!(hint(Action::TabPrev).as_deref(), Some("ctrl-g p"));
+        assert_eq!(
+            hint(Action::Open(Popup::NewSpace)).as_deref(),
+            Some("ctrl-g ctrl-s")
+        );
+        // No prefix key: the other one.
+        assert_eq!(hint(Action::SpaceRename).as_deref(), Some("shift-f2"));
+        assert_eq!(hint(Action::PaneZoom).as_deref(), Some("cmd-shift-enter"));
+        // Keys outside `global` and `layout:eli` aren't hints.
+        assert_eq!(hint(Action::Terminal(TerminalAction::Copy)), None);
+        assert_eq!(hint(Action::RenameTabOf("tb1".into())), None);
     }
 
     #[test]
     fn rows_list_each_action_once_with_all_its_keys() {
         let rows = rows(&Keymap::eli());
         let new_tab = row(&rows, "tab.new", None);
-        assert_eq!(new_tab.keys, ["cmd-t", "ctrl-g t"]);
+        assert_eq!(new_tab.keys, ["ctrl-g t", "cmd-t"], "the prefix key first");
         assert_eq!(new_tab.group, "tabs");
         assert_eq!(new_tab.title, "New tab");
         // `global` and `layout:eli` both bind ctrl-tab to the next tab: one row, one key.
         let next = row(&rows, "tab.next", None);
-        assert_eq!(next.keys, ["cmd-shift-]", "ctrl-tab", "ctrl-g n"]);
+        assert_eq!(next.keys, ["ctrl-g n", "cmd-shift-]", "ctrl-tab"]);
         let help = row(&rows, "popup.help", None);
         assert_eq!(help.keys, ["cmd-/", "cmd-shift-/"]);
         assert_eq!(help.group, "window");

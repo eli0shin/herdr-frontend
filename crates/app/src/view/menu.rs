@@ -4,9 +4,9 @@
 // THIRD-PARTY-NOTICES.md.
 
 //! Context menus (Herdr app's `menu` mod, `feature-inventory.md` §10), at the pointer: 31-point
-//! items, each with its icon, its label and its command's `global` key, a divider above closing
-//! items. ↑/↓ move, Enter runs, Esc or a press outside closes. The tab menu is 200 wide, the
-//! terminal menu 220; both are at most 260 tall.
+//! items, each with its icon, its label and its command's key (its prefix key when it has one,
+//! [`model::help::hint`]), a divider above closing items. ↑/↓ move, Enter runs, Esc or a press
+//! outside closes. The tab menu is 200 wide, the terminal menu 220; both are at most 260 tall.
 //!
 //! Every [`model::mode::PopupState::Menu`] draws here, whichever feature opened it.
 

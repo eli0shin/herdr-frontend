@@ -12,13 +12,16 @@ use rune::{El, col, row, text};
 use crate::State;
 use crate::config::{PROGRAMS, SETTINGS, THEMES};
 use crate::view::icons::{FILE, FOLDER, SERVER};
-use crate::view::list::{self, Item, More};
+use crate::view::list::{self, Item};
 use crate::view::overlay::{self, Place};
 
 pub const PLACE: Place = Place::Dialog {
     width: 520.0,
     height: None,
 };
+
+/// The list's scroll viewport.
+pub const ROWS: &str = "settings-rows";
 
 /// One row: a file to edit, or the home folder to show.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,12 +143,6 @@ pub fn view(s: &State, list: &ListPopup) -> El {
             )
             .font(s.ui_font(12.0, 400.0)),
         )
-        .child(list::view(
-            s,
-            "settings-rows",
-            items,
-            rows.len(),
-            More::None,
-        ))
+        .child(list::view(ROWS, items, None))
         .children((!problems.is_empty()).then(|| col().w_full().gap(4.0).children(problems)))
 }

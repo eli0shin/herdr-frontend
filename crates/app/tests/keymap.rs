@@ -1,6 +1,6 @@
 //! The keymap through Rune's real runtime with no window: keys reach the one keymap from the
 //! root's preview while a pane has focus and from `AppSpec::on_key` while nothing has, never
-//! both; sequences wait with an indicator and time out; unbuilt actions say "not yet"; the keys
+//! both; sequences wait, with nothing drawn, and time out; unbuilt actions say "not yet"; the keys
 //! help lists the bindings and filters; the key file in the home applies live.
 
 use std::path::PathBuf;
@@ -129,8 +129,13 @@ fn a_prefix_sequence_runs_from_the_focused_pane_and_never_reaches_it() {
     };
     assert_eq!(keys.len(), 1);
     frames(&mut rt, 1);
-    let indicator = element(&rt, "prefix-keys").expect("the prefix indicator");
-    assert_eq!(indicator.text.as_deref(), Some("ctrl-g \u{2026}"));
+    // Nothing shows the keys so far: Herdr app draws no prefix indicator.
+    assert!(
+        rt.elements()
+            .iter()
+            .all(|e| e.text.as_deref().is_none_or(|t| !t.contains("ctrl-g"))),
+        "no prefix indicator"
+    );
 
     let before = runs(&fake);
     ch(&mut rt, "", 't');
@@ -139,21 +144,18 @@ fn a_prefix_sequence_runs_from_the_focused_pane_and_never_reaches_it() {
         typed(&fake, "t1").is_empty(),
         "neither key reached the program"
     );
-    frames(&mut rt, 1);
-    assert!(element(&rt, "prefix").is_none());
 }
 
 #[test]
-fn a_prefix_times_out_with_its_indicator_and_plain_keys_type_again() {
+fn a_prefix_times_out_and_plain_keys_type_again() {
     let (mut rt, fake) = runtime();
     ch(&mut rt, "⌃", 'g');
-    assert!(element(&rt, "prefix").is_some());
+    assert!(matches!(rt.state.model.mode(), Mode::Prefix { .. }));
     for _ in 0..8 {
         rt.invalidate();
         rt.frame(0.2);
     }
     assert_eq!(*rt.state.model.mode(), Mode::Normal);
-    assert!(element(&rt, "prefix").is_none(), "the indicator went");
     ch(&mut rt, "", 't');
     assert_eq!(typed(&fake, "t1"), [b"t".to_vec()]);
 }

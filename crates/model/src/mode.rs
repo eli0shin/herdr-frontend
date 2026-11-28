@@ -187,7 +187,7 @@ pub enum MenuIcon {
 }
 
 /// One row of a context menu: what it says, its icon, what it runs (in order), and the named
-/// action whose key it shows on its right (its first `global` binding, [`crate::help::hint`]).
+/// action whose key it shows on its right (its prefix key when it has one, [`crate::help::hint`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct MenuItem {
     pub label: String,
@@ -309,7 +309,7 @@ impl Mode {
         }
     }
 
-    /// The keys of a sequence part-way through, for the prefix indicator.
+    /// The keys of a sequence part-way through.
     pub fn pending_keys(&self) -> Option<&[Press]> {
         match self {
             Mode::Prefix { keys, .. } => Some(keys),

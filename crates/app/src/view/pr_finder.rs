@@ -1,6 +1,6 @@
 //! The PR finder (`ctrl-g f`; Eli's `pr-finder` mod, `feature-inventory.md` §12): which agent
 //! watches a PR. 620 wide, at most 0.6 of the window, 40 from the top, "Find a PR" with a "PR
-//! number or repo…" field. Nine rows show at once, with "↓ N more".
+//! number or repo…" field. About nine rows show at once; the rest scroll.
 //!
 //! Each row reads like an Agents row (`view::sidebar`) without its status mark, jump label and
 //! time: the program icon and title; the space in its color, the ticket and "N workers" for an
@@ -15,7 +15,7 @@ use rune::{Color, Cx, El, col, el, row, text};
 use crate::State;
 use crate::config::theme::Rgba;
 use crate::view::icons::GIT_PULL_REQUEST;
-use crate::view::list::{self, Item, More};
+use crate::view::list::{self, Item};
 use crate::view::overlay::{self, Place};
 use crate::view::sidebar::{LIVE_TITLE, a, chip, glyph, hex, key, program_pic, tone};
 use herdr_shared::Displayed;
@@ -26,8 +26,11 @@ pub const PLACE: Place = Place::Top {
     height: 0.6,
 };
 
-/// Rows shown at once.
-pub const SHOWN: usize = 9;
+/// The list's height: about nine two-line cards; more scroll.
+pub const LIST_H: f32 = 9.0 * 51.0;
+
+/// The list's scroll viewport.
+pub const ROWS: &str = "pr-rows";
 /// PR chips a row shows before "+N".
 const CHIPS: usize = 3;
 
@@ -66,7 +69,7 @@ pub fn view(s: &State, list: &ListPopup, cx: &Cx<State>) -> El {
             Some(overlay::note(s, "↑/↓ · Enter · Esc")),
         ))
         .child(overlay::field(s, "PR number or repo…", None, None))
-        .child(list::view(s, "pr-rows", items, SHOWN, More::Below).gap(2.0))
+        .child(list::view(ROWS, items, Some(LIST_H)).gap(2.0))
         .children(empty)
 }
 
