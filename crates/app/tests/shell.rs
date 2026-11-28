@@ -120,8 +120,9 @@ fn panes_draw_their_terminals_live() {
             .line(0)
             .contains("line 1 of the pager fixture")
     );
-    assert!(screen(&rt, "t2").text().contains("16 colors"));
-    assert!(screen(&rt, "t3").text().contains("Light, heavy and double"));
+    // t2 and t3 took their panes' smaller grids: their screens' last lines are on screen.
+    assert!(screen(&rt, "t2").text().contains("Underlines:"));
+    assert!(screen(&rt, "t3").text().contains("Shapes:"));
     let grid = rt
         .elements()
         .into_iter()
@@ -164,41 +165,151 @@ fn every_pane_attaches_resumed_and_hidden_tabs_wait() {
 }
 
 #[test]
-fn only_the_focused_pane_takes_the_size_with_facts_before_resize() {
+fn every_shown_pane_takes_its_size_with_facts_before_resize_and_the_focused_one_focus() {
     let (rt, fake) = runtime();
-    let (cols, rows) = grid_of(&rt, "pn-1");
     let display = rt.state.display();
+    let (cols, rows) = grid_of(&rt, "pn-1");
     assert_eq!(
         fake.sent_to("t1"),
         [
-            Out::Facts(display),
+            Out::Facts(display.clone()),
             Out::Resize { cols, rows },
             Out::Focus(true)
         ]
     );
-    assert_eq!(fake.sent_to("t2"), []);
-    assert_eq!(fake.sent_to("t3"), []);
+    for (pane, address) in [("pn-2", "t2"), ("pn-3", "t3")] {
+        let (cols, rows) = grid_of(&rt, pane);
+        assert_eq!(
+            fake.sent_to(address),
+            [Out::Facts(display.clone()), Out::Resize { cols, rows }],
+            "{address} isn't focused, but it's shown"
+        );
+    }
+    assert_eq!(
+        fake.sent_to("t4"),
+        [],
+        "a hidden tab's terminal takes nothing"
+    );
     assert_eq!(rt.state.in_use(), Some("t1"));
 
-    // The core gave t1 the pane's grid, and the local terminal follows the core.
-    let s = screen(&rt, "t1");
-    assert_eq!((s.cols, s.rows), (cols, rows));
-    // The others stay at the size the core has for them.
-    let s = screen(&rt, "t2");
-    assert_eq!((s.cols, s.rows), (fixtures::COLS, fixtures::ROWS));
+    // The core gave each its pane's grid, and the local terminals follow the core.
+    for (pane, address) in [("pn-1", "t1"), ("pn-2", "t2"), ("pn-3", "t3")] {
+        let s = screen(&rt, address);
+        assert_eq!((s.cols, s.rows), grid_of(&rt, pane), "{address}");
+    }
 }
 
 #[test]
 fn a_size_from_another_viewer_resizes_the_local_terminal_without_taking_it_back() {
     let (mut rt, fake) = runtime();
+    let before = fake.sent_to("t2").len();
     fake.resize_elsewhere("t2", 50, 10);
     frames(&mut rt, 2);
     let s = screen(&rt, "t2");
     assert_eq!((s.cols, s.rows), (50, 10));
     assert_eq!(
-        fake.sent_to("t2"),
+        fake.sent_to("t2")[before..],
         [],
-        "an unfocused pane never sends RESIZE"
+        "its grid didn't change, so it isn't fought for"
+    );
+}
+
+#[test]
+fn every_shown_pane_whose_grid_changes_sends_resize_and_hidden_ones_dont() {
+    let (mut rt, fake) = runtime();
+    let before: Vec<usize> = ["t1", "t2", "t3"]
+        .iter()
+        .map(|a| resizes(&fake, a).len())
+        .collect();
+    // Hiding the sidebar widens every pane.
+    rt.key(KeyEvent {
+        key: Key::Text("b".into()),
+        mods: Mods {
+            cmd: true,
+            ..Mods::default()
+        },
+    });
+    frames(&mut rt, 4);
+    for ((pane, address), before) in [("pn-1", "t1"), ("pn-2", "t2"), ("pn-3", "t3")]
+        .into_iter()
+        .zip(before)
+    {
+        let (cols, rows) = grid_of(&rt, pane);
+        let sent = resizes(&fake, address);
+        assert_eq!(sent.len(), before + 1, "{address}");
+        assert_eq!(sent.last(), Some(&Out::Resize { cols, rows }), "{address}");
+        let s = screen(&rt, address);
+        assert_eq!((s.cols, s.rows), (cols, rows), "{address} redrawn at once");
+    }
+
+    // In another tab, the panes left behind take nothing when the window changes.
+    rt.state.step(0.0, model::Action::ShowTab("tb-logs".into()));
+    frames(&mut rt, 3);
+    let left: Vec<usize> = ["t1", "t2", "t3"]
+        .iter()
+        .map(|a| resizes(&fake, a).len())
+        .collect();
+    rt.key(KeyEvent {
+        key: Key::Text("b".into()),
+        mods: Mods {
+            cmd: true,
+            ..Mods::default()
+        },
+    });
+    frames(&mut rt, 4);
+    for (address, left) in ["t1", "t2", "t3"].into_iter().zip(left) {
+        assert_eq!(resizes(&fake, address).len(), left, "{address} is hidden");
+    }
+    let (cols, rows) = grid_of(&rt, "pn-4");
+    assert_eq!(
+        resizes(&fake, "t4").last(),
+        Some(&Out::Resize { cols, rows })
+    );
+}
+
+#[test]
+fn split_panes_are_whole_cells_and_each_grid_sits_at_its_bottom_left() {
+    let (rt, _) = runtime();
+    let (cell_w, cell_h) = rt.state.face(2.0).cell_pt();
+    let whole = |len: f32, cell: f32| ((len / cell).round() * cell - len).abs() < 1e-3;
+    let rect = |key: &str| element(&rt, key).rect;
+    let grid = |pane: &str| {
+        rt.elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("screen") && e.path.contains(&format!("{pane}/")))
+            .unwrap_or_else(|| panic!("{pane}'s grid"))
+            .rect
+    };
+    // pn-1 | (pn-2 / pn-3): pn-1 is whole columns, so its grid fills it to the divider; pn-3,
+    // at the bottom of the column, is whole rows. pn-2, at the top, takes the leftover.
+    let (a, b, c) = (rect("pane-pn-1"), rect("pane-pn-2"), rect("pane-pn-3"));
+    assert!(whole(a[2], cell_w), "{a:?}");
+    assert!(whole(c[3], cell_h), "{c:?}");
+    for (pane, r) in [("pane-pn-1", a), ("pane-pn-2", b), ("pane-pn-3", c)] {
+        let g = grid(pane);
+        assert_eq!(g[0], r[0], "{pane}: at the left");
+        assert!(
+            (g[1] + g[3] - (r[1] + r[3])).abs() <= 0.5,
+            "{pane}: the bottom row on the bottom edge, {g:?} in {r:?}"
+        );
+    }
+    assert!(
+        (grid("pane-pn-1")[2] - a[2]).abs() < 1e-3,
+        "no gap at the divider"
+    );
+    // Only the gaps are the border color; the rest of the tab area is the terminal's background.
+    let gaps: Vec<[f32; 4]> = rt
+        .elements()
+        .into_iter()
+        .filter(|e| e.key.as_deref().is_some_and(|k| k.starts_with("gap-")))
+        .map(|e| e.rect)
+        .collect();
+    assert_eq!(
+        gaps,
+        [
+            [a[0] + a[2], a[1], 1.0, a[3]],
+            [b[0], b[1] + b[3], b[2], 1.0]
+        ]
     );
 }
 
@@ -251,28 +362,36 @@ fn every_pane_answers_queries_as_automatic_input() {
     frames(&mut rt, 3);
     let reply = Out::Automatic(b"\x1b[0n".to_vec());
     assert_eq!(&fake.sent_to("t1")[before..], std::slice::from_ref(&reply));
-    assert_eq!(fake.sent_to("t2"), [reply]);
+    assert_eq!(fake.sent_to("t2").last(), Some(&reply));
 }
 
 #[test]
-fn without_automatic_input_only_the_pane_in_use_answers_queries() {
+fn without_automatic_input_only_panes_shown_in_front_answer_queries() {
     let fake = demo_core();
     fake.core().no_automatic_input = true;
     let (mut rt, fake) = runtime_on(fake);
-    let before = fake.sent_to("t1").len();
+    let before: Vec<usize> = ["t1", "t2"].iter().map(|a| fake.sent_to(a).len()).collect();
     fake.output("t1", b"\x1b[5n");
     fake.output("t2", b"\x1b[5n");
     frames(&mut rt, 3);
-    // The pane in use, at the grid it told the core: its DATA takes nothing from anyone.
-    assert_eq!(
-        fake.sent_to("t1")[before..],
-        [Out::Input(b"\x1b[0n".to_vec())]
-    );
-    assert_eq!(
-        fake.sent_to("t2"),
-        [],
-        "as DATA, the reply would take the size"
-    );
+    // Each shown pane holds the grid it told the core: its DATA takes nothing from anyone.
+    for (address, before) in ["t1", "t2"].into_iter().zip(before) {
+        assert_eq!(
+            fake.sent_to(address)[before..],
+            [Out::Input(b"\x1b[0n".to_vec())],
+            "{address}"
+        );
+    }
+    // In a window in the background, as DATA, a reply would take the size.
+    rt.window_focus(false);
+    frames(&mut rt, 2);
+    let before: Vec<usize> = ["t1", "t2"].iter().map(|a| fake.sent_to(a).len()).collect();
+    fake.output("t1", b"\x1b[5n");
+    fake.output("t2", b"\x1b[5n");
+    frames(&mut rt, 3);
+    for (address, before) in ["t1", "t2"].into_iter().zip(before) {
+        assert_eq!(fake.sent_to(address)[before..], [], "{address}");
+    }
 }
 
 #[test]
@@ -331,7 +450,7 @@ fn a_late_size_event_for_an_older_resize_doesnt_silence_the_pane_in_use() {
 }
 
 #[test]
-fn clicking_a_pane_moves_focus_and_the_size_with_it() {
+fn clicking_a_pane_moves_focus_to_it() {
     let (mut rt, fake) = runtime();
     let (x, y) = rt.find("pane-pn-2").expect("pane 2");
     rt.pointer_down(x, y);
@@ -340,6 +459,7 @@ fn clicking_a_pane_moves_focus_and_the_size_with_it() {
     assert_eq!(rt.state.model.focused_pane().as_deref(), Some("pn-2"));
     assert_eq!(rt.state.in_use(), Some("t2"));
     assert_eq!(fake.sent_to("t1").last(), Some(&Out::Focus(false)));
+    // It held its size already: the click adds FOCUS(1).
     let (cols, rows) = grid_of(&rt, "pn-2");
     assert_eq!(
         fake.sent_to("t2"),
@@ -369,7 +489,12 @@ fn typing_goes_to_the_focused_pane_as_data() {
             Out::Input(b"\r".to_vec())
         ]
     );
-    assert!(fake.sent_to("t2").is_empty());
+    assert!(
+        !fake
+            .sent_to("t2")
+            .iter()
+            .any(|o| matches!(o, Out::Input(_)))
+    );
 
     // Ctrl+C reaches the program in the form it asked for: Neovim's modifyOtherKeys makes it
     // `CSI 27;5;99~`, as Ghostty sends it; a plain shell gets its control character.
@@ -401,15 +526,32 @@ fn a_window_in_the_background_gives_up_focus_and_takes_no_size() {
     assert_eq!(rt.state.in_use(), None);
     assert_eq!(fake.sent_to("t1").last(), Some(&Out::Focus(false)));
     let before = fake.sent_to("t1").len();
+    let before_t2 = fake.sent_to("t2").len();
 
-    // Back in front: the focused pane takes the size again.
+    // Nothing takes the size in the background, not even a grid change.
+    rt.key(KeyEvent {
+        key: Key::Text("b".into()),
+        mods: Mods {
+            cmd: true,
+            ..Mods::default()
+        },
+    });
+    frames(&mut rt, 3);
+    assert_eq!(fake.sent_to("t1").len(), before);
+    assert_eq!(fake.sent_to("t2").len(), before_t2);
+
+    // Back in front: every shown pane takes the size again, and the focused one focus.
     rt.window_focus(true);
     frames(&mut rt, 2);
-    let after = fake.sent_to("t1");
     let (cols, rows) = grid_of(&rt, "pn-1");
     assert_eq!(
-        &after[before..],
+        fake.sent_to("t1")[before..],
         [Out::Resize { cols, rows }, Out::Focus(true)]
+    );
+    let (cols, rows) = grid_of(&rt, "pn-2");
+    assert_eq!(
+        fake.sent_to("t2")[before_t2..],
+        [Out::Resize { cols, rows }]
     );
 }
 
@@ -426,13 +568,10 @@ fn after_a_dropped_connection_every_pane_reattaches_resumed() {
     assert_eq!(again, ["t1", "t2", "t3"]);
     assert!(core.attaches.iter().all(|a| a.resumed));
     drop(core);
-    // The focused pane takes the size again on the new stream.
-    let resizes = fake
-        .sent_to("t1")
-        .into_iter()
-        .filter(|o| matches!(o, Out::Resize { .. }))
-        .count();
-    assert_eq!(resizes, 2);
+    // The shown panes take the size again on the new stream.
+    for address in ["t1", "t2", "t3"] {
+        assert_eq!(resizes(&fake, address).len(), 2, "{address}");
+    }
 }
 
 #[test]

@@ -1,6 +1,6 @@
 //! The app against a real, isolated herdr-core (`docs/plan.md` "Testing rules"): it reads the
-//! layout another client wrote, draws the shown tab's terminals live, lets only the focused one
-//! take the size, types into it, and never writes the layout.
+//! layout another client wrote, draws the shown tab's terminals live, lets each take its pane's
+//! size, types into the focused one, and never writes the layout.
 //!
 //! The core is a `test-*` session with scratch dirs under `/tmp` (herdr-client's test support),
 //! never the person's. Without an `hc` the test skips, except under CI.
@@ -139,9 +139,13 @@ fn the_app_draws_and_types_into_live_core_terminals_and_leaves_the_layout_alone(
             .is_some_and(|p| (p.snapshot.cols, p.snapshot.rows) == want)
     });
 
-    // The unfocused pane attached `resumed` and took nothing.
-    let r = record(&conn, &b);
-    assert_eq!((r.cols, r.rows), (100, 30));
+    // The unfocused pane attached `resumed`, and being shown in the window in front, takes its
+    // pane's size too.
+    let want_b = grid(&rt, "pn-b");
+    until(&mut rt, "the shown pane to take its size", |_| {
+        let r = record(&conn, &b);
+        (r.cols, r.rows) == want_b
+    });
 
     // Plain typing goes to the focused terminal.
     for key in [

@@ -610,7 +610,13 @@ fn only_the_pane_in_use_sends_the_program_pointer_input() {
     rt.wheel_xy(x, y, 0.0, 40.0);
     rt.pointer_move(x + 20.0, y + 20.0);
     frames(&mut rt, 3);
-    assert_eq!(fake.sent_to("t2"), [], "no DATA, so no stale size taken");
+    assert!(
+        !fake
+            .sent_to("t2")
+            .iter()
+            .any(|o| matches!(o, Out::Input(_) | Out::Automatic(_))),
+        "the program heard pointer input from a pane without the keyboard"
+    );
 }
 
 #[test]
@@ -677,7 +683,7 @@ fn right_clicks_go_to_the_program_only_when_its_terminal_says_so() {
     let (mut rt, fake, _) = runtime_on(fake);
     shell(&mut rt, &fake, "$ ");
     program(&mut rt, &fake, b"\x1b[?1000h\x1b[?1006h");
-    // From another pane: the label decides, and the pane takes the size first.
+    // From another pane: the label decides, and the pane holds its size when the click goes.
     let (x, y) = rt.find("pane-pn-2").expect("pane 2");
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
@@ -693,12 +699,30 @@ fn right_clicks_go_to_the_program_only_when_its_terminal_says_so() {
         "\x1b[<2;2;1M\x1b[<2;2;1m"
     );
     assert_eq!(rt.state.in_use(), Some("t1"));
-    let sent = &fake.sent_to("t1")[from..];
-    let resize = sent.iter().position(|o| matches!(o, Out::Resize { .. }));
-    let data = sent.iter().position(|o| matches!(o, Out::Input(_)));
-    assert!(
-        resize.is_some() && resize < data,
-        "RESIZE before the click: {sent:?}"
+    // Shown in the window in front, t1 told the core its pane's grid before the click's DATA.
+    let sent = fake.sent_to("t1");
+    let data = from
+        + sent[from..]
+            .iter()
+            .position(|o| matches!(o, Out::Input(_)))
+            .expect("the click's DATA");
+    let (_, rect, _) = rt
+        .state
+        .shown_panes()
+        .into_iter()
+        .find(|(p, ..)| p == "pn-1")
+        .expect("pn-1");
+    let grid = rt.state.grid_for(rect);
+    assert_eq!(
+        sent[..data]
+            .iter()
+            .rev()
+            .find(|o| matches!(o, Out::Resize { .. })),
+        Some(&Out::Resize {
+            cols: grid.columns,
+            rows: grid.rows
+        }),
+        "{sent:?}"
     );
 }
 
@@ -707,10 +731,11 @@ fn a_drop_in_a_window_in_the_background_takes_the_panes_size_first() {
     let (mut rt, fake, _) = runtime();
     rt.window_focus(false);
     frames(&mut rt, 2);
+    let from = fake.sent_to("t3").len();
     let (x, y) = rt.find("pane-pn-3").expect("pane 3");
     rt.drop_files(vec![PathBuf::from("/tmp/a.png")], Some((x, y)));
     frames(&mut rt, 3);
-    let sent = fake.sent_to("t3");
+    let sent = fake.sent_to("t3")[from..].to_vec();
     assert!(matches!(sent.first(), Some(Out::Resize { .. })), "{sent:?}");
     assert!(sent.contains(&Out::Input(b"/tmp/a.png ".to_vec())));
 }

@@ -9,6 +9,15 @@
 //! `app:src/window.rs` `nearest`) without frames, borders or padding: Eli's panes are bare, with a
 //! gap between split panes (`feature-inventory.md` §1). The renderer lays panes out with the same
 //! rules, so a direction picked here matches what is drawn.
+//!
+//! Given the terminal's cell ([`Geometry::cell`]), split panes are sized in whole cells, so a
+//! terminal's grid fills its pane to the edge beside each divider ([`snap`]). The panes at the
+//! tab area's right and top edges take what doesn't divide into cells: grids hug their pane's
+//! left and bottom edges, so that leftover sits at the window's right edge and under the tab bar.
+//! A child that is split again along the same axis is whole cells plus its own gaps, so the
+//! panes inside it are whole cells too ([`gaps_along`]). The one thing cells can't fix: beside
+//! such a child, in a split the other way, a pane spanning the same length keeps those gaps, a
+//! point each. Divider drags and keyboard resizes land on cell boundaries too.
 
 use herdr_shared::{Axis, Node, Size};
 use serde_json::Value;
@@ -16,7 +25,7 @@ use serde_json::Value;
 use crate::action::{Direction, Edge};
 
 /// How far a keyboard resize moves a divider, in points at zoom 1 (`pane.resize`'s default, as
-/// in the TUI).
+/// in the TUI), rounded to whole cells when the cell is known ([`resize_step`]).
 pub const RESIZE_STEP: f32 = 40.0;
 
 /// The least a divider drag leaves either pane beside it, in points at zoom 1
@@ -63,6 +72,9 @@ pub struct Geometry {
     pub gap: f32,
     /// The UI zoom: `px` sizes, `min` and `max` scale with it.
     pub zoom: f32,
+    /// One terminal cell, width and height, in the area's points: split panes are sized in
+    /// whole cells of it ([`snap`]). 0 lays out by the sizes alone.
+    pub cell: (f32, f32),
 }
 
 impl Default for Geometry {
@@ -71,6 +83,17 @@ impl Default for Geometry {
             area: Rect::new(0.0, 0.0, 1200.0, 800.0),
             gap: 1.0,
             zoom: 1.0,
+            cell: (0.0, 0.0),
+        }
+    }
+}
+
+impl Geometry {
+    /// The cell's length along `axis`: its width across a row, its height down a column.
+    pub fn cell_along(&self, axis: Axis) -> f32 {
+        match axis {
+            Axis::Row => self.cell.0,
+            Axis::Column => self.cell.1,
         }
     }
 }
@@ -145,6 +168,108 @@ pub fn shares(children: &[&Node], available: f32, zoom: f32) -> Vec<f32> {
     sizes
 }
 
+/// `spans` (each child's share along a split, from [`shares`]) in whole `cell`s, plus the gaps
+/// each child's own splits put along the axis (`inner`, from [`gaps_along`]), so the panes inside
+/// a child that is itself split end on cell edges too. Each child but one ends on the boundary
+/// nearest its own end, counted from where it starts, so rounding never adds up along the split.
+/// Across a row that runs from the left and the last child takes what's left; down a column
+/// (`from_start` false) it runs from the bottom and the first child takes it. If that leaves it
+/// less than a cell, it takes whole cells from the others, nearest first. With no cell, a single
+/// child, or no cell to spare, the spans stay as they are.
+pub fn snap(spans: &[f32], inner: &[usize], gap: f32, cell: f32, from_start: bool) -> Vec<f32> {
+    let n = spans.len();
+    if cell <= 0.0 || n < 2 {
+        return spans.to_vec();
+    }
+    let total = spans.iter().sum::<f32>() + gap * (n - 1) as f32;
+    let order: Vec<usize> = if from_start {
+        (0..n).collect()
+    } else {
+        (0..n).rev().collect()
+    };
+    let mut out = spans.to_vec();
+    // From the edge the run starts at: where the children so far end as shared, and as snapped.
+    let (mut shared, mut snapped) = (0.0, 0.0);
+    for &i in &order[..n - 1] {
+        shared += spans[i];
+        out[i] = whole_cells(shared - snapped, inner_gaps(inner, i, gap), cell);
+        snapped += out[i] + gap;
+        shared += gap;
+    }
+    let last = order[n - 1];
+    out[last] = total - snapped;
+    // Too little left for it (a divider dragged to its limit, a window shrunk): it takes whole
+    // cells from the children before it, nearest first, each keeping at least one.
+    let need = cell.min(spans[last]);
+    for &i in order[..n - 1].iter().rev() {
+        let least = cell + inner_gaps(inner, i, gap);
+        while out[last] < need && out[i] - cell >= least - 1e-3 {
+            out[i] -= cell;
+            out[last] += cell;
+        }
+    }
+    if out[last] < need {
+        return spans.to_vec();
+    }
+    out
+}
+
+/// `len` as whole cells (at least one) plus `inner`, the gaps inside it.
+fn whole_cells(len: f32, inner: f32, cell: f32) -> f32 {
+    ((len - inner) / cell).round().max(1.0) * cell + inner
+}
+
+fn inner_gaps(inner: &[usize], i: usize, gap: f32) -> f32 {
+    inner.get(i).copied().unwrap_or(0) as f32 * gap
+}
+
+/// The gaps `node`'s own splits put along `axis`, end to end: what [`snap`] adds to whole cells,
+/// so the panes inside it end on cell edges too. Across a split the other way each child spans
+/// the node's whole length, and the child with the most gaps decides: in the others, the pane
+/// that takes what's left keeps the difference, a gap or two.
+pub fn gaps_along(node: &Node, axis: Axis) -> usize {
+    if node.hidden() || node.content().is_some() {
+        return 0;
+    }
+    let shown = || node.children().iter().filter(|c| !c.hidden());
+    match node.axis() {
+        Some(own) if own == axis => {
+            shown().count().saturating_sub(1) + shown().map(|c| gaps_along(c, axis)).sum::<usize>()
+        }
+        Some(_) => shown().map(|c| gaps_along(c, axis)).max().unwrap_or(0),
+        // A stack shows its active child, else its first, as [`blocks`] lays it out.
+        None => {
+            let children = node.children();
+            node.active()
+                .and_then(|id| children.iter().find(|c| c.id == id))
+                .or(children.first())
+                .map_or(0, |c| gaps_along(c, axis))
+        }
+    }
+}
+
+/// A split's children's spans along its axis, in its `rect`: their [`shares`] in whole cells
+/// ([`snap`]).
+fn spans(node: &Node, children: &[&Node], rect: Rect, g: &Geometry) -> Vec<f32> {
+    let Some(axis) = node.axis() else {
+        return Vec::new();
+    };
+    let along = match axis {
+        Axis::Row => rect.w,
+        Axis::Column => rect.h,
+    };
+    let available = along - g.gap * children.len().saturating_sub(1) as f32;
+    let shared = shares(children, available, g.zoom);
+    let inner: Vec<usize> = children.iter().map(|c| gaps_along(c, axis)).collect();
+    snap(
+        &shared,
+        &inner,
+        g.gap,
+        g.cell_along(axis),
+        axis == Axis::Row,
+    )
+}
+
 /// Every visible block under `node` and its rectangle, in tree order. Hidden nodes take no
 /// room; a stack shows its active child (else its first).
 pub fn blocks(node: &Node, geometry: &Geometry) -> Vec<(String, Rect)> {
@@ -173,10 +298,8 @@ fn place(node: &Node, rect: Rect, g: &Geometry, out: &mut Vec<(String, Rect)>, a
     if let Some(axis) = node.axis() {
         let row = axis == herdr_shared::Axis::Row;
         let children: Vec<&Node> = node.children().iter().filter(|c| !c.hidden()).collect();
-        let along = if row { rect.w } else { rect.h };
-        let available = along - g.gap * children.len().saturating_sub(1) as f32;
         let mut at = if row { rect.x } else { rect.y };
-        for (child, span) in children.iter().zip(shares(&children, available, g.zoom)) {
+        for (child, span) in children.iter().zip(spans(node, &children, rect, g)) {
             let child_rect = if row {
                 Rect::new(at, rect.y, span, rect.h)
             } else {
@@ -209,6 +332,19 @@ pub struct Divider {
 
 /// The dividers of every resizable split under `node`, in tree order.
 pub fn dividers(node: &Node, geometry: &Geometry) -> Vec<Divider> {
+    splits(node, geometry, true)
+}
+
+/// The gap between every two shown split panes under `node`, resizable or not, in tree order:
+/// what the split-gap color fills.
+pub fn gaps(node: &Node, geometry: &Geometry) -> Vec<Rect> {
+    splits(node, geometry, false)
+        .into_iter()
+        .map(|d| d.rect)
+        .collect()
+}
+
+fn splits(node: &Node, geometry: &Geometry, resizable_only: bool) -> Vec<Divider> {
     let rects = nodes(node, geometry);
     let rect_of = |id: &str| rects.iter().find(|(n, _)| n == id).map(|(_, r)| *r);
     let mut out = Vec::new();
@@ -216,7 +352,7 @@ pub fn dividers(node: &Node, geometry: &Geometry) -> Vec<Divider> {
         let (Some(axis), Some(own)) = (n.axis(), rect_of(&n.id)) else {
             continue;
         };
-        if !n.resizable() {
+        if resizable_only && !n.resizable() {
             continue;
         }
         let shown: Vec<&Node> = n.children().iter().filter(|c| !c.hidden()).collect();
@@ -242,7 +378,9 @@ pub fn dividers(node: &Node, geometry: &Geometry) -> Vec<Divider> {
 /// The sizes a divider drag to `at` (the pointer along the split's axis, in the tab area) gives
 /// the two children beside it: either keeps [`DRAG_MIN`] and its own `min` and `max`, a `px`
 /// child stays `px`, two weighted ones share their weight (`app:src/window.rs` `drag_to`).
-/// `None` when the split can't be dragged, or is too squeezed to.
+/// With a cell, the divider lands on the cell boundary nearest `at`, so the child [`snap`] sizes
+/// beside it gets a whole number of cells. `None` when the split can't be dragged, or is too
+/// squeezed to.
 pub fn drag_sizes(
     root: &Node,
     container: &str,
@@ -259,10 +397,30 @@ pub fn drag_sizes(
     let (a, b) = (shown.get(index)?, shown.get(index + 1)?);
     let rects = nodes(root, geometry);
     let rect_of = |id: &str| rects.iter().find(|(n, _)| n == id).map(|(_, r)| *r);
-    let (ra, rb) = (rect_of(&a.id)?, rect_of(&b.id)?);
-    let (start, la, lb) = match axis {
-        Axis::Row => (ra.x, ra.w, rb.w),
-        Axis::Column => (ra.y, ra.h, rb.h),
+    let (own, ra, rb) = (rect_of(container)?, rect_of(&a.id)?, rect_of(&b.id)?);
+    // The weights give the children their shares; whole cells are made of those shares. So the
+    // new weights come from the shares in the split as it's laid out, not from the snapped spans.
+    let (own_start, along, a_start, b_end) = match axis {
+        Axis::Row => (own.x, own.w, ra.x, rb.right()),
+        Axis::Column => (own.y, own.h, ra.y, rb.bottom()),
+    };
+    let available = along - geometry.gap * shown.len().saturating_sub(1) as f32;
+    let shared = shares(&shown, available, geometry.zoom);
+    let start = own_start + shared[..index].iter().sum::<f32>() + geometry.gap * index as f32;
+    let (la, lb) = (shared[index], shared[index + 1]);
+    // The divider where [`snap`] will draw it: across a row the child before it ends a whole
+    // number of cells (plus its own gaps) from its start; down a column, which [`snap`] runs
+    // from the bottom, the child after it starts that far from its end.
+    let cell = geometry.cell_along(axis);
+    let gaps = |n: &Node| gaps_along(n, axis) as f32 * geometry.gap;
+    let at = if cell <= 0.0 {
+        at
+    } else if axis == Axis::Row {
+        let len = ((at - a_start - gaps(a)) / cell).round() * cell + gaps(a);
+        a_start + len
+    } else {
+        let len = ((b_end - at - geometry.gap - gaps(b)) / cell).round() * cell + gaps(b);
+        b_end - len - geometry.gap
     };
     // Measured on screen; sizes are stored as designed (unzoomed).
     let zoom = geometry.zoom.max(f32::EPSILON);
@@ -294,6 +452,17 @@ pub fn drag_sizes(
             ]
         }
     })
+}
+
+/// How far a keyboard resize moves a divider along `axis`, in the area's points: [`RESIZE_STEP`]
+/// at the zoom, as a whole number of cells (at least one) when the cell is known.
+pub fn resize_step(geometry: &Geometry, axis: Axis) -> f32 {
+    let step = RESIZE_STEP * geometry.zoom;
+    let cell = geometry.cell_along(axis);
+    if cell <= 0.0 {
+        return step;
+    }
+    (step / cell).round().max(1.0) * cell
 }
 
 /// The divider a keyboard resize of `pane` toward `direction` moves: the nearest split along
@@ -452,6 +621,7 @@ mod tests {
                 area: Rect::new(0.0, 0.0, w, h),
                 gap,
                 zoom: 1.0,
+                ..Geometry::default()
             },
         )
     }
@@ -592,6 +762,7 @@ mod tests {
             area: Rect::new(0.0, 0.0, w, h),
             gap: 1.0,
             zoom: 1.0,
+            ..Geometry::default()
         }
     }
 
@@ -631,6 +802,11 @@ mod tests {
         let mut fixed = three_tree();
         fixed.extra.insert("resizable".into(), json!(false));
         assert_eq!(dividers(&fixed, &geometry(201.0, 201.0)).len(), 1);
+        // Its gap is still drawn.
+        assert_eq!(
+            gaps(&fixed, &geometry(201.0, 201.0)),
+            [d[0].rect, d[1].rect]
+        );
     }
 
     #[test]
@@ -677,6 +853,203 @@ mod tests {
         g.gap = 2.0;
         let sizes = drag_sizes(&root, "r", 0, 300.0, &g).unwrap();
         assert_eq!(sizes[0], ("a".into(), Size::Weight(1.5)));
+    }
+
+    /// `three_tree` in a 204 × 205 area with 10 × 20 cells.
+    fn celled() -> Geometry {
+        Geometry {
+            cell: (10.0, 20.0),
+            ..geometry(204.0, 205.0)
+        }
+    }
+
+    #[test]
+    fn split_panes_are_whole_cells_and_the_right_and_top_panes_take_the_rest() {
+        let root = three_tree();
+        let layout = blocks(&root, &celled());
+        // Across: a's 101.5 share rounds to 100; the column takes the other 103. Down: the
+        // column runs from the bottom, so c's 102 share rounds to 100 and b, at the top, takes
+        // the other 104.
+        assert_eq!(
+            layout,
+            [
+                ("a".into(), Rect::new(0.0, 0.0, 100.0, 205.0)),
+                ("b".into(), Rect::new(101.0, 0.0, 103.0, 104.0)),
+                ("c".into(), Rect::new(101.0, 105.0, 103.0, 100.0)),
+            ]
+        );
+        // The dividers sit in the snapped gaps.
+        let d = dividers(&root, &celled());
+        assert_eq!(d[0].rect, Rect::new(100.0, 0.0, 1.0, 205.0));
+        assert_eq!(d[1].rect, Rect::new(101.0, 104.0, 103.0, 1.0));
+    }
+
+    #[test]
+    fn snapping_never_adds_up_along_a_split() {
+        // Five 14.6 shares, gap 1, cell 10: each ends on the boundary nearest its own end.
+        // Rounding each span alone would give 10 four times and leave the last 33.
+        let spans = snap(&[14.6; 5], &[], 1.0, 10.0, true);
+        assert_eq!(spans[..4], [10.0, 20.0, 10.0, 20.0]);
+        assert!((spans[4] - 13.0).abs() < 1e-4, "{spans:?}");
+        // From the end, the first takes the rest.
+        let spans = snap(&[14.6; 5], &[], 1.0, 10.0, false);
+        assert_eq!(spans[1..], [20.0, 10.0, 20.0, 10.0]);
+        assert!((spans[0] - 13.0).abs() < 1e-4, "{spans:?}");
+        // No cell, one child, or no room left for the last: as shared.
+        assert_eq!(snap(&[14.6, 15.0], &[], 1.0, 0.0, true), [14.6, 15.0]);
+        assert_eq!(snap(&[14.6], &[], 1.0, 10.0, true), [14.6]);
+        assert_eq!(snap(&[4.0, 4.0], &[], 1.0, 10.0, true), [4.0, 4.0]);
+        // Less than a cell left for the last: the one before it gives up a cell.
+        assert_eq!(snap(&[18.0, 3.0], &[], 1.0, 10.0, true), [10.0, 11.0]);
+        // A child split twice along the axis: whole cells plus its two gaps.
+        assert_eq!(snap(&[34.0, 30.0], &[2, 0], 1.0, 10.0, true)[0], 32.0);
+    }
+
+    #[test]
+    fn a_divider_drag_lands_on_a_cell_boundary() {
+        let root = three_tree();
+        let g = celled();
+        // To 143 across: a gets 140, 14 cells, and keeps them laid out.
+        let mut dragged = root.clone();
+        for (id, size) in drag_sizes(&root, "r", 0, 143.0, &g).unwrap() {
+            dragged.find_mut(&id).unwrap().set_size(Some(size));
+        }
+        let a = blocks(&dragged, &g)[0].1;
+        assert_eq!(a.w, 140.0);
+        // Down at 147: c starts on the boundary nearest it counted from the bottom, 145, so it
+        // holds 3 cells (60) and b takes the rest above.
+        let mut dragged = root.clone();
+        for (id, size) in drag_sizes(&root, "col", 0, 147.0, &g).unwrap() {
+            dragged.find_mut(&id).unwrap().set_size(Some(size));
+        }
+        let laid = blocks(&dragged, &g);
+        assert_eq!(laid[2].1, Rect::new(101.0, 145.0, 103.0, 60.0));
+        assert_eq!(laid[1].1.bottom(), 144.0);
+
+        // A column's top divider dragged to its limit: the top pane, which takes what's left,
+        // would get less than a row, so the pane below it gives one up, and every pane under the
+        // top one stays whole rows.
+        let column = Node::container("col", Axis::Column, vec![pane("a"), pane("b"), pane("x")]);
+        let whole = |len: f32| ((len / 23.0).round() * 23.0 - len).abs() < 1e-3;
+        for h in [805.0, 806.0, 810.0] {
+            let g = Geometry {
+                cell: (10.0, 23.0),
+                ..geometry(400.0, h)
+            };
+            let mut dragged = column.clone();
+            for (id, size) in drag_sizes(&column, "col", 0, 0.0, &g).unwrap() {
+                dragged.find_mut(&id).unwrap().set_size(Some(size));
+            }
+            let laid = blocks(&dragged, &g);
+            assert!(laid[0].1.h >= 23.0, "{laid:?}");
+            assert!(whole(laid[1].1.h) && whole(laid[2].1.h), "{laid:?}");
+        }
+    }
+
+    /// Every pane in `layout` ends on a cell edge beside each divider: whole cells wide, except
+    /// at the area's right edge, and whole cells tall, except at its top.
+    fn assert_whole(layout: &[(String, Rect)], g: &Geometry) {
+        let whole = |len: f32, cell: f32| ((len / cell).round() * cell - len).abs() < 1e-3;
+        for (id, r) in layout {
+            let right_edge = (r.right() - g.area.right()).abs() < 1e-3;
+            let top_edge = (r.y - g.area.y).abs() < 1e-3;
+            assert!(
+                right_edge || whole(r.w, g.cell.0),
+                "{id} {r:?} in {layout:?}"
+            );
+            assert!(top_edge || whole(r.h, g.cell.1), "{id} {r:?} in {layout:?}");
+        }
+    }
+
+    #[test]
+    fn nested_splits_keep_their_panes_whole_cells() {
+        let g = Geometry {
+            cell: (10.0, 20.0),
+            ..geometry(1203.0, 805.0)
+        };
+        // Split right, then down, then right: row[col[row[a, b], c], d].
+        let right_down_right = Node::container(
+            "r",
+            Axis::Row,
+            vec![
+                Node::container(
+                    "col",
+                    Axis::Column,
+                    vec![
+                        Node::container("inner", Axis::Row, vec![pane("a"), pane("b")]),
+                        pane("c"),
+                    ],
+                ),
+                pane("d"),
+            ],
+        );
+        let layout = blocks(&right_down_right, &g);
+        // a and b split the column's width between them, both whole: c, beside nothing split
+        // that way, keeps the column's one gap.
+        let rect = |id: &str| layout.iter().find(|(n, _)| n == id).unwrap().1;
+        for id in ["a", "b"] {
+            assert_eq!(rect(id).w % 10.0, 0.0, "{id} {:?}", rect(id));
+        }
+        assert_eq!(rect("c").w, rect("a").w + 1.0 + rect("b").w);
+        // Split down, then right, then down: col[x, row[col[a, b], y]].
+        let down_right_down = Node::container(
+            "c",
+            Axis::Column,
+            vec![
+                pane("x"),
+                Node::container(
+                    "row",
+                    Axis::Row,
+                    vec![
+                        Node::container("inner", Axis::Column, vec![pane("a"), pane("b")]),
+                        pane("y"),
+                    ],
+                ),
+            ],
+        );
+        let layout = blocks(&down_right_down, &g);
+        let rect = |id: &str| layout.iter().find(|(n, _)| n == id).unwrap().1;
+        for id in ["a", "b"] {
+            assert_eq!(rect(id).h % 20.0, 0.0, "{id} {:?}", rect(id));
+        }
+        assert_whole(
+            &layout
+                .into_iter()
+                .filter(|(id, _)| id != "y")
+                .collect::<Vec<_>>(),
+            &g,
+        );
+        // A drag inside the nested split lands on a boundary snap draws: a stays whole.
+        let mut dragged = right_down_right.clone();
+        for (id, size) in drag_sizes(&right_down_right, "inner", 0, 263.0, &g).unwrap() {
+            dragged.find_mut(&id).unwrap().set_size(Some(size));
+        }
+        let laid = blocks(&dragged, &g);
+        let rect = |id: &str| laid.iter().find(|(n, _)| n == id).unwrap().1;
+        assert_eq!(rect("a").w, 260.0);
+        assert_eq!(rect("b").w % 10.0, 0.0, "{:?}", rect("b"));
+        // And one of the outer split, beside a child split inside: the column keeps its gap.
+        let mut dragged = right_down_right.clone();
+        for (id, size) in drag_sizes(&right_down_right, "r", 0, 704.0, &g).unwrap() {
+            dragged.find_mut(&id).unwrap().set_size(Some(size));
+        }
+        let laid = blocks(&dragged, &g);
+        let rect = |id: &str| laid.iter().find(|(n, _)| n == id).unwrap().1;
+        assert_eq!(rect("c").w, 701.0, "the column, as c spans it");
+    }
+
+    #[test]
+    fn a_keyboard_resize_steps_whole_cells() {
+        let g = celled();
+        assert_eq!(resize_step(&g, Axis::Row), 40.0, "4 cells of 10");
+        assert_eq!(resize_step(&g, Axis::Column), 40.0, "2 cells of 20");
+        let wide = Geometry {
+            cell: (30.0, 100.0),
+            ..g
+        };
+        assert_eq!(resize_step(&wide, Axis::Row), 30.0);
+        assert_eq!(resize_step(&wide, Axis::Column), 100.0, "at least one");
+        assert_eq!(resize_step(&geometry(10.0, 10.0), Axis::Row), RESIZE_STEP);
     }
 
     #[test]

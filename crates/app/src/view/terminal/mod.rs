@@ -2,10 +2,11 @@
 //! over it (`docs/research/terminal-rendering.md` §2, stage 4 of §8; `docs/research/rune.md` §3).
 //!
 //! The grid is the terminal's own (the core's), not the pane's: a pane bigger than the grid shows
-//! the terminal's background around it, and a smaller one clips it. The grid hugs the pane's top
-//! left after its padding, as Ghostty does with `window-padding-balance = false`; that's what Eli
-//! wants (`docs/research/feature-inventory.md` §1 "Terminal grid centering"). A caller that wants
-//! Ghostty's balanced padding computes it with `terminal::Size` and passes it in.
+//! the terminal's background around it, and a smaller one clips it. The grid sits at the pane's
+//! top left after its padding, as Ghostty does with `window-padding-balance = false`, with no
+//! balancing (`docs/research/feature-inventory.md` §1 "Terminal grid centering"). The app sets
+//! the top padding to what the pane's height leaves under whole rows, so the bottom row sits on
+//! the pane's bottom edge (`State::place_grids`).
 //!
 //! While the pane has the keyboard, the cursor's cell is the input method's caret
 //! (`El::ime_cursor`), even when the program hides the cursor, so the candidate window opens

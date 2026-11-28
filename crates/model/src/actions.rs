@@ -13,7 +13,7 @@ use herdr_shared::{Axis, Intent, Node, Size, fresh_id_on, labels, machine_of};
 use crate::action::{Action, CopyAction, Direction, Edge, Popup, PopupAction, Split};
 use crate::effect::{Effect, Effects, Level, Pick, Request, TerminalCommand, Toast};
 use crate::folders::{self, Lookup, NewSpace};
-use crate::geometry;
+use crate::geometry::{self, Rect};
 use crate::links;
 use crate::machines::{MachineAction, MachineCall};
 use crate::mode::{
@@ -758,7 +758,7 @@ impl Model {
     }
 
     /// `alt-shift-h/j/k/l`: the focused pane's nearest divider along `direction`'s axis moves
-    /// [`geometry::RESIZE_STEP`] that way, as dragging it would. Nothing in a zoomed tab, or
+    /// [`geometry::resize_step`] (whole cells) that way, as dragging it would. Nothing in a zoomed tab, or
     /// where nothing is split that way (`app:src/window.rs` `resize_pane`).
     fn resize(&mut self, direction: Direction, fx: &mut Effects) {
         let Some(tab) = self.shown_tab() else {
@@ -785,7 +785,11 @@ impl Model {
         let Some(rect) = rects.iter().find(|(id, _)| *id == before).map(|(_, r)| *r) else {
             return;
         };
-        let step = geometry::RESIZE_STEP * self.geometry.zoom;
+        let axis = match direction {
+            Direction::Left | Direction::Right => Axis::Row,
+            Direction::Up | Direction::Down => Axis::Column,
+        };
+        let step = geometry::resize_step(&self.geometry, axis);
         let at = match direction {
             Direction::Left => rect.right() - step,
             Direction::Right => rect.right() + step,
@@ -859,6 +863,13 @@ impl Model {
     pub fn dividers(&self) -> Vec<geometry::Divider> {
         self.shown_tab()
             .map(|tab| geometry::dividers(self.view.shown_root(tab), &self.geometry))
+            .unwrap_or_default()
+    }
+
+    /// The gaps between the shown tab's panes as drawn, every split's: none while it is zoomed.
+    pub fn gaps(&self) -> Vec<Rect> {
+        self.shown_tab()
+            .map(|tab| geometry::gaps(self.view.shown_root(tab), &self.geometry))
             .unwrap_or_default()
     }
 

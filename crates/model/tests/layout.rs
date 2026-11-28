@@ -599,6 +599,7 @@ fn focus_by_direction_prefers_the_pane_last_focused_along_the_edge() {
             area: Rect::new(0.0, 0.0, 201.0, 201.0),
             gap: 1.0,
             zoom: 1.0,
+            ..Geometry::default()
         }),
     );
     assert_eq!(m.focused_pane().as_deref(), Some("a"));
@@ -640,6 +641,7 @@ fn three_panes_laid_out() -> (Core, model::Model) {
             area: Rect::new(0.0, 0.0, 201.0, 201.0),
             gap: 1.0,
             zoom: 1.0,
+            ..Geometry::default()
         }),
     );
     (core, m)
@@ -843,6 +845,52 @@ fn a_keyboard_resize_moves_the_nearest_divider_forty_points() {
     key(&mut m, &mut core, "alt-shift-l", true);
     assert_eq!(core.version(None), version);
     assert!(m.dividers().is_empty(), "a zoomed tab draws no dividers");
+}
+
+#[test]
+fn keyboard_resizes_step_whole_cells_and_panes_stay_whole_cells() {
+    let (mut core, mut m) = three_panes_laid_out();
+    // 7 × 15 cells (Operator Mono's shape): a steps 6 columns (40 / 7 rounds to 6), b / c 3
+    // rows (40 / 15 rounds to 3).
+    drive(
+        &mut m,
+        &mut core,
+        Event::Geometry(Geometry {
+            area: Rect::new(0.0, 0.0, 201.0, 201.0),
+            gap: 1.0,
+            zoom: 1.0,
+            cell: (7.0, 15.0),
+        }),
+    );
+    let rect = |m: &model::Model, pane: &str| {
+        m.pane_rects()
+            .into_iter()
+            .find(|(p, _)| p == pane)
+            .map(|(_, r)| r)
+            .unwrap()
+    };
+    let whole = |len: f32, cell: f32| ((len / cell).round() * cell - len).abs() < 1e-3;
+    let mut a = rect(&m, "a").w;
+    assert!(whole(a, 7.0), "{a}");
+    for keys in ["alt-shift-h", "alt-shift-l", "alt-shift-l"] {
+        key(&mut m, &mut core, keys, true);
+        let now = rect(&m, "a").w;
+        assert!(whole(now, 7.0), "{now}");
+        assert!(((now - a).abs() - 42.0).abs() < 1e-3, "{a} to {now}");
+        a = now;
+    }
+    // Down a column the bottom pane is whole rows, and b, at the top, takes the rest.
+    drive(&mut m, &mut core, Action::FocusPane("b".into()));
+    let mut c = rect(&m, "c").h;
+    assert!(whole(c, 15.0), "{c}");
+    for keys in ["alt-shift-k", "alt-shift-j", "alt-shift-j"] {
+        key(&mut m, &mut core, keys, true);
+        let now = rect(&m, "c").h;
+        assert!(whole(now, 15.0), "{now}");
+        assert!(((now - c).abs() - 45.0).abs() < 1e-3, "{c} to {now}");
+        assert_eq!(rect(&m, "b").bottom() + 1.0, rect(&m, "c").y);
+        c = now;
+    }
 }
 
 #[test]
