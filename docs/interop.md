@@ -38,6 +38,15 @@ when the resize lands. Split panes are laid out in whole cells, so a grid that h
 the divider. herdr-frontend takes the size only for panes it shows while its window is in front,
 and takes it back from another viewer only on real use or when the pane's grid changes.
 
+The one exception is a grid that herdr-frontend itself makes the core apply: RESIZE, or DATA that
+applies the grid it told. Its local terminal moves to that grid as the frame is sent, as Ghostty
+resizes its terminal along with the pty. The program redraws for the new grid as soon as the core
+applies it, and that output can arrive before the `size` event, which comes on another channel.
+Parsed at the old grid, the redraw would leave the screen torn until the program next redrew it
+(a Pi session's bottom rows after the sidebar closed, ticket 047). When the event for a grid it
+took comes in, herdr-frontend recognizes it as its own. Only another viewer's size moves the
+terminal after that.
+
 Choices made on purpose:
 
 - **No observers.** Hidden panes attach `resumed`, not `observe: true`. If herdr-frontend is a
@@ -59,6 +68,17 @@ Choices made on purpose:
   after a core restart (`herdr-core-protocol.md` §4, items 1-3). herdr-frontend follows those
   sizes without fighting them, and takes the size back on its next real use.
 
+Known limit: in-band size reports from other viewers. Neovim 0.12 turns on mode 2048 and from then
+on takes its size only from in-band reports (`CSI 48;rows;cols;…t`), ignoring SIGWINCH. Every
+viewer's terminal answers when the mode turns on, and the core forwards each answer to the program.
+Herdr app's terminal stays at its own pane's grid when it isn't the leader (§4 item 4), so its
+answer carries the wrong grid. If it arrives last, Neovim draws for Herdr app's grid while the pty
+and herdr-frontend are at another one: rows overflow onto the next row, and floats and splits land
+in the wrong places. The Herdr iOS app sees the same from the desktop app. The next resize sent
+from herdr-frontend (a zoom, for example) puts it right, because its terminal's report then comes
+last. The fix belongs in herdr-core: forward `CSI 48 t` only from the size leader, or generate it
+in the core from the pty's size.
+
 ## Tests
 
 - `crates/herdr-client/tests/multi_viewer.rs`: two framed connections on an isolated core check
@@ -74,6 +94,9 @@ Choices made on purpose:
   doesn't move the size. The app never takes the size back while idle or in the background. A
   click or typing takes it back. After a core restart, the app's `resumed` reattach leaves
   Herdr app's new grid alone.
+- `crates/app/tests/resize_redraw.rs`: a program that redraws its whole screen on SIGWINCH, in
+  the pane in use, while the window grows and shrinks. After each resize the app shows exactly
+  the core's screen at the core's grid.
 - `crates/app/tests/shell.rs` and `input.rs` check the same policy frame by frame on the fake
   core.
 

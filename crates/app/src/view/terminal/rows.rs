@@ -1094,6 +1094,47 @@ mod tests {
         assert_eq!(cache.built, 2);
     }
 
+    /// Every frame of recorded Neovim sessions, as a pane shows them one after another, hands
+    /// Rune the rows a fresh build of that frame makes: a row the cache keeps is never one whose
+    /// cells changed (ticket 047).
+    #[test]
+    fn every_frame_the_cache_builds_matches_a_fresh_build() {
+        let face = face();
+        let (theme, look) = arctic();
+        for fixture in [&fixtures::NVIM_SPLITS, &fixtures::NVIM_CHECKLIST] {
+            let mut vt = terminal::Vt::new(&terminal::Config {
+                cols: fixtures::COLS,
+                rows: fixtures::ROWS,
+                theme: theme.clone(),
+                ..terminal::Config::default()
+            });
+            let mut cache = RowCache::default();
+            let (mut frames, mut kept) = (0, 0);
+            for write in fixture.bytes.chunks(97) {
+                vt.write(write);
+                if !vt.can_show() {
+                    continue;
+                }
+                let frame = vt.snapshot();
+                let built = cache.each(&frame.screen, &frame.colors, &face, &look, |cached| {
+                    cached.built.clone()
+                });
+                frames += 1;
+                kept += frame.screen.len() - cache.built;
+                for (y, (row, got)) in frame.screen.iter().zip(&built).enumerate() {
+                    let fresh = build(row, &frame.colors, &face, &look);
+                    assert!(
+                        **got == fresh,
+                        "{}: frame {frames}, row {y} {:?} is stale",
+                        fixture.name,
+                        frame.line(y)
+                    );
+                }
+            }
+            assert!(frames > 5 && kept > 0, "{}: {frames} frames", fixture.name);
+        }
+    }
+
     /// The split grid comes from the same cache: a row built once hands back its backgrounds
     /// and its text without being built again, and the whole row too.
     #[test]

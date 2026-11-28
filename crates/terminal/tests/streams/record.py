@@ -8,7 +8,9 @@ working directory, so no user config or path ends up in the recording. SCRIPT is
 line: `sleep SECONDS`, or `send TEXT` where TEXT is a Python string literal (escapes allowed).
 Every byte the program writes is saved to OUT.bin. The few startup queries in ANSWERS get a
 canned answer, as a dark terminal would give, so a program doesn't stall or warn waiting for
-one; the replay tests check what our own terminal answers to the same queries.
+one; the replay tests check what our own terminal answers to the same queries. The mode
+queries get our terminal's answers, so Neovim turns on what it turns on with us (synchronized
+output, left and right margins, in-band size reports).
 
 Each recording's command line is in ../replay.rs (or ../images.rs) next to the test that replays it.
 """
@@ -32,6 +34,11 @@ ANSWERS = {
     b"\x1b[5n": b"\x1b[0n",
     b"\x1b[?u": b"\x1b[?0u",
     b"\x1b]11;?\x07": b"\x1b]11;rgb:1111/1111/1111\x07",
+    b"\x1b[?69$p": b"\x1b[?69;2$y",
+    b"\x1b[?2026$p": b"\x1b[?2026;2$y",
+    b"\x1b[?2027$p": b"\x1b[?2027;1$y",
+    b"\x1b[?2031$p": b"\x1b[?2031;2$y",
+    b"\x1b[?2048$p": b"\x1b[?2048;2$y",
 }
 
 

@@ -55,6 +55,9 @@ pub struct FakeCore {
     pub machine_calls: Vec<MachineCall>,
     /// What machine calls fail with, by target or machine name; the others work.
     pub machine_fails: BTreeMap<String, RpcError>,
+    /// News waits instead of reaching the app, as on a slow link: what happens meanwhile comes
+    /// in together once it's cleared.
+    pub quiet: bool,
     connected: bool,
     news: VecDeque<News>,
     writers: BTreeMap<String, terminal::Writer>,
@@ -324,6 +327,9 @@ impl FakeCore {
         t.cols = cols;
         t.rows = rows;
         let t = t.clone();
+        // As a real core's batch lists it, before the record it changed.
+        self.news
+            .push_back(News::Sizes(vec![(address.to_owned(), cols, rows)]));
         self.changed(t);
     }
 
@@ -412,7 +418,10 @@ impl Link for Fake {
     }
 
     fn poll(&mut self, news: &mut Vec<News>) {
-        news.extend(self.core().news.drain(..));
+        let mut core = self.core();
+        if !core.quiet {
+            news.extend(core.news.drain(..));
+        }
     }
 
     fn call(&mut self, token: Token, request: Request) {

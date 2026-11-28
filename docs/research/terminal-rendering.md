@@ -835,9 +835,12 @@ That gives the renderer two requirements:
    - **Normal and `resumed` viewers:** call `ghostty_terminal_resize` from `size` events, plus
      our own RESIZE when this pane takes the size. Draw that grid in the pane, letterboxed or
      clipped, while another viewer leads. Because `size` events aren't ordered with stream bytes,
-     output just before or after a change can be parsed at the old width. Full-screen programs
-     redraw after SIGWINCH, which corrects it. Plain output written in that window can stay
-     wrapped at the old width, which is a known limit for non-observe viewers.
+     our own RESIZE resizes the local terminal as it's sent, not when its event comes back. A
+     full-screen program redraws once, as soon as the core applies the grid, and that redraw can
+     arrive before the event. Parsed at the old width, it stays torn until the program redraws
+     again (ticket 047, `crates/app/tests/resize_redraw.rs`). A size another viewer sets is still
+     followed from its event, so output around that change can be parsed at the old width. That
+     is a known limit for non-observe viewers.
    - **Observers (`observe: true, resize_notifications: true`, for hidden panes):** resize on
      each core RESIZE. The authoritative repaint that follows is exact. The reply confirms
      `resize_notifications` only if every hop on the path supports it, such as a `machine/`
