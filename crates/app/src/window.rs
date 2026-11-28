@@ -246,31 +246,35 @@ mod tests {
 
     #[test]
     fn a_place_mostly_off_every_display_is_not_reopened() {
-        let five_k = display((0, 0), (5120, 2880));
-        let side = display((5120, 0), (1280, 800));
+        // Eli's 5K display, and a smaller one to its right.
+        let both = [
+            display((0, 0), (5120, 2880)),
+            display((5120, 0), (1280, 800)),
+        ];
+        let five_k = &both[..1];
         let tiled = Placement {
             position: (0, 64),
             size: (5120, 2816),
         };
-        assert!(tiled.on(&[five_k.clone()]));
+        assert!(tiled.on(five_k));
         // Eli's window.json after AeroSpace hid its workspace: one pixel row and column left.
         let parked = Placement {
             position: (-5078, 2878),
             size: (5080, 2816),
         };
-        assert!(!parked.on(&[five_k.clone(), side.clone()]));
+        assert!(!parked.on(&both));
         // The display it was on is gone.
         let on_side = Placement {
             position: (5200, 40),
             size: (1000, 600),
         };
-        assert!(on_side.on(&[five_k.clone(), side]));
-        assert!(!on_side.on(&[five_k.clone()]));
+        assert!(on_side.on(&both));
+        assert!(!on_side.on(five_k));
         // Dragged half off an edge still reopens there.
         let half = Placement {
             position: (4120, 0),
             size: (2000, 1000),
         };
-        assert!(half.on(&[five_k]));
+        assert!(half.on(five_k));
     }
 }
