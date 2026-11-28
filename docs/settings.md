@@ -132,8 +132,22 @@ runs is found at the next edit to `settings.json`.
   doesn't yet.
 
 The regular face is the one the cell is measured from. The panels' `ui_font` is found the same
-way: with the terminal's style names when it's the same family, with Operator Mono's own when it's
-Operator Mono, and by traits otherwise. The panels draw with its regular and bold faces.
+way: Operator Mono by the style names Medium, Bold, Medium Italic and Bold Italic (Book and its
+italic where Medium isn't installed); another family with the terminal's faces when it's the same
+one, and by traits otherwise. The panels draw with its regular and bold faces.
+
+**Why the panels are Medium.** Herdr app draws its panels in Operator Mono Book (its prepared
+"Operator Mono Book Herdr" family's regular face) through CoreText with font smoothing on. GPUI
+asks CoreGraphics to smooth each glyph by the text color's luminance
+(`gpui-pre-macos/src/text_system.rs` `glyph_dilation_for_color`), which thickens light text on a
+dark canvas. herdr-frontend's window draws without smoothing so the terminals match Ghostty
+([font smoothing](research/renderer-gates.md#font-smoothing)), and Rune sets smoothing for a whole
+window, not for one element. Unsmoothed Book is thinner: CoreGraphics gives "Free up disk space"
+at 13.05 pt on a 2x screen (14.5 pt titles at zoom 0.9) 1307 of ink in Herdr app's
+smoothed Book, 946 unsmoothed, and 1262 in unsmoothed Medium. So the panels use Medium, which
+carries about a third more ink than Book (1.34 times, at every size measured), as much as
+smoothing adds to arctic's text (1.27 for `dim`, 1.31 to 1.50 for `foreground` and the live
+titles). Bold stays Bold, as Herdr app's semibold and bold text draw it. The terminals keep Book.
 
 **Why the faces are registered as a private family.** Rune can't name a face for a span: a bold
 span asks its family for weight 700 and fontique picks the face whose `OS/2` weight class is

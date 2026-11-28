@@ -185,6 +185,16 @@ fn the_sidebar_lists_agents_under_its_top_row() {
     let first = element(&rt, "hdr-pinned").unwrap();
     assert_eq!(first.rect[1], 38.0);
     assert_eq!(first.rect[3], 20.0);
+    // A row is eli-agents' height: its 22 and 19 pt lines, 4 pt of padding and the 1 pt
+    // border GPUI lays out inside it, above and below. Its content sits 9 pt in.
+    let row = element(&rt, "ag-t15").unwrap();
+    assert_eq!(row.rect[3], 22.0 + 19.0 + 2.0 * (4.0 + 1.0));
+    let body = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.path.ends_with("ag-t15/body"))
+        .unwrap();
+    assert_eq!(body.rect[0] - row.rect[0], 9.0);
     // Row titles: the named tab, the agent's live title, the Pi session's.
     assert_eq!(text_of(&rt, "ag-t11/body/line1/title"), "review");
     assert_eq!(

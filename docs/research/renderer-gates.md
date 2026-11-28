@@ -561,4 +561,6 @@ carried 29% more ink than Ghostty's (ratio 1.294).
 
 So `herdr_frontend::app()` sets `FontSmoothing::Off`, Rune's CoreText pipeline without the
 dilation. Rune applies it per window, so the app's own text (sidebar, tabs, palette) draws the
-same way. With it off, the ratio is 1.000 ([Gate 1](#gate-1-glyph-placement)).
+same way. With it off, the ratio is 1.000 ([Gate 1](#gate-1-glyph-placement)). Herdr app's panels
+are smoothed, so the panels draw in Operator Mono Medium to keep Herdr app's weight
+(`docs/settings.md`, "Why the panels are Medium").

@@ -212,9 +212,10 @@ impl Config {
     }
 
     /// Looks up the families `font` and `ui_font` name, saying in [`Config::problems`] what
-    /// can't be had. The panels' family takes the terminal's style names when it's the same one,
-    /// Operator Mono's own when it's Operator Mono (found by traits, its Bold would be taken for
-    /// its regular face), and none otherwise.
+    /// can't be had. The panels' Operator Mono is its Medium and Bold ([`settings::PANEL_STYLES`];
+    /// Book and Bold where Medium isn't installed), by style name since, found by traits, its
+    /// Bold would be taken for its regular face. Another panel family takes the terminal's faces
+    /// when it's the same one, and is found by traits otherwise.
     fn find_fonts(&mut self) {
         let s = &self.settings;
         let found = fonts::find(&s.font, s.font_styles());
@@ -227,10 +228,15 @@ impl Config {
         );
         let named = |family: &str| s.ui_font.trim().eq_ignore_ascii_case(family.trim());
         let same = named(&s.font);
-        let ui = if same {
+        let ui = if named(settings::FONT) {
+            let medium = fonts::find(&s.ui_font, settings::PANEL_STYLES);
+            if medium.family.is_some() {
+                medium
+            } else {
+                fonts::find(&s.ui_font, Settings::default().font_styles())
+            }
+        } else if same {
             found.clone()
-        } else if named(settings::FONT) {
-            fonts::find(&s.ui_font, Settings::default().font_styles())
         } else {
             fonts::find(&s.ui_font, [None; 4])
         };
@@ -412,7 +418,12 @@ mod tests {
         match &config.font {
             Some(font) => {
                 assert_eq!(font.name, "Operator Mono");
-                assert_eq!(config.ui_font.as_ref(), Some(font));
+                let ui = config.ui_font.as_ref().expect("the panels' Operator Mono");
+                assert_eq!(ui.name, "Operator Mono");
+                assert_ne!(
+                    ui.private, font.private,
+                    "the panels have faces of their own"
+                );
                 assert!(config.problems.is_empty(), "{:?}", config.problems);
             }
             None => assert_eq!(
@@ -451,25 +462,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
-    /// Operator Mono for the panels beside another terminal family keeps its style names: found
-    /// by traits, its Bold would be taken for its regular face.
+    /// The panels' Operator Mono is Medium where the terminals' is Book, beside it or beside
+    /// another terminal family, found by style name: by traits, its Bold would be taken for its
+    /// regular face.
     #[cfg(target_os = "macos")]
     #[test]
-    fn operator_mono_for_the_panels_alone_is_still_book() {
-        let config = Config::with_fonts(Settings {
+    fn operator_mono_for_the_panels_is_medium() {
+        let menlo = Settings {
             font: "Menlo".into(),
-            ui_font: settings::FONT.into(),
             ..Settings::fixture()
-        });
-        let Some(ui) = config.ui_font else {
-            eprintln!("skipping: Operator Mono isn't installed");
-            return;
         };
-        assert_eq!(ui.regular().postscript, "OperatorMono-Book");
-        assert_eq!(
-            ui.face(fonts::Slot::Bold).map(|f| f.postscript.as_str()),
-            Some("OperatorMono-Bold")
-        );
+        for terminals in [Settings::default(), menlo] {
+            let font = terminals.font.clone();
+            let config = Config::with_fonts(Settings {
+                ui_font: settings::FONT.into(),
+                ..terminals
+            });
+            let Some(ui) = config.ui_font else {
+                eprintln!("skipping: Operator Mono isn't installed");
+                return;
+            };
+            let names: Vec<&str> = fonts::Slot::ALL
+                .iter()
+                .map(|s| ui.face(*s).map_or("", |f| f.postscript.as_str()))
+                .collect();
+            assert_eq!(
+                names,
+                [
+                    "OperatorMono-Medium",
+                    "OperatorMono-Bold",
+                    "OperatorMono-MediumItalic",
+                    "OperatorMono-BoldItalic"
+                ],
+                "beside {font}"
+            );
+            assert!(config.problems.is_empty(), "{:?}", config.problems);
+        }
+        // The terminals keep Book.
+        let config = Config::with_fonts(Settings::default());
+        let font = config.font.expect("Operator Mono, as the panels found it");
+        assert_eq!(font.regular().postscript, "OperatorMono-Book");
     }
 
     #[cfg(target_os = "macos")]

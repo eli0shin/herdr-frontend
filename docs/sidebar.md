@@ -22,7 +22,8 @@ state in `crates/app/src/state.rs`. `crates/app/tests/sidebar.rs` and the `shell
   each space gets a header, in model order. **Section headers never fold and aren't clickable**
   (`docs/plan.md`): Eli folds them by accident in Herdr app. The first header sits right under the
   top row.
-- **Rows.** Line 1 has the program icon, the title, a fold control (for an agent with
+- **Rows.** Line 1 has the program icon (a one-color glyph in the program's color, Pi purple, as
+  the tab bar has it), the title, a fold control (for an agent with
   sub-agents), the status and the jump label. Line 2 has the space in its color (without a space
   header above), an orchestrator's ticket, "N workers" and PR chips, the machine of a remote
   agent, and the time since the last change. Live rows have a status-colored left edge. An
