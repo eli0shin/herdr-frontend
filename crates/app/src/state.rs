@@ -610,10 +610,13 @@ impl State {
         // The shared state, the list's times and the zoom: the state folder's, else the defaults.
         let shared = Shared::load(home.as_ref().map(|h| h.state()));
         let times = shared::load_times(home.as_ref().map(|h| h.state()));
+        // A saved zoom set over another settings.json zoom is gone: the file was edited since.
         let saved_zoom = home
             .as_ref()
             .and_then(|h| h.read(ZOOM))
             .and_then(|text| SavedZoom::from_json(&text));
+        let stale_zoom = saved_zoom.is_some_and(|z| !z.holds(config.settings.zoom));
+        let saved_zoom = saved_zoom.filter(|z| z.holds(config.settings.zoom));
         let sidebar = Sidebar {
             width: shared.sidebar_px(),
             hidden: shared.sidebar_hidden(),
@@ -686,6 +689,9 @@ impl State {
             wheel: Default::default(),
         };
         s.keys_problem = keys_problem;
+        if stale_zoom {
+            s.save_zoom_over(config.settings.zoom);
+        }
         s.configure_all(config);
         s.window_sized(crate::SIZE.0, crate::SIZE.1);
         s
@@ -837,8 +843,12 @@ impl State {
 
     /// Writes the zoom keys' zoom to the state folder; with none, `settings.json`'s zoom.
     fn save_zoom(&self) {
+        self.save_zoom_over(self.config.settings.zoom);
+    }
+
+    /// [`State::save_zoom`] with `settings.json`'s zoom `settings`.
+    fn save_zoom_over(&self, settings: f32) {
         let Some(home) = &self.home else { return };
-        let settings = self.config.settings.zoom;
         let saved = self.saved_zoom.unwrap_or(SavedZoom {
             zoom: settings,
             settings,

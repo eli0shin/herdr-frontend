@@ -46,8 +46,8 @@ new text off the UI thread. A good file replaces the keymap at once. A bad file 
 good keys. Its problems, every one with its section and key, go to an error toast and to
 `keys.error` in the state folder, which is removed once the file is good again. A text that doesn't
 parse counts as bad only after it stays the same for another look, so the app doesn't report a
-half-saved file. At start, a config folder without a key file gets the defaults written to it,
-the only file the app ever writes there.
+half-saved file. At start, a config folder without a key file gets the defaults written to it.
+That and the escape hatch above are the only writes the app makes in the config folder.
 
 ## How a key travels
 

@@ -137,11 +137,16 @@ impl SavedZoom {
         serde_json::to_string_pretty(&value).expect("numbers always serialize")
     }
 
-    /// The zoom to draw at with `settings.json`'s zoom `settings`. The two settings zooms are
-    /// compared to the four places [`SavedZoom::to_json`] keeps.
+    /// Whether it still holds with `settings.json`'s zoom `settings`: the zoom it was set over.
+    /// The two are compared to the four places [`SavedZoom::to_json`] keeps.
+    pub fn holds(&self, settings: f32) -> bool {
+        (self.settings - settings).abs() < 1e-4
+    }
+
+    /// The zoom to draw at with `settings.json`'s zoom `settings`.
     pub fn applied(saved: Option<SavedZoom>, settings: f32) -> f32 {
         match saved {
-            Some(saved) if (saved.settings - settings).abs() < 1e-4 => saved.zoom,
+            Some(saved) if saved.holds(settings) => saved.zoom,
             _ => settings,
         }
     }

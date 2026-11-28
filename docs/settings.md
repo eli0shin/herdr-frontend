@@ -17,8 +17,9 @@ Operator Mono's Book weight (and its own Bold) at 17 pt, zoom 1.1. The code is
 
 The config folder holds what the person writes and can keep in dotfiles: `settings.json`,
 `keys.json` (`docs/keys.md`), `themes/`, `programs.json`, `icons/` and `program-icons/`. The app
-reads them live and never writes them. The one exception is a missing `keys.json`, which it
-creates with Eli's keys so there is a file to edit.
+reads them live and never writes them, with two exceptions for `keys.json`. A missing one is
+created with Eli's keys so there is a file to edit, and the escape hatch sets a broken one aside
+and writes Eli's keys in its place (`docs/keys.md`).
 
 Everything the app writes goes in its state folder (`$XDG_STATE_HOME/herdr-frontend`, else
 `~/.local/state/herdr-frontend`), so it never shows up as a dotfiles diff:

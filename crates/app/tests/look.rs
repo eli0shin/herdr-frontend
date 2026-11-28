@@ -217,6 +217,33 @@ fn the_zoom_keys_zoom_everything_and_save_it_as_state() {
     std::fs::write(config.join("settings.json"), r#"{"zoom": 0.9}"#).unwrap();
     until(&mut rt, "the new settings zoom", |rt| rt.zoom() == 0.9);
     drop(rt);
+    let mut rt = runtime_in(Home::split(&config, &state));
+    assert_eq!(rt.zoom(), 0.9);
+
+    // Edited between runs too: a zoom set over 0.9, then settings.json says 1.1.
+    rt.state.step(3.0, Action::App(AppCommand::ZoomIn));
+    assert_eq!(rt.state.zoom(), 1.0);
+    let saved = |zoom: f64, settings: f64| {
+        let want = serde_json::json!({"zoom": zoom, "settings": settings});
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let text = std::fs::read_to_string(state.join("zoom.json")).unwrap_or_default();
+            if serde_json::from_str::<serde_json::Value>(&text).is_ok_and(|v| v == want) {
+                return;
+            }
+            assert!(Instant::now() < deadline, "zoom.json isn't {want}: {text}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    saved(1.0, 0.9);
+    drop(rt);
+    std::fs::write(config.join("settings.json"), r#"{"zoom": 1.1}"#).unwrap();
+    let rt = runtime_in(Home::split(&config, &state));
+    assert_eq!(rt.zoom(), 1.1);
+    // The stale zoom is gone, so going back to 0.9 doesn't bring its 1.0 back.
+    saved(1.1, 1.1);
+    drop(rt);
+    std::fs::write(config.join("settings.json"), r#"{"zoom": 0.9}"#).unwrap();
     let rt = runtime_in(Home::split(&config, &state));
     assert_eq!(rt.zoom(), 0.9);
     let _ = std::fs::remove_dir_all(&dir);
