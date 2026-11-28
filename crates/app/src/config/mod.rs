@@ -100,8 +100,6 @@ fn listing(dir: &Path) -> Vec<PathBuf> {
 #[derive(Clone, Debug)]
 pub struct Config {
     pub settings: Settings,
-    /// `settings.json` as read, which the zoom keys edit; `None` with no file.
-    pub settings_text: Option<String>,
     pub theme: Theme,
     /// The home's theme file the theme came from (`themes/<name>.json`, home-relative), when it
     /// came from one rather than the built-in arctic.
@@ -128,7 +126,6 @@ impl Config {
         let problems = theme.apply(&settings.colors);
         Config {
             settings,
-            settings_text: None,
             theme,
             theme_file: None,
             programs: Programs::default(),
@@ -145,8 +142,7 @@ impl Config {
         let home = sources.home.as_deref();
         let read = |name: &str| home.and_then(|h| std::fs::read_to_string(h.join(name)).ok());
 
-        let settings_text = read(SETTINGS);
-        let settings = match settings_text.as_deref().map(Settings::parse) {
+        let settings = match read(SETTINGS).as_deref().map(Settings::parse) {
             None => Settings::default(),
             Some(Ok((settings, found))) => {
                 problems.extend(found);
@@ -191,7 +187,6 @@ impl Config {
 
         let mut config = Config {
             settings,
-            settings_text,
             theme,
             theme_file,
             programs,
@@ -413,7 +408,6 @@ mod tests {
         assert_eq!(config.settings, Settings::default());
         assert_eq!(config.theme, Theme::arctic());
         assert_eq!(config.theme_file, None, "the built-in arctic");
-        assert!(config.settings_text.is_none());
         // Operator Mono, if this Mac has it; status says so if it doesn't.
         match &config.font {
             Some(font) => {
@@ -667,7 +661,6 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         };
         assert_eq!(config.settings.zoom, 1.5);
-        assert_eq!(config.settings_text.as_deref(), Some(r#"{"zoom": 1.5}"#));
         let _ = std::fs::remove_dir_all(&home);
     }
 }

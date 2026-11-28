@@ -1,7 +1,7 @@
 # Look and settings
 
-herdr-frontend reads its look and preferences from files in its home (`$HERDR_FRONTEND_HOME`,
-else `$XDG_CONFIG_HOME/herdr-frontend`, else `~/.config/herdr-frontend`). With no files at all it
+herdr-frontend reads its look and preferences from files in its config folder
+(`$XDG_CONFIG_HOME/herdr-frontend`, else `~/.config/herdr-frontend`). With no files at all it
 looks like Eli's Herdr app (`docs/research/feature-inventory.md` §2): the arctic theme,
 Operator Mono's Book weight (and its own Bold) at 17 pt, zoom 1.1. The code is
 `crates/app/src/config/`.
@@ -11,7 +11,33 @@ Operator Mono's Book weight (and its own Bold) at 17 pt, zoom 1.1. The code is
 | `settings.json` | Zoom, fonts, terminal metrics, minimum contrast, theme, color overrides |
 | `themes/<name>.json` | A theme in Herdr app's format; `arctic` is built in |
 | `programs.json` | Program names, icons and colors over the built-in table |
-| `icons/`, `program-icons/` | Icon files `programs.json` names, by path relative to the home |
+| `icons/`, `program-icons/` | Icon files `programs.json` names, by path relative to the config folder |
+
+## Config and state
+
+The config folder holds what the person writes and can keep in dotfiles: `settings.json`,
+`keys.json` (`docs/keys.md`), `themes/`, `programs.json`, `icons/` and `program-icons/`. The app
+reads them live and never writes them. The one exception is a missing `keys.json`, which it
+creates with Eli's keys so there is a file to edit.
+
+Everything the app writes goes in its state folder (`$XDG_STATE_HOME/herdr-frontend`, else
+`~/.local/state/herdr-frontend`), so it never shows up as a dotfiles diff:
+
+| File | What it is |
+| --- | --- |
+| `zoom.json` | The zoom the zoom keys set ([Zoom keys](#zoom-keys)) |
+| `window.json` | The window's size, position, display, maximized and full screen |
+| `view.json` | This screen's view: the space shown, each space's tab and pane, recents, seen attention |
+| `shared.json`, `agents.json` | The sidebar's shared state and the Agents list's times (`docs/sidebar.md`) |
+| `keys.error` | Why `keys.json` can't be used, while it can't (`docs/keys.md`) |
+| `herdr-frontend.sock` | The control socket (`docs/cli.md`) |
+
+Empty `XDG_*` variables count as unset. `$HERDR_FRONTEND_HOME` names one folder that serves as
+both, for tests and the end-to-end harness. Versions up to 0.1.1 kept the state files in the
+config folder. At launch the app moves any of them it finds there to the state folder and deletes
+them from the config folder. When the state folder already has the file, its copy is kept and the
+config folder's copy is deleted. A control socket left there that nobody answers on is removed
+too. The code is `crates/app/src/home.rs`.
 
 ## Live reload
 
@@ -42,7 +68,7 @@ the other, except the four `font_style*` keys, which are Ghostty's. Every key is
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `zoom` | `1.1` | Scales the whole window: terminals, panels and the layout's sizes (0.5 to 3). Rune's page zoom (`Cx::zoom`): the view lays out in `1 / zoom` as many points at `zoom` times the display scale, so cells stay whole device pixels. |
+| `zoom` | `1.1` | The zoom the window starts at, which the [zoom keys](#zoom-keys) step from. It scales the whole window: terminals, panels and the layout's sizes (0.5 to 3). Rune's page zoom (`Cx::zoom`): the view lays out in `1 / zoom` as many points at `zoom` times the display scale, so cells stay whole device pixels. |
 | `font` | `"Operator Mono"` | The terminals' font family, an installed one (Ghostty's `font-family`; see [Fonts](#fonts)). |
 | `font_style` | `"Book"` | The style name of the face regular text draws with (Ghostty's `font-style`). `null` finds the family's regular face by its traits. |
 | `font_style_bold` | `"Bold"` | The same for bold text (`font-style-bold`); `null` finds the family's bold face. |
@@ -70,9 +96,14 @@ and `clipboard_write` (the input and clipboard tickets read their own).
 
 `cmd-=` / `cmd-+` zoom in a tenth, `cmd--` out, `cmd-0` back to 1, as Herdr app's do. They reach
 the window as `AppCommand::ZoomIn`, `ZoomOut` and `ZoomReset` effects of `model::step`
-(`State::zoom_by`). The new zoom is written to `settings.json` with the file's other keys kept
-(keys come back sorted). A symlinked `settings.json` is written through to its target. A file
-that isn't a JSON object is never overwritten: the zoom then holds until the window closes.
+(`State::zoom_by`). The zoom they set is state, not config. It's saved in the state folder's
+`zoom.json` as `{"zoom": 1.3, "settings": 1.1}`, which also records the `settings.json` zoom it
+was set over. `settings.json` is never written.
+
+`settings.json`'s `zoom` is the starting value. The saved zoom applies, at launch and while the
+window runs, for as long as `settings.json`'s `zoom` is still the value it records. When that
+`zoom` is edited, while the window runs or between runs, the edited value is the zoom again and
+replaces the saved one. With no `zoom.json`, the window opens at `settings.json`'s `zoom`.
 
 ## Themes
 
@@ -97,7 +128,7 @@ views of the result:
   `text` foreground, `text_secondary` muted, `separator` border, `hover` and `press` hover and
   selected, for what Rune draws with its own tokens.
 
-`assets/themes/arctic.json` is Eli's arctic. A home's `themes/arctic.json` replaces it.
+`assets/themes/arctic.json` is Eli's arctic. The config folder's `themes/arctic.json` replaces it.
 
 ## Fonts
 
@@ -106,7 +137,7 @@ The terminal font is found among the fonts installed on the Mac (`~/Library/Font
 (`crates/app/src/config/fonts.rs`, a port of `ghostty:src/font/SharedGridSet.zig` `Key.init` and
 `collection` and `src/font/discovery.zig` at `v1.4.0`, `83fb9562`). To use a font, install it;
 herdr-frontend reads no font folder of its own and never reads Herdr app's home or its fonts.
-Fonts are looked up again whenever the home's files change, so a font installed while the window
+Fonts are looked up again whenever the config folder's files change, so a font installed while the window
 runs is found at the next edit to `settings.json`.
 
 - **Four styles, four faces.** Regular, bold, italic and bold italic each ask CoreText for the
@@ -174,8 +205,8 @@ program's `color`, else the theme's accent; pictures keep their colors.
 
 The table is Herdr app's built-in one (`assets/programs/herdr.json`, its icons in
 `assets/icons/`), then Eli's `programs.json` (Pi `#a78bfa`; Neovim's full-color logo
-`program-icons/neovim.svg`), then the home's `programs.json`, entry by entry. An icon path is
-relative to the home: a file there wins, else the bundled one by the same path.
+`program-icons/neovim.svg`), then the config folder's `programs.json`, entry by entry. An icon path is
+relative to the config folder: a file there wins, else the bundled one by the same path.
 `assets/programs/README.md` has where each file comes from and its license.
 
 ## `status`

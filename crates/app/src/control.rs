@@ -7,7 +7,7 @@
 //! tools drive the running window the way they drive `herdr-app`, with the same arguments, JSON
 //! and exit codes.
 //!
-//! The window serves `$HERDR_FRONTEND_HOME/herdr-frontend.sock` ([`Control`]), one JSON line
+//! The window serves `herdr-frontend.sock` in its state folder ([`state_home`], [`Control`]), one JSON line
 //! each way, as herdr-app serves `herdr-app.sock` (`app:src/control.rs`). A thread per connection
 //! reads the request and hands it to the UI thread; [`Control::drain`] runs it against the model
 //! there, so the model stays the one place state changes. [`client`] is the command line side.
@@ -40,23 +40,35 @@ pub const SUBCOMMANDS: [&str; 4] = ["ls", "do", "status", "commands"];
 const USAGE: &str = "usage: herdr-frontend ls | herdr-frontend commands | herdr-frontend status | \
                      herdr-frontend do <command> [--arg value ... | json]";
 
-/// herdr-frontend's home: `$HERDR_FRONTEND_HOME`, else `$XDG_CONFIG_HOME/herdr-frontend`, else
+/// herdr-frontend's config folder, the files the person writes (`crate::home`):
+/// `$HERDR_FRONTEND_HOME`, else `$XDG_CONFIG_HOME/herdr-frontend`, else
 /// `~/.config/herdr-frontend`, as herdr-app finds its own (`app:src/mods.rs` `app_dir`). Empty
 /// variables count as unset.
-pub fn home() -> PathBuf {
+pub fn config_home() -> PathBuf {
+    xdg_home("XDG_CONFIG_HOME", ".config")
+}
+
+/// herdr-frontend's state folder, the files the app writes (`crate::home`), the socket among
+/// them: `$HERDR_FRONTEND_HOME` (one folder for both), else `$XDG_STATE_HOME/herdr-frontend`,
+/// else `~/.local/state/herdr-frontend`. Empty variables count as unset.
+pub fn state_home() -> PathBuf {
+    xdg_home("XDG_STATE_HOME", ".local/state")
+}
+
+fn xdg_home(xdg: &str, fallback: &str) -> PathBuf {
     let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
     if let Some(home) = var(HOME_VAR) {
         return PathBuf::from(home);
     }
-    var("XDG_CONFIG_HOME")
+    var(xdg)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(var("HOME").unwrap_or_default()).join(".config"))
+        .unwrap_or_else(|| PathBuf::from(var("HOME").unwrap_or_default()).join(fallback))
         .join("herdr-frontend")
 }
 
-/// The window's control socket.
+/// The window's control socket, in the state folder.
 pub fn socket_path() -> PathBuf {
-    home().join(SOCKET)
+    state_home().join(SOCKET)
 }
 
 /// One request from a connection, and where its reply goes.

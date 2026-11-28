@@ -28,8 +28,9 @@ Scope rules are in `AGENTS.md`.
 - **UI:** Rune, pinned to one `dev` rev, with its `[patch.crates-io]` block, its toolchain, and
   rune-kit for shell pieces. There is one keymap and prefix-mode machine. Effects run outside
   handlers, and there is no I/O on the UI thread.
-- **Features are Rust**, configured by files in herdr-frontend's home: `keys.json` (`docs/keys.md`),
-  `settings`, and the theme. Eli's Herdr mods are specs, not code to port. There is no mod
+- **Features are Rust**, configured by files in herdr-frontend's config folder: `keys.json`
+  (`docs/keys.md`), `settings`, and the theme. The app never writes them; what it writes is state,
+  in its own state folder (`docs/settings.md` "Config and state"). Eli's Herdr mods are specs, not code to port. There is no mod
   runtime.
 - **A herdr-core client, not a Herdr app integration.** Only herdr-core state is shared. Nothing
   reads, writes, imports or syncs Herdr app's files; app preferences live in herdr-frontend's home.

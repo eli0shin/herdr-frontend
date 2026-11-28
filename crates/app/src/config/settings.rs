@@ -3,7 +3,7 @@
 // (assets/programs/LICENSE-herdr-app.txt), and were modified for herdr-frontend. See
 // THIRD-PARTY-NOTICES.md.
 
-//! `settings.json` in herdr-frontend's home: the person's look and terminal preferences, in
+//! `settings.json` in herdr-frontend's config folder: the person's look and terminal preferences, in
 //! herdr-app's key names (`~/.config/herdr-app/settings.json`, `app:src/settings.rs` `Person`),
 //! so a line copied from one works in the other.
 //!
@@ -60,7 +60,8 @@ pub enum Appearance {
 #[serde(default)]
 pub struct Settings {
     /// How big the whole window is drawn, 1 as designed: terminals, panels and the layout's
-    /// sizes. The zoom keys change it, in tenths, from 0.5 to 3.
+    /// sizes, from 0.5 to 3. The zoom the window starts at: the zoom keys step from it, in
+    /// tenths, and save their zoom as state (`crate::home::SavedZoom`), never here.
     pub zoom: f32,
     /// The terminals' font family and size (points at zoom 1, 6 to 72): Ghostty's `font-family`
     /// and `font-size`.
@@ -247,25 +248,6 @@ pub fn next_zoom(zoom: f32, steps: i32) -> f32 {
     ((zoom * 10.0).round() + steps as f32).clamp(ZOOM_MIN * 10.0, ZOOM_MAX * 10.0) / 10.0
 }
 
-/// `text` (the settings file as it is, or `None` with no file) with `zoom` set and every other
-/// key kept: what the zoom keys write. `None` when the text isn't a JSON object, which is never
-/// overwritten.
-pub fn with_zoom(text: Option<&str>, zoom: f32) -> Option<String> {
-    let mut object = match text.map(str::trim) {
-        None | Some("") => serde_json::Map::new(),
-        Some(text) => match serde_json::from_str::<Value>(text).ok()? {
-            Value::Object(object) => object,
-            _ => return None,
-        },
-    };
-    // In tenths, as the keys step it, so the file says 1.1 and not 1.100000023841858.
-    let tenths = (f64::from(zoom) * 10.0).round() / 10.0;
-    object.insert("zoom".into(), serde_json::json!(tenths));
-    let mut out = serde_json::to_string_pretty(&Value::Object(object)).ok()?;
-    out.push('\n');
-    Some(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,22 +369,5 @@ mod tests {
         assert_eq!(next_zoom(0.5, -1), 0.5);
         // A zoom between tenths lands on the nearest one first.
         assert_eq!(next_zoom(1.13, 1), 1.2);
-    }
-
-    #[test]
-    fn the_zoom_keys_rewrite_only_the_zoom() {
-        let text = r#"{"font_size": 17, "zoom": 1.1, "theme": "arctic"}"#;
-        let out = with_zoom(Some(text), 1.2).unwrap();
-        let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["zoom"], 1.2);
-        assert_eq!(v["font_size"], 17);
-        assert_eq!(v["theme"], "arctic");
-        assert!(out.ends_with('\n'));
-        assert_eq!(
-            with_zoom(None, 1.3).as_deref(),
-            Some("{\n  \"zoom\": 1.3\n}\n")
-        );
-        assert_eq!(with_zoom(Some("{ broken"), 1.3), None);
-        assert_eq!(with_zoom(Some("[1]"), 1.3), None);
     }
 }

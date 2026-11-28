@@ -77,10 +77,10 @@ use terminal::{
 
 use crate::config::settings::{self, Settings, UI_FONT_SIZE};
 use crate::config::theme::Chrome;
-use crate::config::{Config, SETTINGS, Sources, Stamp, Watcher as ConfigWatcher};
+use crate::config::{Config, Sources, Stamp, Watcher as ConfigWatcher};
 use crate::control::{self, Control, Probe};
 use crate::e2e::{self, Tap};
-use crate::home::{Home, VIEW};
+use crate::home::{Home, SavedZoom, VIEW, ZOOM};
 use crate::keyfile::{self, Loaded, Watcher};
 use crate::keys::KeyInfo;
 use crate::link::{Link, News, Offline, Out, Upload};
@@ -418,9 +418,9 @@ pub struct State {
     watcher: Option<ConfigWatcher>,
     /// The files as they were just before the first load, for the watcher to start from.
     stamp: Option<Stamp>,
-    /// `settings.json` texts the zoom keys wrote, oldest first, until the watcher reads the
-    /// newest back: one it reads before that is stale and is skipped.
-    own_writes: Vec<String>,
+    /// The zoom the zoom keys set (`zoom.json` in the state folder): drawn at while
+    /// `settings.json`'s zoom stays the one it was set over ([`SavedZoom::applied`]).
+    saved_zoom: Option<SavedZoom>,
     /// Program icons, rasterized per path and size in device pixels.
     images: Option<ImageCache>,
     icons: RefCell<BTreeMap<(String, u32), rune::Image>>,
@@ -571,8 +571,9 @@ fn user_home() -> String {
 }
 
 impl State {
-    /// A state on `link`, restoring the view saved in `home` and reading its settings. With no
-    /// home it has the built-in defaults: Eli's settings, arctic, no font files.
+    /// A state on `link`, restoring the view saved in `home`'s state folder and reading the
+    /// settings in its config folder. With no home it has the built-in defaults: Eli's settings,
+    /// arctic, no font files.
     pub fn new(link: Box<dyn Link>, home: Option<Home>, window: Keeper) -> State {
         let view = home
             .as_ref()
@@ -585,7 +586,7 @@ impl State {
         let mut keys_read = None;
         let mut keys_problem = None;
         if let Some(home) = &home {
-            let start = keyfile::load(home.dir());
+            let start = keyfile::load(home.config());
             model.set_keymap(start.keymap);
             keys_problem = start.problem.clone();
             if let Some(why) = start.problem {
@@ -597,7 +598,7 @@ impl State {
             keys_read = start.text;
         }
         let sources = match &home {
-            Some(home) => Sources::new(Some(home.dir().to_owned())),
+            Some(home) => Sources::new(Some(home.config().to_owned())),
             None => Sources::none(),
         };
         // Stamped before the load, so the watcher loads what changes during it.
@@ -606,9 +607,13 @@ impl State {
             Some(_) => Config::load(&sources, None),
             None => Config::default(),
         };
-        // The shared state and the list's times: the home's, else the defaults.
-        let shared = Shared::load(home.as_ref().map(|h| h.dir()));
-        let times = shared::load_times(home.as_ref().map(|h| h.dir()));
+        // The shared state, the list's times and the zoom: the state folder's, else the defaults.
+        let shared = Shared::load(home.as_ref().map(|h| h.state()));
+        let times = shared::load_times(home.as_ref().map(|h| h.state()));
+        let saved_zoom = home
+            .as_ref()
+            .and_then(|h| h.read(ZOOM))
+            .and_then(|text| SavedZoom::from_json(&text));
         let sidebar = Sidebar {
             width: shared.sidebar_px(),
             hidden: shared.sidebar_hidden(),
@@ -632,7 +637,7 @@ impl State {
             sources,
             watcher: None,
             stamp,
-            own_writes: Vec::new(),
+            saved_zoom,
             images: None,
             icons: RefCell::new(BTreeMap::new()),
             sidebar,
@@ -700,11 +705,11 @@ impl State {
             .map_or(self.chrome.canvas, crate::view::terminal::look::color)
     }
 
-    /// herdr-frontend's home: where its files are, or would be with none chosen.
-    pub fn home_dir(&self) -> std::path::PathBuf {
+    /// herdr-frontend's config folder: where the files it reads are, or would be with no home.
+    pub fn config_dir(&self) -> std::path::PathBuf {
         match &self.home {
-            Some(home) => home.dir().to_owned(),
-            None => crate::control::home(),
+            Some(home) => home.config().to_owned(),
+            None => crate::control::config_home(),
         }
     }
 
@@ -722,14 +727,15 @@ impl State {
         self.configure(config);
     }
 
-    /// The zoom the window draws at.
+    /// The zoom the window draws at: the zoom keys', else `settings.json`'s.
     pub fn zoom(&self) -> f32 {
-        self.config.settings.zoom
+        SavedZoom::applied(self.saved_zoom, self.config.settings.zoom)
     }
 
     /// Takes a new config: the font, theme and zoom it changes apply at once, to terminals
-    /// already on screen too.
+    /// already on screen too. A new `settings.json` zoom replaces the zoom keys' one.
     pub fn configure(&mut self, config: Config) {
+        let zoom_before = self.zoom();
         let old = &self.config;
         let font_changed = old.font != config.font
             || old.settings.font != config.settings.font
@@ -740,9 +746,12 @@ impl State {
             old.ui_font != config.ui_font || old.settings.ui_font != config.settings.ui_font;
         let look_changed = old.theme != config.theme
             || old.settings.minimum_contrast != config.settings.minimum_contrast;
-        let zoom_changed = old.settings.zoom != config.settings.zoom;
+        let settings_zoom_changed = old.settings.zoom != config.settings.zoom;
         self.apply_config(config, font_changed, ui_changed, look_changed);
-        if zoom_changed {
+        if settings_zoom_changed && self.saved_zoom.take().is_some() {
+            self.save_zoom();
+        }
+        if self.zoom() != zoom_before {
             self.zoomed();
         }
     }
@@ -811,29 +820,30 @@ impl State {
         }
     }
 
-    /// The zoom keys: `steps` tenths in or out, or back to 1 with 0. The new zoom is written to
-    /// `settings.json`, keeping the file's other keys.
+    /// The zoom keys: `steps` tenths in or out, or back to 1 with 0. The new zoom is state,
+    /// saved in `zoom.json`; `settings.json` is never written.
     pub fn zoom_by(&mut self, steps: i32) {
         let zoom = settings::next_zoom(self.zoom(), steps);
         if zoom == self.zoom() {
             return;
         }
-        self.config.settings.zoom = zoom;
+        self.saved_zoom = Some(SavedZoom {
+            zoom,
+            settings: self.config.settings.zoom,
+        });
+        self.save_zoom();
         self.zoomed();
+    }
+
+    /// Writes the zoom keys' zoom to the state folder; with none, `settings.json`'s zoom.
+    fn save_zoom(&self) {
         let Some(home) = &self.home else { return };
-        match settings::with_zoom(self.config.settings_text.as_deref(), zoom) {
-            Some(text) => {
-                home.save(SETTINGS, text.clone());
-                self.config.settings_text = Some(text.clone());
-                self.own_writes.push(text);
-            }
-            None => {
-                let why = "settings.json isn't a JSON object, so the zoom isn't saved".to_owned();
-                if !self.config.problems.contains(&why) {
-                    self.config.problems.push(why);
-                }
-            }
-        }
+        let settings = self.config.settings.zoom;
+        let saved = self.saved_zoom.unwrap_or(SavedZoom {
+            zoom: settings,
+            settings,
+        });
+        home.save(ZOOM, saved.to_json());
     }
 
     /// The zoom changed. Once laid out, the tab area's next layout brings its new size in the
@@ -843,22 +853,6 @@ impl State {
             let (w, h) = self.window_points;
             self.window_sized_points(w, h, self.zoom());
         }
-    }
-
-    /// A config the watcher read. One holding a zoom write of ours that a newer one follows is
-    /// stale: the newer one comes next.
-    fn reloaded(&mut self, config: Config) {
-        if let Some(text) = config.settings_text.as_ref()
-            && let Some(at) = self.own_writes.iter().position(|w| w == text)
-        {
-            if at + 1 < self.own_writes.len() {
-                return;
-            }
-            self.own_writes.clear();
-        } else {
-            self.own_writes.clear();
-        }
-        self.configure(config);
     }
 
     /// What only the window knows, for `status` ([`crate::control::Control::drain`]): the zoom,
@@ -1717,7 +1711,7 @@ impl State {
         let now = self.now;
         let mut changed = false;
         if let Some(config) = self.watcher.as_ref().and_then(ConfigWatcher::latest) {
-            self.reloaded(config);
+            self.configure(config);
             changed = true;
         }
         if let Some(due) = self.tick_at
@@ -1940,7 +1934,7 @@ impl State {
         if self.control.is_some() {
             return;
         }
-        match Control::listen(home.dir().join(control::SOCKET), move || waker()) {
+        match Control::listen(home.state().join(control::SOCKET), move || waker()) {
             Ok(control) if self.tap.is_some() => self.control = Some(control.with_probes()),
             Ok(control) => self.control = Some(control),
             Err(e) => eprintln!("herdr-frontend: not serving ls, do and status: {e}"),
@@ -2567,7 +2561,8 @@ impl State {
         {
             let known = s.keys_read.take();
             s.keys = Some(Watcher::start(
-                home.dir().to_owned(),
+                home.config().to_owned(),
+                home.state().to_owned(),
                 known,
                 s.keys_every,
                 waker,

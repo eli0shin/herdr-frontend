@@ -725,12 +725,16 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   actions and for popups the window doesn't draw yet). The window draws two popups so far: the
   keys help (`cmd-/`), a dialog in the middle, and the Agents sort menu, anchored under the
   sidebar's sort button (`ag-sort`, `El::anchored`).
-- **Home** (`$HERDR_FRONTEND_HOME`, else `$XDG_CONFIG_HOME/herdr-frontend`, else
-  `~/.config/herdr-frontend`): `keys.json` (the key file), `view.json` (the model's saved view), `window.json` (position and
-  physical size, saved on close and quit only), and `shared.json` and `agents.json` (the
-  app-local shared state and the Agents list's times, `docs/sidebar.md`). Writes go through a saver thread, written
-  whole and renamed; close and quit write at once. A saved place mostly off every display (one
-  that's gone, or the corner AeroSpace parks a hidden workspace's windows in) opens centered.
+- **Home**: a config folder (`$XDG_CONFIG_HOME/herdr-frontend`, else
+  `~/.config/herdr-frontend`) with `keys.json` (the key file) and the look's files, which the app
+  never writes, and a state folder (`$XDG_STATE_HOME/herdr-frontend`, else
+  `~/.local/state/herdr-frontend`) with `view.json` (the model's saved view), `window.json`
+  (position and physical size, saved on close and quit only), `zoom.json`, and `shared.json` and
+  `agents.json` (the app-local shared state and the Agents list's times, `docs/sidebar.md`).
+  `$HERDR_FRONTEND_HOME` is one folder for both (`docs/settings.md` "Config and state"). Writes
+  go through a saver thread, written whole and renamed; close and quit write at once. A saved
+  place mostly off every display (one that's gone, or the corner AeroSpace parks a hidden
+  workspace's windows in) opens centered.
   `WindowHandle::placement` reads winit's `is_maximized`, which on a borderless macOS window
   sets a titled style mask and takes it off again, rebuilding AppKit's title bar views: call it
   only on close, never per resize.

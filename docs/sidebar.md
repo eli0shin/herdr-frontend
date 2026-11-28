@@ -107,16 +107,19 @@ Where it differs from Herdr app and the mods:
   overlay's backdrop), so clicking a row while jumping both closes the bar and clicks the row.
   The mod means "a click elsewhere leaves without a jump", so here the press only leaves.
 
-## Files in the home
+## Files in the state folder
+
+Both are state the app writes, in `~/.local/state/herdr-frontend` (`docs/settings.md` "Config
+and state"), never in the config folder.
 
 | File | What it is |
 | --- | --- |
 | `shared.json` | The app-local shared state (§0): `space.colors`, `agents.sort`, `dotfiles.agents.order` and `dotfiles.agents.hidden-machines` (the names Eli's mods gave them), plus `sidebar.px` and `sidebar.hidden` |
 | `agents.json` | Each agent's last state change, `{"changed": {address: {s, at}}}` as `eli-agents` stores it. Gone agents are forgotten after 30 days |
 
-**Defaults.** A home without these files starts from the defaults: the priority sort, no hidden
+**Defaults.** A state folder without these files starts from the defaults: the priority sort, no hidden
 machines, colors assigned as spaces appear, a 366 pt sidebar that shows, and no times. Everything
-lives only in herdr-frontend's home. herdr-frontend is a client of herdr-core, so it never reads,
+lives only in herdr-frontend's state folder. herdr-frontend is a client of herdr-core, so it never reads,
 imports from or syncs with Herdr app's files (`AGENTS.md`); what the two share is what herdr-core
 holds (terminals, labels such as `herdr.pinned`, and the layout documents).
 

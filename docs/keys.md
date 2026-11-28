@@ -6,8 +6,8 @@ progress. The app turns each Rune key event into a press and steps the model wit
 
 ## The key file
 
-`keys.json` sits in herdr-frontend's home (`$HERDR_FRONTEND_HOME`, else
-`$XDG_CONFIG_HOME/herdr-frontend`, else `~/.config/herdr-frontend`). It uses the format of Eli's
+`keys.json` sits in herdr-frontend's config folder (`$XDG_CONFIG_HOME/herdr-frontend`, else
+`~/.config/herdr-frontend`; `docs/settings.md` "Config and state"). It uses the format of Eli's
 Herdr app `keys.json`, and the default file is that file verbatim (`crates/model/src/keys.json`,
 the table of `research/feature-inventory.md` §22).
 
@@ -44,9 +44,10 @@ the table of `research/feature-inventory.md` §22).
 A background thread (`crates/app/src/keyfile.rs`) reads the file every 500 ms and parses each
 new text off the UI thread. A good file replaces the keymap at once. A bad file keeps the last
 good keys. Its problems, every one with its section and key, go to an error toast and to
-`keys.error` in the home, which is removed once the file is good again. A text that doesn't
+`keys.error` in the state folder, which is removed once the file is good again. A text that doesn't
 parse counts as bad only after it stays the same for another look, so the app doesn't report a
-half-saved file. At start, a home without a key file gets the defaults written to it.
+half-saved file. At start, a config folder without a key file gets the defaults written to it,
+the only file the app ever writes there.
 
 ## How a key travels
 
