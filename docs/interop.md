@@ -68,17 +68,6 @@ Choices made on purpose:
   after a core restart (`herdr-core-protocol.md` §4, items 1-3). herdr-frontend follows those
   sizes without fighting them, and takes the size back on its next real use.
 
-Known limit: in-band size reports from other viewers. Neovim 0.12 turns on mode 2048 and from then
-on takes its size only from in-band reports (`CSI 48;rows;cols;…t`), ignoring SIGWINCH. Every
-viewer's terminal answers when the mode turns on, and the core forwards each answer to the program.
-Herdr app's terminal stays at its own pane's grid when it isn't the leader (§4 item 4), so its
-answer carries the wrong grid. If it arrives last, Neovim draws for Herdr app's grid while the pty
-and herdr-frontend are at another one: rows overflow onto the next row, and floats and splits land
-in the wrong places. The Herdr iOS app sees the same from the desktop app. The next resize sent
-from herdr-frontend (a zoom, for example) puts it right, because its terminal's report then comes
-last. The fix belongs in herdr-core: forward `CSI 48 t` only from the size leader, or generate it
-in the core from the pty's size.
-
 ## Tests
 
 - `crates/herdr-client/tests/multi_viewer.rs`: two framed connections on an isolated core check
