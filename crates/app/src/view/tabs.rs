@@ -26,15 +26,15 @@
 
 use herdr_shared::{Displayed, Space, Tab, machine_of};
 use model::{Action, SpaceExt, TabPill};
-use rune::{
-    Cx, Drag, El, LoopSpec, Phase, Spring, Transition, Tx, WheelEvent, el, icon, row, text,
-};
+use rune::{Cx, Drag, El, Phase, Tx, WheelEvent, el, icon, row, text};
 
 use crate::State;
 use crate::config::programs::Program;
 use crate::state::tab_key;
-use crate::view::icons::{CLOSE, MONITOR, SERVER, SPINNER};
+use crate::view::icons::{CLOSE, MONITOR, SERVER};
 use crate::view::shell::{BAR, program_icon};
+use crate::view::spinner;
+use crate::view::wheel::{self, Axis};
 
 /// A pill's height, corner radius and widest name.
 pub const PILL: f32 = 29.0;
@@ -97,7 +97,7 @@ pub fn view(s: &State, cx: &Cx<State>) -> El {
         .fill(c.chrome)
         .window_drag()
         .on_wheel(wheel)
-        .child(
+        .child(wheel::notches_at_once(
             row()
                 .key("tab-scroll")
                 .grow(1.0)
@@ -105,22 +105,21 @@ pub fn view(s: &State, cx: &Cx<State>) -> El {
                 .h_full()
                 .scroll_x()
                 .child(pills_row(pills)),
-        )
+            "tab-scroll",
+            Axis::X,
+            s,
+        ))
         .children(space.map(|space| machine(s, space)))
 }
 
 /// The pills, in one row the strip scrolls: Rune's `scroll_x` stretches its content to the
 /// strip's width, and a lone pill would be that content.
-///
-/// Switching tabs swaps the selected pill's colors at once, as Herdr app does: Rune would
-/// otherwise spring them on the click.
 fn pills_row(pills: Vec<El>) -> El {
     row()
         .key("tab-pills")
         .h_full()
         .gap(3.0)
         .items_center()
-        .motion(Spring::NONE)
         .children(pills)
 }
 
@@ -141,12 +140,7 @@ fn pill(s: &State, tab: &Tab, p: TabPill, cx: &Cx<State>) -> El {
         .truncate()
         .help(p.label.clone());
     let status = match p.status {
-        Some(Displayed::Working) => Some(
-            icon(&SPINNER, MARK)
-                .key("tab-working")
-                .color(c.working)
-                .looping(LoopSpec::rotation(0.9)),
-        ),
+        Some(Displayed::Working) => Some(spinner::ring("tab-working", MARK, c.working)),
         Some(state @ (Displayed::Blocked | Displayed::Done)) => Some(
             el().key(if state == Displayed::Blocked {
                 "tab-blocked"
@@ -165,18 +159,12 @@ fn pill(s: &State, tab: &Tab, p: TabPill, cx: &Cx<State>) -> El {
     };
     let close = p.active.then(|| {
         let id = p.tab.clone();
-        // It moves to the selected pill at once rather than fading out and in.
         el().key("tab-close")
             .size(MARK, MARK)
-            .transition(Transition::none())
             .focusable(false)
             .label("Close tab")
             .on_press_tx(move |s: &mut State, tx| s.act(Action::CloseTabOf(id.clone()), tx))
-            .child(
-                icon(&CLOSE, MARK)
-                    .color(c.dim)
-                    .transition(Transition::none()),
-            )
+            .child(icon(&CLOSE, MARK).color(c.dim))
     });
     let (drag, menu) = (p.tab.clone(), p.tab.clone());
     row()

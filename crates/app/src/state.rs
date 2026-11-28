@@ -507,9 +507,9 @@ pub struct State {
     /// The pointer over a terminal, in points in its pane: where Cmd pressed with no motion
     /// underlines a link.
     pointer: Option<(String, f32, f32)>,
-    /// The commit ([`rune::commit_generation`]) that draws the last step that showed another
-    /// space: [`State::space_switched`].
-    space_switched_in: Option<u64>,
+    /// Where Rune's own scroll viewports are scrolled to, for a wheel's notches
+    /// ([`crate::view::wheel`]).
+    pub wheel: crate::view::wheel::Offsets,
 }
 
 impl Default for State {
@@ -678,7 +678,7 @@ impl State {
             divider_drag: None,
             spare_edit: TextEdit::default(),
             pointer: None,
-            space_switched_in: None,
+            wheel: Default::default(),
         };
         s.keys_problem = keys_problem;
         s.configure_all(config);
@@ -968,19 +968,11 @@ impl State {
         self.in_use.as_deref()
     }
 
-    /// Whether the commit being drawn shows another space than the last one did, by a step
-    /// since: the window then lands everything that commit changes at once ([`crate::view`]).
-    /// Any other commit keeps its motion, so a pill added or closed within a space fades.
-    pub fn space_switched(&self) -> bool {
-        self.space_switched_in == Some(rune::commit_generation())
-    }
-
     /// Steps the model and carries out what it asks. True when it used the key (always, for
     /// anything but a key).
     pub fn step(&mut self, now: f64, input: impl Into<Input>) -> bool {
         self.now = self.now.max(now);
         let before = self.model.mode().clone();
-        let space = self.model.active_space().map(|s| s.id.clone());
         let effects = self.model.step(self.now, input);
         self.agents_stale = true;
         let handled = effects.handled;
@@ -1000,10 +992,6 @@ impl State {
         }
         for pick in picks {
             self.carry_out(pick);
-        }
-        if self.model.active_space().map(|s| s.id.as_str()) != space.as_deref() {
-            // A step runs between commits: the next one draws it.
-            self.space_switched_in = Some(rune::commit_generation() + 1);
         }
         // The world may have changed under an open list (a tab made or closed elsewhere): its
         // rows are counted again, so the cursor and clicks reach exactly what it shows.
@@ -1030,8 +1018,10 @@ impl State {
         }
         let jumping = |m: &model::Mode| matches!(m, model::Mode::Popup(PopupState::Jump(_)));
         if jumping(before) && !jumping(&mode) && self.sidebar.for_jump {
+            let was = self.sidebar.shown();
             self.sidebar.for_jump = false;
             self.sidebar.hidden = true;
+            self.sidebar_resized(was);
         }
         match &mode {
             model::Mode::Popup(PopupState::List(list)) if crate::view::popup::drawn(list.popup) => {
@@ -1082,6 +1072,7 @@ impl State {
                 if !jumping(before) && self.sidebar.hidden {
                     self.sidebar.hidden = false;
                     self.sidebar.for_jump = true;
+                    self.sidebar_resized(None);
                 }
             }
             model::Mode::Popup(PopupState::List(list)) => {
@@ -1464,7 +1455,9 @@ impl State {
                 self.ui.window.push(command)
             }
             AppCommand::ToggleSidebar => {
+                let before = self.sidebar.shown();
                 self.sidebar.hidden = !self.sidebar.hidden;
+                self.sidebar_resized(before);
                 // Toggled by hand while the jump bar showed it: it stays as toggled.
                 self.sidebar.for_jump = false;
                 let sort_menu = self.model.mode().popup().and_then(PopupState::popup);
@@ -1861,10 +1854,12 @@ impl State {
     /// is kept when the drag ends (put back when it's cancelled).
     pub fn drag_sidebar(&mut self, drag: &rune::Drag) {
         let from = *self.sidebar.dragged_from.get_or_insert(self.sidebar.width);
+        let was = self.sidebar.shown();
         match drag.phase {
             rune::Phase::Up if drag.cancelled() => self.sidebar.width = from,
             _ => self.sidebar.width = shared::clamp_sidebar(from + drag.dx),
         }
+        self.sidebar_resized(was);
         if drag.phase == rune::Phase::Up {
             self.sidebar.dragged_from = None;
             let width = self.sidebar.width;
@@ -2601,6 +2596,27 @@ impl State {
         s.apply_ui(tx);
     }
 
+    /// The tab area is `area`: the model's geometry, and so the panes' rects and grids.
+    fn measured(&mut self, area: Area) {
+        self.area = Some(area);
+        self.set_geometry(self.now, model::Rect::new(0.0, 0.0, area.w, area.h));
+    }
+
+    /// The sidebar's width on screen was `before` (`None`: hidden). The tab area beside it
+    /// takes or gives back the difference in the same step, so the panes are where they end up
+    /// in the frame the sidebar changes: waiting for the area's next layout to report its size
+    /// would draw one frame of panes at their old rects, with the split gaps' border color in
+    /// the room between (no animations, `AGENTS.md`). That report then finds the area as it
+    /// is.
+    fn sidebar_resized(&mut self, before: Option<f32>) {
+        let after = self.sidebar.shown();
+        let Some(area) = self.area.filter(|_| before != after) else {
+            return;
+        };
+        let w = (area.w + before.unwrap_or(0.0) - after.unwrap_or(0.0)).max(0.0);
+        self.measured(Area { w, h: area.h });
+    }
+
     /// The tab area was laid out: the model's geometry, and the pane in use's grid.
     pub fn laid_out(&mut self, rect: [f32; 4], tx: &mut Tx) {
         let area = Area {
@@ -2612,9 +2628,9 @@ impl State {
             tx.live_only();
             return;
         }
-        self.area = Some(area);
         self.scale = scale;
-        self.set_geometry(tx.clock(), model::Rect::new(0.0, 0.0, area.w, area.h));
+        self.now = self.now.max(tx.clock());
+        self.measured(area);
         self.pump(tx.clock());
         self.apply_ui(tx);
     }

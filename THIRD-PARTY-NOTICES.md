@@ -67,7 +67,7 @@ changed where its design differs. Each carries a notice saying so.
 | `crates/app/src/config/settings.rs` | `src/settings.rs` `next_zoom`, `ZOOM_MIN`, `ZOOM_MAX`, `ui_font_size` |
 | `crates/app/src/view/dialog.rs` | `defaults/mods/prompt/main.js`, `defaults/mods/confirm/main.js` |
 | `crates/app/src/view/help.rs` | `defaults/mods/help/main.js` |
-| `crates/app/src/view/icons.rs` | The path data of the shipped mods' SVG icons: `defaults/mods/workspace-chrome/*.svg` (spinner, monitor, server, search and the others it names), `defaults/mods/pane/close.svg`, `defaults/mods/terminals-bar/command.svg`, `defaults/frame/palette/command.svg`; `defaults/mods/menu/main.js` `menuIcon`. Many are Lucide icons (ISC, see "Icons"). |
+| `crates/app/src/view/icons.rs` | The path data of the shipped mods' SVG icons: `defaults/mods/workspace-chrome/*.svg` (monitor, server, search and the others it names), `defaults/mods/pane/close.svg`, `defaults/mods/terminals-bar/command.svg`, `defaults/frame/palette/command.svg`; `defaults/mods/menu/main.js` `menuIcon`. Many are Lucide icons (ISC, see "Icons"). |
 | `crates/app/src/view/list.rs` | `defaults/mods/picker/main.js`, `defaults/frame/palette/main.js` (how a list scrolls with its cursor) |
 | `crates/app/src/view/machines.rs` | `defaults/mods/machine-add/main.js`; `defaults/frame/settings/main.js` (Settings → Machines) |
 | `crates/app/src/view/menu.rs` | `defaults/mods/menu/main.js` |
@@ -77,6 +77,7 @@ changed where its design differs. Each carries a notice saying so.
 | `crates/app/src/view/picker.rs` | `defaults/mods/picker/main.js` |
 | `crates/app/src/view/shell.rs` | `src/window.rs` `HANDLE`; `src/window/pane_drag.rs`; `defaults/mods/tabs/main.js` (through `eli-tabs`) |
 | `crates/app/src/view/sidebar.rs` | `defaults/mods/workspace-chrome/main.js`, `defaults/mods/agents/main.js` (through Eli's `eli-chrome` and `eli-agents` clones) |
+| `crates/app/src/view/spinner.rs` | The path data of `defaults/mods/workspace-chrome/spinner.svg`; the peek bar's braille frames from `defaults/mods/peek/main.js` |
 | `crates/app/src/view/tabs.rs` | `defaults/mods/tabs/main.js` (through Eli's `eli-tabs` clone) |
 | `crates/app/src/config/programs.rs` | `src/programs.rs` (the program table and how a terminal's program is resolved) |
 | `crates/app/src/config/theme.rs` | `src/settings.rs` (the theme format and the colors derived from it) |

@@ -19,17 +19,16 @@
 use model::agents::{AgentRow, Branch, Fold, Header, List, Row, Sort, SubRow, Tree};
 use model::mode::{ListPopup, PopupState};
 use model::{Action, Mode, Popup, PopupAction};
-use rune::{
-    Align, Color, Cursor, Cx, El, Icon, LoopSpec, Side, Spring, Transition, col, el, icon, row,
-    text,
-};
+use rune::{Align, Color, Cursor, Cx, El, Icon, Side, col, el, icon, row, text};
 
 use crate::State;
 use crate::config::theme::{Chrome, Rgba};
 use crate::view::icons::{
-    CHECK, CHEVRON_DOWN, CHEVRON_RIGHT, CLOCK, GIT_PULL_REQUEST, LAYERS, MONITOR, SPINNER,
+    CHECK, CHEVRON_DOWN, CHEVRON_RIGHT, CLOCK, GIT_PULL_REQUEST, LAYERS, MONITOR,
 };
 use crate::view::shell::{BAR, program_icon};
+use crate::view::spinner;
+use crate::view::wheel::{self, Axis};
 use herdr_shared::Displayed;
 
 /// The list's live titles: a touch under white (`LIVE_TITLE`).
@@ -183,7 +182,7 @@ fn agents(s: &State, list: &List, cx: &Cx<State>) -> El {
         .grow(1.0)
         .min_h(0.0)
         .children(empty)
-        .child(
+        .child(wheel::notches_at_once(
             col()
                 .key("ag-list")
                 .w_full()
@@ -192,7 +191,10 @@ fn agents(s: &State, list: &List, cx: &Cx<State>) -> El {
                 .px(8.0)
                 .scroll(rune::ScrollSpec::default())
                 .children(rows),
-        )
+            "ag-list",
+            Axis::Y,
+            s,
+        ))
 }
 
 /// A section header: its label in its status color and, in the priority view, its count. It
@@ -225,10 +227,7 @@ fn header(s: &State, h: &Header) -> El {
 fn mark(s: &State, status: Option<Displayed>, compact: bool) -> El {
     let c = &s.chrome;
     match status {
-        Some(Displayed::Working) => glyph(&SPINNER, 12.0, c.working)
-            .key("spinner")
-            .mx(1.0)
-            .looping(LoopSpec::rotation(0.9)),
+        Some(Displayed::Working) => spinner::ring("spinner", 12.0, c.working).mx(1.0),
         Some(Displayed::Blocked) if compact => el()
             .key("needs-you")
             .size(14.0, 14.0)
@@ -378,9 +377,7 @@ fn agent(s: &State, list: &List, r: &AgentRow, jumping: bool, cx: &Cx<State>) ->
             text(r.title.clone())
                 .key("title")
                 .font(s.ui_font(14.5, 400.0))
-                // An idle agent's title brightens while it's selected, at once as the
-                // selection moves.
-                .motion(Spring::NONE)
+                // An idle agent's title brightens while it's selected.
                 .color(if live || r.focused {
                     hex(LIVE_TITLE)
                 } else {
@@ -487,26 +484,21 @@ fn agent(s: &State, list: &List, r: &AgentRow, jumping: bool, cx: &Cx<State>) ->
             .radius(2.0)
             .fill(tone(c, status))
     });
-    // The selected row: a faint wash and a thin outline under what it shows. They are their
-    // own element, on the selected row only, so they move to another row at once when the
-    // focused agent changes (a click, a space or tab switch) rather than fading out on one row
-    // and in on the other, and the row's own motion (folds, re-sorts) stays as it is. The wash
-    // gives way to the hover's fill, as the row's own fill would.
-    // Pinned over the row's 1 pt border, outside its padding box.
+    // The selected row: a faint wash and a thin outline under what it shows, on the selected
+    // row only. The wash gives way to the hover's fill, as the row's own fill would. Pinned over
+    // the row's 1 pt border, outside its padding box.
     let selected = r.focused.then(|| {
         el().key("selected")
             .pin(Some(-1.0), Some(-1.0), Some(-1.0), Some(-1.0))
             .radius(8.0)
             .border(1.0, a(c.working, 0x73))
-            .transition(Transition::none())
             .child(
                 el().key("wash")
                     .w_full()
                     .h_full()
                     .radius(8.0)
                     .fill(a(c.working, 0x12))
-                    .group_opacity(1.0, 0.0)
-                    .transition(Transition::none()),
+                    .group_opacity(1.0, 0.0),
             )
     });
     let target = r.address.clone();

@@ -20,6 +20,7 @@ use rune::{El, ScrollSpec, col, row, text};
 
 use crate::State;
 use crate::view::overlay::{self, Place};
+use crate::view::wheel::{self, Axis};
 
 pub const WIDTH: f32 = 640.0;
 pub const HEIGHT: f32 = 520.0;
@@ -120,7 +121,7 @@ pub fn view(s: &State, list: &ListPopup) -> El {
             Some(overlay::esc(s)),
         ))
         .child(overlay::field(s, "Type to filter\u{2026}", None, None))
-        .child(
+        .child(wheel::notches_at_once(
             col()
                 .key(ROWS)
                 .w_full()
@@ -128,5 +129,8 @@ pub fn view(s: &State, list: &ListPopup) -> El {
                 .min_h(0.0)
                 .scroll(ScrollSpec::default())
                 .children(body),
-        )
+            "help-rows",
+            Axis::Y,
+            s,
+        ))
 }

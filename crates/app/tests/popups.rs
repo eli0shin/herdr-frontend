@@ -386,17 +386,22 @@ fn the_picker_goes_to_tabs_closes_them_and_unfolds_quiet_spaces() {
     // dotfiles: review (0), shell (1); repos: fix (2), docs (3); earlier (4); new tab (5)…
     assert_eq!(list(&rt).rows, 7);
     assert_eq!(list(&rt).cursor, 0);
-    // The working agent's tab spins, as the shipped picker's glyph does.
-    let spinner = rt
-        .elements()
-        .into_iter()
+    // The working agent's tab spins, as the shipped picker's glyph does: its arcs take turns.
+    let elements = rt.elements();
+    let spinner = elements
+        .iter()
         .find(|e| {
             e.key
                 .as_deref()
                 .is_some_and(|k| k.starts_with("picker-working-"))
         })
         .expect("a working tab's spinner");
-    assert!(spinner.loop_phase.is_some(), "it turns");
+    assert!(
+        elements
+            .iter()
+            .any(|e| e.path.starts_with(&format!("{}/", spinner.path)) && e.loop_phase.is_some()),
+        "it turns"
+    );
 
     // "earlier" unfolds the quiet spaces and stays open on it.
     for _ in 0..4 {
