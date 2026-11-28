@@ -58,7 +58,7 @@ use std::time::Duration;
 
 use ghostty_vt_sys::{GHOSTTY_KEY_C, GHOSTTY_KEY_V};
 use herdr_proto::Display;
-use herdr_proto::methods::TerminalAttach;
+use herdr_proto::methods::{InitialSize, TerminalAttach};
 use model::agents::{self, Sort, Tracker};
 use model::mode::PopupState;
 use model::{
@@ -1381,13 +1381,38 @@ impl State {
         }
     }
 
+    /// A pane's program starts at its pane's grid, with this window's colors and cell, as
+    /// `terminal.run {size, display}` allows (`herdr-core-protocol.md` §2.1): the grid the
+    /// RESIZE that follows would send ([`State::grid_for`]), and the FACTS it would send. Without
+    /// a size, the core starts it at its headless 200 × 120, and a viewer that sizes its terminal
+    /// from the record before this window's RESIZE lands (Herdr app attaching a pane it doesn't
+    /// show) keeps it there and answers the program from it: Neovim laid out its first paint for
+    /// 200 × 120 (ticket 047).
+    fn start_at_its_grid(&self, token: model::Token, request: model::Request) -> model::Request {
+        let model::Request::Run(mut run) = request else {
+            return request;
+        };
+        if let Some(rect) = self.model.launch_rect(token) {
+            let grid = self.grid_for(rect);
+            run.size = Some(InitialSize {
+                cols: grid.columns.max(1),
+                rows: grid.rows.max(1),
+            });
+        }
+        run.display = Some(self.display());
+        model::Request::Run(run)
+    }
+
     fn not_yet(&mut self, action: &Action) {
         self.toast(toast::not_yet(action));
     }
 
     fn carry_out(&mut self, effect: Effect) {
         match effect {
-            Effect::Call { token, request } => self.link.call(token, request),
+            Effect::Call { token, request } => {
+                let request = self.start_at_its_grid(token, request);
+                self.link.call(token, request)
+            }
             Effect::Doc { machine, round } => self.link.doc(machine, round),
             Effect::Focus(focus) => self.ui.focus = Some(focus),
             Effect::WakeAt(at) => {

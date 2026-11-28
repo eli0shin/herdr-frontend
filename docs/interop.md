@@ -18,6 +18,7 @@ What herdr-frontend does (`crates/app/src/state.rs`):
 
 | When | What it sends |
 | --- | --- |
+| herdr-frontend makes a pane: a new space, tab or split, from a key, the palette or the control CLI | `terminal.run` with `size`, the grid the pane will have once placed (the grid its RESIZE would send), and `display`, the FACTS. The program starts at its pane's grid, so no viewer ever sees it at the core's headless 200×120. |
 | A pane appears, in any tab, and again after a dropped connection or a restarted program | `terminal.attach` with `resumed: true` and the core's current grid. It takes nothing. |
 | A pane is shown in the window while the window is in front: its tab is shown, the peek opens on it, or the window comes to the front | FACTS (if the cell or colors changed), then RESIZE with the pane's grid. Every shown pane does this, not just the focused one. |
 | A shown pane's grid changes while the window is in front (split, close, divider drag, keyboard resize, sidebar toggle, window resize, zoom, font) | RESIZE, at most every 25 ms per pane, always ending with the final grid. Every pane whose grid changed sends its own. |
@@ -83,6 +84,9 @@ Choices made on purpose:
   doesn't move the size. The app never takes the size back while idle or in the background. A
   click or typing takes it back. After a core restart, the app's `resumed` reattach leaves
   Herdr app's new grid alone.
+- `crates/app/tests/launch_size.rs`: a new tab and a split made by the app on an isolated core
+  start at their panes' grids (the core's `created` record), and a second viewer that attaches
+  at that grid, as Herdr app attaches a pane it doesn't show, tells the program the same grid.
 - `crates/app/tests/resize_redraw.rs`: a program that redraws its whole screen on SIGWINCH, in
   a shown pane, while the window grows and shrinks. After each resize the app shows exactly
   the core's screen at the core's grid.

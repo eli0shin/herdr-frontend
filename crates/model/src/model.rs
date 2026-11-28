@@ -820,6 +820,41 @@ impl Model {
         );
     }
 
+    /// Where the pane a launch makes will be laid out once it's placed: a new space's or tab's
+    /// lone pane fills the tab area, and a split's new pane takes its place in the target's tab
+    /// split as [`Intent::Split`] will split it. `None` for a split whose target is gone.
+    fn placed_rect(&self, launch: &Launch) -> Option<Rect> {
+        match launch {
+            Launch::Space { .. } | Launch::Tab { .. } => Some(self.geometry.area),
+            Launch::Split {
+                target,
+                axis,
+                pane,
+                container,
+            } => {
+                let mut root = self.world.tab_of(target)?.root.clone();
+                let block = herdr_shared::Node::block(pane.clone(), Content::terminal(""));
+                if !root.split(target, *axis, block, container.clone()) {
+                    return None;
+                }
+                geometry::blocks(&root, &self.geometry)
+                    .into_iter()
+                    .find(|(id, _)| id == pane)
+                    .map(|(_, rect)| rect)
+            }
+        }
+    }
+
+    /// Where the pane of the launch waiting on `token` will be laid out, in the tab area's
+    /// points: the app starts its program at that pane's grid (`terminal.run {size}`), so it
+    /// never runs, or is first drawn by any viewer, at the core's headless size.
+    pub fn launch_rect(&self, token: Token) -> Option<Rect> {
+        match self.pending.get(&token)? {
+            Pending::Launch { launch, .. } => self.placed_rect(launch),
+            _ => None,
+        }
+    }
+
     /// The connection dropped or came back: launches under way may never be answered, so their
     /// control calls get an error now.
     fn drop_answers(&mut self, fx: &mut Effects) {

@@ -1415,3 +1415,52 @@ fn unknown_node_kinds_and_mod_blocks_survive_this_screens_writes() {
     assert!(root.find("m1").is_some_and(Node::is_pane));
     assert!(matches!(root.find("w1").unwrap().kind, Kind::Other { .. }));
 }
+
+/// A launch knows where its pane will be laid out before the terminal exists, so the app can
+/// start its program at that pane's grid: the rect it gives is the one the pane gets once placed,
+/// for a new tab's lone pane, a split, and a split nested in another (ticket 047).
+#[test]
+fn a_launch_knows_the_rect_its_pane_will_take() {
+    let mut core = three_tabs();
+    let mut m = connected(&mut core);
+    let area = Rect::new(0.0, 30.0, 1001.0, 640.0);
+    drive(
+        &mut m,
+        &mut core,
+        Event::Geometry(Geometry {
+            area,
+            gap: 1.0,
+            zoom: 1.0,
+            cell: (8.5, 18.5),
+        }),
+    );
+    for action in [
+        Action::PaneSplit(Split::Right),
+        Action::PaneSplit(Split::Down),
+        Action::PaneSplit(Split::Right),
+        Action::TabNew,
+    ] {
+        let effects = m.step(core.now, action.clone()).list;
+        let token = effects
+            .iter()
+            .find_map(|e| match e {
+                Effect::Call {
+                    token,
+                    request: model::Request::Run(_),
+                } => Some(*token),
+                _ => None,
+            })
+            .expect("a terminal.run");
+        let planned = m.launch_rect(token).expect("a rect");
+        run_effects(&mut m, &mut core, effects);
+        let pane = m.focused_pane().expect("the new pane, focused");
+        let placed = m
+            .pane_rects()
+            .into_iter()
+            .find(|(id, _)| *id == pane)
+            .map(|(_, rect)| rect);
+        assert_eq!(Some(planned), placed, "{action:?}");
+    }
+    assert_eq!(m.pane_rects().len(), 1, "the new tab's lone pane");
+    assert_eq!(m.pane_rects()[0].1, area);
+}
