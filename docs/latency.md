@@ -78,37 +78,90 @@ dropping or retrying would show as the pointer itself lagging, which nothing her
 main display (Samsung LS27D80) is behind the dock's MST hub at 60 Hz. DisplayLink drives only
 the small Logitech panel ("FLARE"), not the main display.
 
-## What herdr-frontend's part costs
+## Where a key's time goes
 
-Release build, on this Mac (M1 Pro) under a load average of about 200 from other builds, with the
-window covered (the screen was locked):
+`just latency` on this Mac (M1 Pro, release build, the window on screen on the 60 Hz Samsung
+display), 73 keys typed into `sh` that reached the screen:
 
-| keys, window covered, ms | p50 | p90 | max |
+| keys, ms | p50 | p90 | max |
 | --- | --- | --- | --- |
-| handler to the worker's encoding | 0.0 | 0.1 | 3.8 |
-| DATA to the echo arriving (core, `hc`, pty: not ours) | 0.7 | 7.7 | 23.0 |
-| echo to parsed | 0.0 | 0.0 | 2.1 |
-| parsed to the snapshot published | 0.0 | 0.0 | 0.5 |
+| handler to the worker's encoding | 0.0 | 0.0 | 1.3 |
+| encoded to DATA on the connection | 0.1 | 0.6 | 1.7 |
+| DATA to the echo arriving (core, `hc`, pty: not ours) | 0.5 | 3.3 | 28.8 |
+| echo to parsed | 0.0 | 0.0 | 0.8 |
+| parsed to the snapshot published | 0.0 | 0.0 | 16.0 |
+| published to the UI taking it | 14.8 | 20.2 | 27.3 |
+| taken to the pane's rows built | 0.2 | 0.6 | 3.1 |
+| built to the frame encoded | 0.8 | 2.8 | 10.3 |
+| frame encoded to on screen | 56.2 | 56.8 | 64.5 |
+| **handler to on screen** | **72.8** | **81.6** | **107.3** |
 
-The worker's stages don't depend on the window. The UI's do: a covered window polls as soon as
-it's woken, while one on screen polls on the display's refresh. So this run's encoded-to-DATA
-(0.1 ms) and published-to-taken (0.1 ms) say nothing about a window on screen, and are left
-out of the table. Those hops, the rows built, the frame, its presentation, the refresh rate and
-the pacing are pending a run with the window on screen.
+Two A/B runs of the same build earlier the same morning (100 keys each, 113 on screen) put
+handler to on screen at 57.5 and 59.5 ms p50: the presentation step moves by a refresh or so
+from run to run.
+
+Almost all of the time is waiting for the display, not work:
+
+- **Published to taken, about one refresh.** The waker asks for a frame, and Rune draws it on
+  the display link's next tick. The worker's work before it and the UI's after it (rows, layout,
+  paint, encode) are each about a millisecond.
+- **Frame encoded to on screen, 2 to 3.5 refreshes.** Rune aims each frame at a refresh about
+  19 ms out (p50; the display link's `target`), and macOS shows it 16.7 to 33.3 ms after that
+  target. That second part is the window server's queue, after the frame is submitted.
+
+The window draws at the display's 60 Hz: no timer, `ambient_fps` cap or render hold paces it,
+and of the 2,500 frames in these runs macOS skipped none while the window was uncovered.
+Under a flood (`yes | head -n 400000`), though, the longest runs of back-to-back frames came at
+38 fps, mostly 33.3 ms apart, while each frame's update and encode took about a millisecond.
+Something between the snapshot handoff and the display link draws every other refresh while a
+terminal is busy. That doesn't touch a key typed into a quiet terminal; it's for a follow-up.
+
+### Rune's swap chain
+
+`App::frame_latency(1)` gives a window two drawables instead of Rune's default three, so a
+frame waits less behind the ones before it. One run each, same build:
+
+| frames, ms | drawables | p50 | p90 |
+| --- | --- | --- | --- |
+| frame encoded to on screen | 3 (default) | 39.7 | 56.5 |
+| | 2 | 31.5 | 38.3 |
+| handler to on screen | 3 (default) | 57.5 | 73.3 |
+| | 2 | 59.5 | 65.0 |
+
+Two drawables cut the tail by about a refresh, but the median didn't move. The same setting
+measured 39.7 and 56.2 ms p50 for the presentation step in two runs, a bigger spread than the
+gain. So it isn't shipped: it needs repeated runs to show a real gain first.
+
+### What the recording leaves for the hardware
+
+On screen, a key in a quiet terminal takes about 60 to 80 ms from the app's handler to the
+screen, about 1 ms of which is herdr-frontend's own work. The rest is the core's echo, the
+display link and the window server. A second between a click and the cursor isn't anywhere on
+this path; the recording itself shows clicks landing within about 200 ms. What the trace can't
+see is before the OS stamps the event: the USB hubs, and the monitor's own processing after the
+frame is shown. A trace of real clicks (`HERDR_FRONTEND_LATENCY`, above) adds the OS-event stage.
 
 ## What was ours, and the fix
 
 Rune polls once before a frame's input handlers run and once right after them. The worker
 encodes a key on its own thread a few microseconds after the handler hands it over, which races
 that second poll. When the poll won, the bytes waited for the next frame's poll, a full refresh
-later (16.7 ms at 60 Hz), before going out as DATA. How often it won is pending the on-screen
-run. Each key press, IME commit, and click
+later (16.7 ms at 60 Hz), before going out as DATA. Each key press, IME commit, and click
 or release a program tracks now waits for the worker to encode it (`Terminal::handled`), for at
 most 2 ms, so the poll right after the handler sends it in the same frame. An idle worker
 answers in microseconds. Behind a flood of output the wait times out and the bytes go out a frame
 later, as before.
 
-Nothing else on the path waits, throttles or batches:
+Measured with the window on screen and visible part of the time, the same release binary with
+the wait off and on, 100 keys each:
+
+| encoded to DATA on the connection, ms | p50 | p90 | max |
+| --- | --- | --- | --- |
+| without the wait | 0.3 | 9.7 | 58.0 |
+| with the wait | 0.1 | 0.6 | 5.8 |
+
+Nothing else on a key's path into a quiet terminal waits, throttles or batches (the flood's 38
+fps, above, is the exception to follow up):
 
 - The one-slot handoff waits only while the UI hasn't taken the last snapshot, and the UI takes
   one every frame.

@@ -244,6 +244,15 @@ fn summarize(text: &str) -> String {
             }
             out.push_str(&row(what, &gaps));
         }
+        // A frame that drew without building rows (or a trace from before `built`) still has
+        // a frame: the UI's whole part of it, from the snapshot taken.
+        let frame: Vec<f64> = these
+            .iter()
+            .filter_map(|p| Some(p["drawn"].as_f64()? - p["taken"].as_f64()?))
+            .collect();
+        if !frame.is_empty() {
+            out.push_str(&row("taken to the frame encoded, in all", &frame));
+        }
         let total = |from: &str| -> Vec<f64> {
             complete
                 .iter()
