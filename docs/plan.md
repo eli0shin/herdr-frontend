@@ -36,7 +36,13 @@ Scope rules are in `AGENTS.md`.
 - **No OS notifications and no sounds.** Attention shows up in-app only.
 - **No collapsible sidebar sections.** Eli collapses them by accident; sub-agent folding stays.
 - **Window like Eli's Ghostty** (`window-decoration = false`): borderless, square corners, no
-  frame, no traffic lights, no title bar.
+  frame, no traffic lights, no title bar. AeroSpace floats a borderless window (it has no
+  full-screen button) unless it knows the app by ID (Ghostty, kitty, Alacritty, …), so Eli's
+  `aerospace.toml` tiles `dev.herdr.frontend` with an `on-window-detected` rule (README "With
+  AeroSpace"); a titled window with a hidden title bar would tile unasked but has rounded
+  corners and a frame, and Eli chose the borderless one.
+  The tiler owns the frame: the window saves its place only on close and quit, never reopens
+  zoomed or full screen, and a double click on its drag rows does nothing.
 - **The CLI surface Eli's tools drive** (`herdr-app ls | do | status` from repos, spawn-worker,
   agent-status, Pi and dot): herdr-frontend serves a compatible `ls | do | status` through its
   own binary. After parity, each tool reads one frontend setting and calls

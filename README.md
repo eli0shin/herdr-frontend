@@ -42,6 +42,26 @@ profile links the whole program as one (fat LTO): a cold build takes about 6 min
 after an edit about 2. The ad hoc signature runs a local build, but Gatekeeper would stop a copy
 downloaded from elsewhere.
 
+### With AeroSpace
+
+The window is borderless like Ghostty's with `window-decoration = false`: no title bar, no traffic
+lights, square corners. [AeroSpace](https://github.com/nikitabobko/AeroSpace) floats a window that
+has no full-screen button, as it does dialogs, unless it knows the app by its ID (Ghostty, kitty,
+Alacritty and a few more). herdr-frontend isn't one of them, so to have AeroSpace tile it like any
+other window, add this to `aerospace.toml`:
+
+```toml
+[[on-window-detected]]
+if.app-id = "dev.herdr.frontend"
+run = "layout tiling"
+```
+
+(or the same table inside an existing `on-window-detected = [...]` list). AeroSpace then sets the
+window's frame. herdr-frontend saves its size and position only when it closes or quits, never
+reopens zoomed or full screen, and a double click on its tab strip or the sidebar's top row does
+nothing (unless System Settings › Desktop & Dock says what that double click does), so it doesn't
+fight the layout (`crates/app/src/window.rs`).
+
 ## Develop
 
 macOS on Apple silicon only. Needs [rustup](https://rustup.rs) (the toolchain comes from

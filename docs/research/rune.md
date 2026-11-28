@@ -698,11 +698,14 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   keys help (`cmd-/`), a dialog in the middle, and the Agents sort menu, anchored under the
   sidebar's sort button (`ag-sort`, `El::anchored`).
 - **Home** (`$HERDR_FRONTEND_HOME`, else `$XDG_CONFIG_HOME/herdr-frontend`, else
-  `~/.config/herdr-frontend`): `keys.json` (the key file), `view.json` (the model's saved view), `window.json` (position,
-  physical size, maximized, full screen, display), and `shared.json` and `agents.json` (the
+  `~/.config/herdr-frontend`): `keys.json` (the key file), `view.json` (the model's saved view), `window.json` (position and
+  physical size, saved on close and quit only), and `shared.json` and `agents.json` (the
   app-local shared state and the Agents list's times, `docs/sidebar.md`). Writes go through a saver thread, written
-  whole and renamed; close and quit write at once. A saved place whose display is gone opens
-  centered.
+  whole and renamed; close and quit write at once. A saved place mostly off every display (one
+  that's gone, or the corner AeroSpace parks a hidden workspace's windows in) opens centered.
+  `WindowHandle::placement` reads winit's `is_maximized`, which on a borderless macOS window
+  sets a titled style mask and takes it off again, rebuilding AppKit's title bar views: call it
+  only on close, never per resize.
 - **Look and settings** (ticket 017, `docs/settings.md`). `config::Config` is what the home's
   `settings.json`, theme and `programs.json` say, with the installed fonts `font` and `ui_font`
   name, defaulting to Eli's look; a
