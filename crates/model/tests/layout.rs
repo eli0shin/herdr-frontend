@@ -818,7 +818,7 @@ fn a_remote_neovim_gets_its_keys_on_its_own_machine() {
 }
 
 #[test]
-fn a_keyboard_resize_moves_the_nearest_divider_forty_points() {
+fn without_a_cell_a_keyboard_resize_moves_the_nearest_divider_forty_points() {
     let (mut core, mut m) = three_panes_laid_out();
     // a | col: the divider after a goes 40 right: a 140, the column 60.
     key(&mut m, &mut core, "alt-shift-l", true);
@@ -850,8 +850,7 @@ fn a_keyboard_resize_moves_the_nearest_divider_forty_points() {
 #[test]
 fn keyboard_resizes_step_whole_cells_and_panes_stay_whole_cells() {
     let (mut core, mut m) = three_panes_laid_out();
-    // 7 × 15 cells (Operator Mono's shape): a steps 6 columns (40 / 7 rounds to 6), b / c 3
-    // rows (40 / 15 rounds to 3).
+    // 7 × 15 cells (Operator Mono's shape): a steps 5 columns, b / c 2 rows.
     drive(
         &mut m,
         &mut core,
@@ -876,7 +875,7 @@ fn keyboard_resizes_step_whole_cells_and_panes_stay_whole_cells() {
         key(&mut m, &mut core, keys, true);
         let now = rect(&m, "a").w;
         assert!(whole(now, 7.0), "{now}");
-        assert!(((now - a).abs() - 42.0).abs() < 1e-3, "{a} to {now}");
+        assert!(((now - a).abs() - 35.0).abs() < 1e-3, "{a} to {now}");
         a = now;
     }
     // Down a column the bottom pane is whole rows, and b, at the top, takes the rest.
@@ -887,7 +886,7 @@ fn keyboard_resizes_step_whole_cells_and_panes_stay_whole_cells() {
         key(&mut m, &mut core, keys, true);
         let now = rect(&m, "c").h;
         assert!(whole(now, 15.0), "{now}");
-        assert!(((now - c).abs() - 45.0).abs() < 1e-3, "{c} to {now}");
+        assert!(((now - c).abs() - 30.0).abs() < 1e-3, "{c} to {now}");
         assert_eq!(rect(&m, "b").bottom() + 1.0, rect(&m, "c").y);
         c = now;
     }

@@ -24,8 +24,13 @@ use serde_json::Value;
 
 use crate::action::{Direction, Edge};
 
-/// How far a keyboard resize moves a divider, in points at zoom 1 (`pane.resize`'s default, as
-/// in the TUI), rounded to whole cells when the cell is known ([`resize_step`]).
+/// How many cells a keyboard resize moves a divider: columns across a row, rows down a column
+/// ([`resize_step`]).
+pub const RESIZE_COLUMNS: f32 = 5.0;
+pub const RESIZE_ROWS: f32 = 2.0;
+
+/// How far a keyboard resize moves a divider when the cell isn't known, in points at zoom 1
+/// (`pane.resize`'s default, as in the TUI).
 pub const RESIZE_STEP: f32 = 40.0;
 
 /// The least a divider drag leaves either pane beside it, in points at zoom 1
@@ -454,15 +459,19 @@ pub fn drag_sizes(
     })
 }
 
-/// How far a keyboard resize moves a divider along `axis`, in the area's points: [`RESIZE_STEP`]
-/// at the zoom, as a whole number of cells (at least one) when the cell is known.
+/// How far a keyboard resize moves a divider along `axis`, in the area's points:
+/// [`RESIZE_COLUMNS`] cells across a row, [`RESIZE_ROWS`] down a column. Without a cell,
+/// [`RESIZE_STEP`] at the zoom.
 pub fn resize_step(geometry: &Geometry, axis: Axis) -> f32 {
-    let step = RESIZE_STEP * geometry.zoom;
     let cell = geometry.cell_along(axis);
     if cell <= 0.0 {
-        return step;
+        return RESIZE_STEP * geometry.zoom;
     }
-    (step / cell).round().max(1.0) * cell
+    let cells = match axis {
+        Axis::Row => RESIZE_COLUMNS,
+        Axis::Column => RESIZE_ROWS,
+    };
+    cells * cell
 }
 
 /// The divider a keyboard resize of `pane` toward `direction` moves: the nearest split along
@@ -1041,14 +1050,14 @@ mod tests {
     #[test]
     fn a_keyboard_resize_steps_whole_cells() {
         let g = celled();
-        assert_eq!(resize_step(&g, Axis::Row), 40.0, "4 cells of 10");
-        assert_eq!(resize_step(&g, Axis::Column), 40.0, "2 cells of 20");
+        assert_eq!(resize_step(&g, Axis::Row), 50.0, "5 columns of 10");
+        assert_eq!(resize_step(&g, Axis::Column), 40.0, "2 rows of 20");
         let wide = Geometry {
             cell: (30.0, 100.0),
             ..g
         };
-        assert_eq!(resize_step(&wide, Axis::Row), 30.0);
-        assert_eq!(resize_step(&wide, Axis::Column), 100.0, "at least one");
+        assert_eq!(resize_step(&wide, Axis::Row), 150.0);
+        assert_eq!(resize_step(&wide, Axis::Column), 200.0);
         assert_eq!(resize_step(&geometry(10.0, 10.0), Axis::Row), RESIZE_STEP);
     }
 

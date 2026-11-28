@@ -383,7 +383,7 @@ fn a_split_made_here_shows_in_the_document_as_herdr_app_writes_it() {
     assert_eq!(below[1]["type"], "block");
     assert_eq!(below[1].get("size"), None);
 
-    // Alt+Shift+H from the bottom pane: the row's divider moves 40 pt left, so pn-a shrinks.
+    // Alt+Shift+H from the bottom pane: the row's divider moves 5 columns left, so pn-a shrinks.
     let (_, before) = read_doc(&conn);
     let alt_shift = Mods {
         alt: true,

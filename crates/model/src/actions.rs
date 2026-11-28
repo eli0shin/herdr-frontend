@@ -758,8 +758,8 @@ impl Model {
     }
 
     /// `alt-shift-h/j/k/l`: the focused pane's nearest divider along `direction`'s axis moves
-    /// [`geometry::resize_step`] (whole cells) that way, as dragging it would. Nothing in a zoomed tab, or
-    /// where nothing is split that way (`app:src/window.rs` `resize_pane`).
+    /// [`geometry::resize_step`] (5 columns or 2 rows) that way, as dragging it would. Nothing
+    /// in a zoomed tab, or where nothing is split that way (`app:src/window.rs` `resize_pane`).
     fn resize(&mut self, direction: Direction, fx: &mut Effects) {
         let Some(tab) = self.shown_tab() else {
             return;

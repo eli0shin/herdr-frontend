@@ -593,7 +593,8 @@ Keep `model` free of Rune types where practical, so core logic tests run without
 - **Panes** (`feature-inventory.md` §5, ticket 022). Splits, close, zoom (a one-pane tab doesn't
   zoom; the pill says " Z"), `pane.go` (the most recently focused along the edge) and
   `pane.swap` are layout intents or view changes. `pane.resize` moves the focused pane's nearest
-  divider along the direction's axis 40 pt, as dragging it would (`geometry::resize_divider`,
+  divider along the direction's axis 5 columns or 2 rows of the terminal's cell
+  (`geometry::resize_step`), as dragging it would (`geometry::resize_divider`,
   `geometry::drag_sizes`: either side keeps 24 pt and its `min`/`max`, a `px` side stays `px`,
   two weighted sides share their weight). `Action::DragDivider` is the same drag from the mouse.
   `Action::RearrangePane` drops a pane on another of its tab: the center swaps, an edge places
