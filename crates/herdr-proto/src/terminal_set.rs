@@ -43,6 +43,10 @@ pub struct Changes {
     pub seen: BTreeMap<String, u64>,
     /// Documents that changed, with the highest version announced.
     pub docs: BTreeMap<DocKey, u64>,
+    /// Every `size` event, in order: the terminal and its new `cols` × `rows`. The records hold
+    /// only the last; a viewer that resized for a grid it took needs each one to tell its own
+    /// events from another viewer's. A resync can't tell; check `resynced`.
+    pub sizes: Vec<(String, u16, u16)>,
 }
 
 impl Changes {
@@ -221,10 +225,15 @@ impl TerminalSet {
                 self.edit(&address, changes, |t| t.turn = turn.turn);
             }
             EventData::Title(title) => self.edit(&address, changes, |t| t.title = title.title),
-            EventData::Size(size) => self.edit(&address, changes, |t| {
-                t.cols = size.cols;
-                t.rows = size.rows;
-            }),
+            EventData::Size(size) => {
+                if self.terminals.contains_key(&address) {
+                    changes.sizes.push((address.clone(), size.cols, size.rows));
+                }
+                self.edit(&address, changes, |t| {
+                    t.cols = size.cols;
+                    t.rows = size.rows;
+                })
+            }
             EventData::Foreground(foreground) => {
                 self.edit(&address, changes, |t| t.foreground = foreground.map(|f| *f))
             }
@@ -468,6 +477,26 @@ mod tests {
         set.apply(event(11, "size", "t1", json!({"cols": 120, "rows": 40})));
         let t = set.get("t1").unwrap();
         assert_eq!((t.cols, t.rows), (120, 40));
+    }
+
+    /// A batch keeps every size it went through, in order, though the record keeps the last.
+    #[test]
+    fn a_batch_lists_every_size_in_order() {
+        let mut set = set(&["t1"]);
+        let mut changes = Changes::default();
+        for (seq, cols) in [(11, 120), (12, 100), (13, 120)] {
+            set.apply_into(
+                event(seq, "size", "t1", json!({"cols": cols, "rows": 40})),
+                &mut changes,
+            );
+        }
+        set.apply_into(
+            event(14, "size", "t9", json!({"cols": 1, "rows": 1})),
+            &mut changes,
+        );
+        let t1 = |cols| ("t1".to_owned(), cols, 40);
+        assert_eq!(changes.sizes, [t1(120), t1(100), t1(120)]);
+        assert_eq!(set.get("t1").unwrap().cols, 120);
     }
 
     #[test]

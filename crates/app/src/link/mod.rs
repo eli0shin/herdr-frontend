@@ -37,6 +37,9 @@ pub enum News {
     Event(model::Event),
     /// Kept terminals whose program came back: attach them again.
     Restarted(Vec<String>),
+    /// The `size` events of one batch, in order: a terminal and its new `cols` × `rows`. The
+    /// terminals' records, which [`News::Event`] updates, keep only the last.
+    Sizes(Vec<(String, u16, u16)>),
     /// A [`Link::attach`] finished: the stream, or why it failed.
     Attached {
         address: String,

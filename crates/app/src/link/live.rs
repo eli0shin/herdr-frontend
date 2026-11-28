@@ -161,6 +161,9 @@ impl Link for Live {
                 } if generation == self.generation => {
                     let update = supervisor
                         .with_terminals(|set| TerminalUpdate::from_changes(&changes, set));
+                    if !changes.sizes.is_empty() {
+                        news.push(News::Sizes(changes.sizes.clone()));
+                    }
                     news.push(News::Event(Event::Terminals(update)));
                     if !changes.restarted.is_empty() {
                         news.push(News::Restarted(changes.restarted.into_iter().collect()));

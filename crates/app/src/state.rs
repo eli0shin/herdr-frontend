@@ -35,6 +35,12 @@
 //!   keep current), never the pane's: a pane bigger than it shows the background around it, a
 //!   smaller one clips it. What the pane's height leaves under whole rows goes above the grid,
 //!   so at the pane's size its bottom row is on the pane's bottom edge ([`State::place_grids`]).
+//! - Except that a viewer whose frame makes the core apply a grid (RESIZE, or DATA after one)
+//!   resizes its terminal to that grid as it sends it, as Ghostty resizes its terminal with the
+//!   pty. The program redraws for the new grid as soon as the core applies it, and that output
+//!   can arrive before the `size` event does, which comes on another channel: parsed at the old
+//!   grid, it would tear the screen until the program next redraws. The event for a grid the
+//!   viewer took is then its own; only another viewer's size moves the terminal.
 //!
 //! Viewers stay attached while their pane is in the layout, shown or not, so switching back is
 //! instant and the program isn't sent to the headless size and back.
@@ -65,8 +71,8 @@ use rune::{
 };
 use serde_json::{Map, Value, json};
 use terminal::{
-    ActiveScreen, GridSize, MouseAction, MouseButton, MouseEvent, OptionAsAlt, Output, Padding,
-    PaddingBalance, ScreenSize, Scroll, SelectAction, SelectEvent, Size, Terminal, Theme,
+    ActiveScreen, CellSize, GridSize, MouseAction, MouseButton, MouseEvent, OptionAsAlt, Output,
+    Padding, PaddingBalance, ScreenSize, Scroll, SelectAction, SelectEvent, Size, Terminal, Theme,
 };
 
 use crate::config::settings::{self, Settings, UI_FONT_SIZE};
@@ -147,6 +153,13 @@ pub struct Viewer {
     pub attach: Attach,
     /// The local terminal's grid and cell, in cells and device pixels.
     vt: (u16, u16, u32, u32),
+    /// The core's grid as this window last saw it (the terminal's record).
+    core: (u16, u16),
+    /// Grids this viewer made the core apply (RESIZE, or DATA after one) whose `size` events
+    /// haven't come in yet, oldest first. Its terminal went to each the moment it was sent.
+    taken: Vec<(u16, u16)>,
+    /// The core's `size` events for this terminal since the last frame, in order.
+    heard: Vec<(u16, u16)>,
     /// The FACTS, RESIZE and FOCUS this viewer last sent.
     told_facts: Option<Display>,
     told_grid: Option<GridSize>,
@@ -187,6 +200,51 @@ impl Viewer {
                 pane.preedit = self.preedit.clone();
                 self.pane = Some(pane);
             }
+        }
+    }
+
+    /// This viewer made the core apply `grid`: it sent RESIZE, or DATA that applies the grid it
+    /// told. Its terminal goes there now, as Ghostty resizes its terminal with the pty, so the
+    /// program's redraw for the new grid is parsed at it. The core's `size` event for it comes on
+    /// another channel, often after that redraw: when it does, it's this viewer's own.
+    fn take(&mut self, grid: GridSize, cell: CellSize) {
+        let grid = (grid.columns, grid.rows);
+        if self.taken.last().copied().unwrap_or(self.core) != grid {
+            self.taken.push(grid);
+        }
+        self.resize_to(grid, cell);
+    }
+
+    /// Follows the core's grid: each `size` event heard since the last frame, in order, then
+    /// `record`, the grid the terminal's record holds now (the same, unless a resync or a fake
+    /// core changed it with no event). An event for a grid this viewer took is its own: its
+    /// terminal stays at the grid it took last. Any other moves it there.
+    fn follow(&mut self, record: (u16, u16), cell: CellSize) {
+        for core in std::mem::take(&mut self.heard).into_iter().chain([record]) {
+            if core == self.core {
+                continue;
+            }
+            self.core = core;
+            match self.taken.iter().position(|&g| g == core) {
+                Some(i) => {
+                    self.taken.drain(..=i);
+                }
+                // Another viewer took the size, or the core refit it.
+                None => {
+                    self.taken.clear();
+                    self.moved = self.told_grid.is_some_and(|g| (g.columns, g.rows) != core);
+                }
+            }
+        }
+        let grid = self.taken.last().copied().unwrap_or(self.core);
+        self.resize_to(grid, cell);
+    }
+
+    fn resize_to(&mut self, (cols, rows): (u16, u16), cell: CellSize) {
+        let vt = (cols, rows, cell.width, cell.height);
+        if vt != self.vt {
+            self.vt = vt;
+            self.terminal.resize(cols, rows, cell.width, cell.height);
         }
     }
 
@@ -1897,6 +1955,7 @@ impl State {
                 for viewer in self.viewers.values_mut() {
                     viewer.attach = Attach::Want { fresh: true };
                     viewer.told_grid = None;
+                    viewer.taken.clear();
                     viewer.told_facts = None;
                     viewer.focus_sent = false;
                 }
@@ -1905,6 +1964,13 @@ impl State {
             }
             News::Unavailable(why) => self.status = Status::Down(why),
             News::Put { address, paths } => self.paste_text(&address, &quote_paths(&paths)),
+            News::Sizes(sizes) => {
+                for (address, cols, rows) in sizes {
+                    if let Some(viewer) = self.viewers.get_mut(&address) {
+                        viewer.heard.push((cols.max(1), rows.max(1)));
+                    }
+                }
+            }
             News::Event(event) => {
                 self.step(now, event);
             }
@@ -1929,6 +1995,7 @@ impl State {
                 // A new stream has told the core nothing yet.
                 viewer.told_facts = None;
                 viewer.told_grid = None;
+                viewer.taken.clear();
                 viewer.focus_sent = false;
                 if self.in_use.as_deref() == Some(address.as_str()) {
                     self.in_use = None;
@@ -1942,6 +2009,7 @@ impl State {
                     };
                     viewer.focus_sent = false;
                     viewer.told_grid = None;
+                    viewer.taken.clear();
                 }
                 if self.in_use.as_deref() == Some(address.as_str()) {
                     self.in_use = None;
@@ -2088,6 +2156,9 @@ impl State {
             focused: false,
             attach: Attach::Want { fresh: false },
             vt: (cols, rows, cell.width, cell.height),
+            core: (cols, rows),
+            taken: Vec::new(),
+            heard: Vec::new(),
             told_facts: None,
             told_grid: None,
             sized: false,
@@ -2151,24 +2222,7 @@ impl State {
             let Some(record) = self.model.world().terminal(&viewer.address) else {
                 continue;
             };
-            let vt = (
-                record.cols.max(1),
-                record.rows.max(1),
-                cell.width,
-                cell.height,
-            );
-            if vt != viewer.vt {
-                // Only a change counts: a size event for a RESIZE just sent may not be in yet.
-                // Each one decides afresh, so a late event for an older RESIZE is undone by the
-                // event for the grid told last.
-                if (vt.0, vt.1) != (viewer.vt.0, viewer.vt.1) {
-                    viewer.moved = viewer
-                        .told_grid
-                        .is_some_and(|g| (g.columns, g.rows) != (vt.0, vt.1));
-                }
-                viewer.vt = vt;
-                viewer.terminal.resize(vt.0, vt.1, vt.2, vt.3);
-            }
+            viewer.follow((record.cols.max(1), record.rows.max(1)), cell);
         }
 
         let in_use = self
@@ -2231,6 +2285,8 @@ impl State {
                 if viewer.told_grid.is_some() && now < due {
                     self.ui.wake = Some(self.ui.wake.map_or(due, |w| w.min(due)));
                 } else {
+                    // The terminal first, so it's at the new grid before any output for it.
+                    viewer.take(grid, cell);
                     self.link.send(
                         &address,
                         Out::Resize {
@@ -2399,10 +2455,24 @@ impl State {
         let viewer = self.viewers.get(address);
         let sized = viewer.is_some_and(|v| v.sized);
         let told = viewer.and_then(|v| v.told_grid);
-        if !(sized && told.is_some())
+        let resize = if !(sized && told.is_some())
             && let Some(grid) = self.grid_to_hold(address)
             && told != Some(grid)
         {
+            Some(grid)
+        } else {
+            None
+        };
+        let cell = self.face(self.scale).metrics.cell_size();
+        // The grid the core applies with this DATA: the terminal goes there first, so it's at
+        // that grid before any output for it.
+        if let Some(viewer) = self.viewers.get_mut(address)
+            && viewer.attach == Attach::Attached
+            && let Some(grid) = resize.or(told)
+        {
+            viewer.take(grid, cell);
+        }
+        if let Some(grid) = resize {
             self.link.send(
                 address,
                 Out::Resize {

@@ -38,6 +38,15 @@ when the resize lands. Split panes are laid out in whole cells, so a grid that h
 the divider. herdr-frontend takes the size only for panes it shows while its window is in front,
 and takes it back from another viewer only on real use or when the pane's grid changes.
 
+The one exception is a grid that herdr-frontend itself makes the core apply: RESIZE, or DATA that
+applies the grid it told. Its local terminal moves to that grid as the frame is sent, as Ghostty
+resizes its terminal along with the pty. The program redraws for the new grid as soon as the core
+applies it, and that output can arrive before the `size` event, which comes on another channel.
+Parsed at the old grid, the redraw would leave the screen torn until the program next redrew it
+(a Pi session's bottom rows after the sidebar closed, ticket 047). When the event for a grid it
+took comes in, herdr-frontend recognizes it as its own. Only another viewer's size moves the
+terminal after that.
+
 Choices made on purpose:
 
 - **No observers.** Hidden panes attach `resumed`, not `observe: true`. If herdr-frontend is a
@@ -74,6 +83,9 @@ Choices made on purpose:
   doesn't move the size. The app never takes the size back while idle or in the background. A
   click or typing takes it back. After a core restart, the app's `resumed` reattach leaves
   Herdr app's new grid alone.
+- `crates/app/tests/resize_redraw.rs`: a program that redraws its whole screen on SIGWINCH, in
+  a shown pane, while the window grows and shrinks. After each resize the app shows exactly
+  the core's screen at the core's grid.
 - `crates/app/tests/shell.rs` and `input.rs` check the same policy frame by frame on the fake
   core.
 

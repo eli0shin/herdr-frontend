@@ -352,6 +352,37 @@ fn a_click_takes_the_size_back_from_another_viewer() {
     assert_eq!(resizes(&fake, "t1").len(), 2);
 }
 
+/// Herdr app takes the size back the moment the pane in use takes it: the core's two `size`
+/// events, the window's own and then Herdr app's, reach the window together. The terminal ends at
+/// the core's grid, Herdr app's, not at the one the window took (ticket 047).
+#[test]
+fn a_size_taken_back_at_once_is_followed() {
+    let (mut rt, fake) = runtime();
+    let (cols, rows) = grid_of(&rt, "pn-1");
+    fake.resize_elsewhere("t1", 50, 10);
+    frames(&mut rt, 3);
+    // From here, the core's news waits, as on a slow link.
+    fake.core().quiet = true;
+    let (x, y) = rt.find("pane-pn-1").expect("pane 1");
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    // The click's RESIZE goes out, and the terminal is at that grid at once.
+    frames(&mut rt, 2);
+    assert_eq!(
+        resizes(&fake, "t1").last(),
+        Some(&Out::Resize { cols, rows })
+    );
+    let s = screen(&rt, "t1");
+    assert_eq!((s.cols, s.rows), (cols, rows));
+    // Herdr app takes it back before the window hears of either.
+    fake.resize_elsewhere("t1", 50, 10);
+    fake.core().quiet = false;
+    frames(&mut rt, 3);
+    let s = screen(&rt, "t1");
+    assert_eq!((s.cols, s.rows), (50, 10));
+    assert_eq!(resizes(&fake, "t1").len(), 2, "taken back without use");
+}
+
 #[test]
 fn every_pane_answers_queries_as_automatic_input() {
     let (mut rt, fake) = runtime();
