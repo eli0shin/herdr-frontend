@@ -38,9 +38,10 @@ Follow-ups for later tickets:
 The renderer lives in `crates/app/src/view/terminal/`:
 
 - `font.rs`: registers a font's faces with Rune and measures Ghostty's whole-pixel cell for it at
-  a display scale (`terminal::Metrics`, ticket 010). The row text style is the face at its point
-  size, one cell tall, with tracking of `cell − advance` so glyphs land exactly one cell apart, and
-  `calt` and `liga` off. It also says which characters the regular face has glyphs for.
+  a display scale (`terminal::Metrics`, ticket 010). The row text style is the face at the pixel
+  size its cell was measured at (`Face::text_points`, the point size adjusted for Ghostty's
+  whole-number DPI; see [Zoomed scales](#zoomed-scales)), one cell tall, with tracking of
+  `cell − advance` so glyphs land exactly one cell apart, and `calt` and `liga` off. It also says which characters the regular face has glyphs for.
 - `rows.rs`: the `GridRow` builder, a port of Ghostty's `rebuildRow` color rules onto the grid.
   - Inverse swaps foreground and background, defaults included.
   - Selection takes `selection-background`. When that isn't set, it's the default background on
