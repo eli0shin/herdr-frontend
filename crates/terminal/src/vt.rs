@@ -160,6 +160,10 @@ pub enum Event {
     Reset,
     /// A paste sent to the worker was refused; see [`PasteRejected`].
     PasteRejected(PasteRejected),
+    /// The program turned in-band size reports (mode 2048) on, or on again. Every viewer's
+    /// terminal answers that with its own size report, this one's among the replies the same
+    /// write queued, and the program goes by the last report it hears.
+    SizeReportsOn,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,6 +192,8 @@ const BRACKETED_PASTE: GhosttyMode = 2004;
 const FOCUS_EVENT: GhosttyMode = 1004;
 /// DEC private mode 2048: in-band size reports.
 const IN_BAND_SIZE_REPORTS: GhosttyMode = 2048;
+/// How a mode 2048 size report starts: `CSI 48 ; rows ; cols ; height ; width t`.
+const SIZE_REPORT: &[u8] = b"\x1b[48;";
 
 /// The state callbacks write into, behind the terminal's userdata pointer.
 struct Effects {
@@ -440,9 +446,24 @@ impl Vt {
 
     /// Feeds the program's output.
     pub fn write(&mut self, bytes: &[u8]) {
+        // SAFETY: `term` is live.
+        let was_on = unsafe { mode(self.term, IN_BAND_SIZE_REPORTS) };
+        let replied = self.effects().pty.len();
         // SAFETY: `term` is live and `bytes` is readable for its length. Callbacks run during
         // the call and only touch `effects`.
         unsafe { ghostty_terminal_vt_write(self.term, bytes.as_ptr(), bytes.len()) };
+        // Turning the mode on answers with a size report from inside the write, and so does
+        // turning it on again while it's on. Before the cell is known there's no report, only
+        // the mode changing.
+        // SAFETY: `term` is live.
+        if unsafe { mode(self.term, IN_BAND_SIZE_REPORTS) } {
+            let reported = self.effects().pty[replied..]
+                .windows(SIZE_REPORT.len())
+                .any(|w| w == SIZE_REPORT);
+            if !was_on || reported {
+                self.effects_mut().events.push(Event::SizeReportsOn);
+            }
+        }
         self.copy_keep_pinned();
     }
 

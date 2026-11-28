@@ -97,6 +97,41 @@ fn reports_its_size_again_only_under_mode_2048() {
 }
 
 #[test]
+fn says_when_the_program_turns_size_reports_on() {
+    let mut vt = Vt::new(&config());
+    vt.write(b"\x1b[18t\x1b[?2048l");
+    replies(&mut vt);
+    assert_eq!(
+        vt.take_events(),
+        [],
+        "a size query or turning the mode off isn't it"
+    );
+    vt.write(b"\x1b[?2048h");
+    assert_eq!(replies(&mut vt), "\x1b[48;24;80;528;800t");
+    assert_eq!(vt.take_events(), [Event::SizeReportsOn]);
+    // Output while it's on, a resize, or a report sent again, isn't.
+    vt.write(b"hello\x1b[18t");
+    vt.resize(100, 30, 21, 45);
+    vt.report_size();
+    replies(&mut vt);
+    assert_eq!(vt.take_events(), []);
+    // Turning it on again while it's on answers again, so it says so again.
+    vt.write(b"\x1b[?2048h");
+    assert_eq!(replies(&mut vt), "\x1b[48;30;100;1350;2100t");
+    assert_eq!(vt.take_events(), [Event::SizeReportsOn]);
+    vt.write(b"\x1b[?2048l\x1b[?2048h");
+    assert_eq!(vt.take_events(), [Event::SizeReportsOn]);
+    vt.write(b"\x1b[?2048h\x1b[?2048l");
+    assert_eq!(vt.take_events(), [], "it ended off");
+
+    // Before the cell is known there's no report to send, but the program turned it on.
+    let mut vt = Vt::new(&Config::default());
+    vt.write(b"\x1b[?2048h");
+    assert_eq!(replies(&mut vt), "");
+    assert_eq!(vt.take_events(), [Event::SizeReportsOn]);
+}
+
+#[test]
 fn turns_effects_into_events() {
     let mut vt = Vt::new(&config());
     vt.write(b"\x1b]0;hello title\x07\x1b]7;file://host/tmp\x07\x07");

@@ -538,7 +538,9 @@ from. And a pane that becomes the pane in use re-asserts the size: RESIZE even a
 already, and the mode-2048 report again when the program has that mode on. The core passes every
 non-observe viewer's AUTOMATIC_INPUT to the program, and a mode-2048 program goes by the last
 report it hears, so another viewer's report at its own grid would otherwise stand
-(`docs/interop.md` "Two viewers and in-band size reports").
+(`docs/interop.md` "Two viewers and in-band size reports"). Ticket 060 added the same re-assert
+for the pane in use when its program turns mode 2048 on, 100 ms and again 1 s after the enable,
+so it comes after every other viewer's answer to it.
 
 ### What herdr-app does that causes wrong sizes
 

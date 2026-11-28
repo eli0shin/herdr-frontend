@@ -154,9 +154,13 @@ fn replies_input_and_events_come_out_in_order() {
 fn a_resize_sends_the_size_report_and_a_full_frame() {
     let (terminal, wakes) = spawn(config());
     terminal.write(b"\x1b[?2048h".to_vec());
+    // The answer to the enable, then word that the program turned reports on.
     assert_eq!(
         sync(&terminal),
-        [Output::Reply(b"\x1b[48;24;80;528;800t".to_vec())]
+        [
+            Output::Reply(b"\x1b[48;24;80;528;800t".to_vec()),
+            Output::Event(Event::SizeReportsOn),
+        ]
     );
     terminal.resize(100, 30, 21, 45);
     assert_eq!(
