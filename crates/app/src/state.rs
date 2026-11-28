@@ -208,6 +208,7 @@ impl Viewer {
             Some(pane) => pane.show(snapshot),
             None => {
                 let mut pane = TerminalPane::new(self.key.clone(), snapshot);
+                pane.terminal = self.terminal.id();
                 pane.focused = self.focused;
                 pane.preedit = self.preedit.clone();
                 self.pane = Some(pane);

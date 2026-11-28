@@ -20,7 +20,8 @@ threads or processes:
 | `parsed` | terminal worker | libghostty-vt parses it |
 | `published` | terminal worker | a snapshot with it goes into the one-slot handoff, and the waker runs |
 | `taken` | UI | the next frame's `poll` takes the snapshot |
-| `drawn` | UI | that frame's view, layout and paint are encoded and submitted |
+| `built` | UI | that frame's view builds the pane's rows from it |
+| `drawn` | UI | the frame's layout and paint are encoded and submitted |
 | `presented` | macOS | the frame reaches the screen (Metal's `presentedTime`) |
 
 DATA goes through `hc connect`, a child process piping to the core's socket, and the echo
@@ -79,20 +80,21 @@ the small Logitech panel ("FLARE"), not the main display.
 
 ## What herdr-frontend's part costs
 
-Release build, on this Mac (M1 Pro) under a load average of about 200 from other builds:
+Release build, on this Mac (M1 Pro) under a load average of about 200 from other builds, with the
+window covered (the screen was locked):
 
-| keys, ms | p50 | p90 | max |
+| keys, window covered, ms | p50 | p90 | max |
 | --- | --- | --- | --- |
 | handler to the worker's encoding | 0.0 | 0.1 | 3.8 |
-| encoded to DATA on the connection | 0.1 | 0.3 | 1.2 |
 | DATA to the echo arriving (core, `hc`, pty: not ours) | 0.7 | 7.7 | 23.0 |
 | echo to parsed | 0.0 | 0.0 | 2.1 |
 | parsed to the snapshot published | 0.0 | 0.0 | 0.5 |
 
-The screen was locked during this run, so its window was covered. A covered window polls as soon
-as it's woken rather than on the display's refresh. The UI's hops (`sent`, `taken`) and
-everything from `taken` on (the frame, its presentation, the refresh rate and the pacing) are
-pending a run with the window on screen.
+The worker's stages don't depend on the window. The UI's do: a covered window polls as soon as
+it's woken, while one on screen polls on the display's refresh. So this run's encoded-to-DATA
+(0.1 ms) and published-to-taken (0.1 ms) say nothing about a window on screen, and are left
+out of the table. Those hops, the rows built, the frame, its presentation, the refresh rate and
+the pacing are pending a run with the window on screen.
 
 ## What was ours, and the fix
 

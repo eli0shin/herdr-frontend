@@ -15,6 +15,7 @@
 //! | `parsed` | the terminal worker | that output was parsed |
 //! | `published` | the terminal worker | a snapshot with it was put in the handoff |
 //! | `taken` | the UI thread | the UI took that snapshot |
+//! | `built` | the UI thread | the view built the pane's rows from it |
 //! | `drawn` | the UI thread | the frame that draws it was encoded and submitted |
 //! | `presented` | the UI thread | that frame reached the screen (Metal's `presentedTime`) |
 //!
@@ -49,12 +50,13 @@ pub enum Stage {
     Parsed,
     Published,
     Taken,
+    Built,
     Drawn,
     Presented,
 }
 
 impl Stage {
-    pub const ALL: [Stage; 10] = [
+    pub const ALL: [Stage; 11] = [
         Stage::Os,
         Stage::Handler,
         Stage::Encoded,
@@ -63,6 +65,7 @@ impl Stage {
         Stage::Parsed,
         Stage::Published,
         Stage::Taken,
+        Stage::Built,
         Stage::Drawn,
         Stage::Presented,
     ];
@@ -77,6 +80,7 @@ impl Stage {
             Stage::Parsed => "parsed",
             Stage::Published => "published",
             Stage::Taken => "taken",
+            Stage::Built => "built",
             Stage::Drawn => "drawn",
             Stage::Presented => "presented",
         }
@@ -92,6 +96,7 @@ impl Stage {
             Stage::Parsed => Some(Stage::Echo),
             Stage::Published => Some(Stage::Parsed),
             Stage::Taken => Some(Stage::Published),
+            Stage::Built => Some(Stage::Taken),
             Stage::Drawn => Some(Stage::Taken),
             Stage::Presented => Some(Stage::Drawn),
         }
@@ -437,6 +442,7 @@ mod tests {
         r.mark(Stage::Parsed, 7, t0 + ms(13));
         r.mark(Stage::Published, 7, t0 + ms(14));
         r.mark(Stage::Taken, 7, t0 + ms(20));
+        r.mark(Stage::Built, 7, t0 + ms(21));
         let frame = Frame {
             started: Some(t0 + ms(19)),
             target: Some(t0 + ms(30)),
@@ -454,7 +460,7 @@ mod tests {
                  \"presented\":31.000,\"update_ms\":1.500,\"encode_ms\":0.250,\"hz\":60.000}",
                 "{\"input\":\"key\",\"terminal\":7,\"os\":-2.000,\"handler\":0.000,\
                  \"encoded\":1.000,\"sent\":8.000,\"echo\":10.000,\"parsed\":11.000,\
-                 \"published\":12.000,\"taken\":18.000,\"drawn\":20.000,\
+                 \"published\":12.000,\"taken\":18.000,\"built\":19.000,\"drawn\":20.000,\
                  \"presented\":29.000,\"target\":28.000}"
             ]
         );

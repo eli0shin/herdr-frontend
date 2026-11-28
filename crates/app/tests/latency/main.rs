@@ -38,7 +38,7 @@ const RUN_VAR: &str = "HERDR_LATENCY";
 const CWD_VAR: &str = "HERDR_LATENCY_CWD";
 
 /// The stages of one interaction, in order (`terminal::latency::Stage`).
-const STAGES: [&str; 10] = [
+const STAGES: [&str; 11] = [
     "os",
     "handler",
     "encoded",
@@ -47,12 +47,13 @@ const STAGES: [&str; 10] = [
     "parsed",
     "published",
     "taken",
+    "built",
     "drawn",
     "presented",
 ];
 
 /// What each step from the stage before means, for the report.
-const STEPS: [(&str, &str); 9] = [
+const STEPS: [(&str, &str); 10] = [
     ("handler", "OS event to the app's handler"),
     ("encoded", "handler to the worker's encoding"),
     ("sent", "encoded to DATA on the connection"),
@@ -60,7 +61,8 @@ const STEPS: [(&str, &str); 9] = [
     ("parsed", "echo to parsed by the worker"),
     ("published", "parsed to the snapshot published"),
     ("taken", "published to the UI taking it"),
-    ("drawn", "taken to the frame encoded"),
+    ("built", "taken to the pane's rows built"),
+    ("drawn", "built to the frame encoded"),
     ("presented", "encoded to on screen"),
 ];
 
