@@ -79,6 +79,24 @@ fn reports_its_size_under_mode_2048() {
 }
 
 #[test]
+fn reports_its_size_again_only_under_mode_2048() {
+    let mut vt = Vt::new(&config());
+    vt.report_size();
+    assert_eq!(replies(&mut vt), "", "a shell never asked for size reports");
+    vt.write(b"\x1b[?2048h");
+    assert_eq!(replies(&mut vt), "\x1b[48;24;80;528;800t");
+    vt.report_size();
+    assert_eq!(replies(&mut vt), "\x1b[48;24;80;528;800t");
+    vt.resize(100, 30, 21, 45);
+    assert_eq!(replies(&mut vt), "\x1b[48;30;100;1350;2100t");
+    vt.report_size();
+    assert_eq!(replies(&mut vt), "\x1b[48;30;100;1350;2100t");
+    vt.write(b"\x1b[?2048l");
+    vt.report_size();
+    assert_eq!(replies(&mut vt), "");
+}
+
+#[test]
 fn turns_effects_into_events() {
     let mut vt = Vt::new(&config());
     vt.write(b"\x1b]0;hello title\x07\x1b]7;file://host/tmp\x07\x07");

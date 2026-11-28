@@ -96,6 +96,7 @@ enum Request {
         cell_width: u32,
         cell_height: u32,
     },
+    ReportSize,
     Scroll(Scroll),
     ScrollRows {
         rows: f32,
@@ -240,6 +241,12 @@ impl Terminal {
             cell_width,
             cell_height,
         });
+    }
+
+    /// Sends the mode 2048 size report again for the grid and cell the terminal has, as an
+    /// [`Output::Reply`], if the program turned in-band size reports on ([`Vt::report_size`]).
+    pub fn report_size(&self) {
+        self.send(Request::ReportSize);
     }
 
     pub fn scroll(&self, scroll: Scroll) {
@@ -562,6 +569,10 @@ impl Worker {
             } => {
                 self.vt.resize(cols, rows, cell_width, cell_height);
                 true
+            }
+            Request::ReportSize => {
+                self.vt.report_size();
+                false
             }
             Request::Scroll(scroll) => {
                 self.vt.scroll(scroll);

@@ -186,6 +186,8 @@ const SYNCHRONIZED_OUTPUT: GhosttyMode = 2026;
 const GRAPHEME_CLUSTER: GhosttyMode = 2027;
 const BRACKETED_PASTE: GhosttyMode = 2004;
 const FOCUS_EVENT: GhosttyMode = 1004;
+/// DEC private mode 2048: in-band size reports.
+const IN_BAND_SIZE_REPORTS: GhosttyMode = 2048;
 
 /// The state callbacks write into, behind the terminal's userdata pointer.
 struct Effects {
@@ -471,6 +473,36 @@ impl Vt {
         let result =
             unsafe { ghostty_terminal_resize(self.term, cols, rows, cell_width, cell_height) };
         ok(result, "ghostty_terminal_resize");
+    }
+
+    /// Queues the mode 2048 size report again, for the grid and cell the terminal has now, if
+    /// the program turned in-band size reports on. A program with them on ignores SIGWINCH and
+    /// lays out at the last report it heard, which may be another viewer's: this one's tells
+    /// it this viewer's grid again. Nothing when the mode is off or the cell isn't known yet.
+    pub fn report_size(&mut self) {
+        // SAFETY: `term` is live.
+        if !unsafe { mode(self.term, IN_BAND_SIZE_REPORTS) } {
+            return;
+        }
+        let size = self.effects().size;
+        if size.cell_width == 0 || size.cell_height == 0 {
+            return;
+        }
+        let mut buf = [0u8; 64];
+        let mut written = 0;
+        // SAFETY: `size` is a whole `GhosttySizeReportSize`, `buf` is writable for its length
+        // and `written` for one `usize`.
+        let result = unsafe {
+            ghostty_size_report_encode(
+                GHOSTTY_SIZE_REPORT_MODE_2048,
+                &raw const size,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &raw mut written,
+            )
+        };
+        ok(result, "ghostty_size_report_encode");
+        self.effects_mut().pty.extend_from_slice(&buf[..written]);
     }
 
     pub fn set_scrollback(&mut self, limits: Scrollback) {

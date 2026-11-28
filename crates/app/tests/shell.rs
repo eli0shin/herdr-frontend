@@ -490,12 +490,14 @@ fn clicking_a_pane_moves_focus_to_it() {
     assert_eq!(rt.state.model.focused_pane().as_deref(), Some("pn-2"));
     assert_eq!(rt.state.in_use(), Some("t2"));
     assert_eq!(fake.sent_to("t1").last(), Some(&Out::Focus(false)));
-    // It held its size already: the click adds FOCUS(1).
+    // It held its size already. Focusing it re-asserts the size, RESIZE again at the same grid,
+    // then FOCUS(1).
     let (cols, rows) = grid_of(&rt, "pn-2");
     assert_eq!(
         fake.sent_to("t2"),
         [
             Out::Facts(rt.state.display()),
+            Out::Resize { cols, rows },
             Out::Resize { cols, rows },
             Out::Focus(true)
         ]
@@ -547,6 +549,55 @@ fn typing_goes_to_the_focused_pane_as_data() {
     rt.key(ctrl_c);
     rt.frame(1.0 / 60.0);
     assert_eq!(fake.sent_to("t1").last(), Some(&Out::Input(vec![0x03])));
+}
+
+fn cmd(key: &str) -> KeyEvent {
+    KeyEvent {
+        key: Key::Text(key.into()),
+        mods: Mods {
+            cmd: true,
+            ..Mods::default()
+        },
+    }
+}
+
+/// The last `terminal.run` the app made.
+fn last_run(fake: &Fake) -> herdr_proto::methods::TerminalRun {
+    fake.core()
+        .calls
+        .iter()
+        .rev()
+        .find_map(|c| match c {
+            model::Request::Run(r) => Some((**r).clone()),
+            _ => None,
+        })
+        .expect("a terminal.run")
+}
+
+#[test]
+fn a_terminal_the_app_makes_starts_at_its_panes_grid_and_display() {
+    let (mut rt, fake) = runtime();
+    // A split of the focused pane, and a new tab: each new pane's grid, as its RESIZE will
+    // tell it, and the window's FACTS.
+    for key in ["d", "t"] {
+        rt.key(cmd(key));
+        frames(&mut rt, 3);
+        let run = last_run(&fake);
+        let pane = rt.state.model.focused_pane().expect("the new pane");
+        let address = rt.state.model.focused_terminal().expect("its terminal");
+        assert_eq!(
+            fake.core().terminals[address].labels.get("herdr.tab"),
+            run.labels.get("herdr.tab"),
+            "the new pane holds the terminal that run made"
+        );
+        let (cols, rows) = grid_of(&rt, &pane);
+        assert_eq!(
+            run.size,
+            Some(herdr_proto::methods::InitialSize { cols, rows }),
+            "cmd-{key}"
+        );
+        assert_eq!(run.display, Some(rt.state.display()), "cmd-{key}");
+    }
 }
 
 #[test]
