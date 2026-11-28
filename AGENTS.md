@@ -5,9 +5,9 @@ core: never break the shared layout documents, labels, or terminal state that He
 
 ## Scope (decided with Eli)
 
-- macOS first. Rune is cross-platform. CI builds and tests the whole workspace on Linux because
-  GitHub's Linux runners are free, but Linux and Windows aren't targets: nothing else is built or
-  tested for them.
+- macOS first, on Apple silicon only: no Intel build. Rune is cross-platform. CI builds and tests
+  the whole workspace on Linux because GitHub's Linux runners are free, but Linux and Windows
+  aren't targets: nothing else is built or tested for them.
 - UI is anomalyco/rune, the GPU-rendered native Rust UI framework, not a TUI library. Sidebar, tabs,
   popups, palette and toasts are native Rune elements; terminal panes are GPU-rendered views.
 - Features are built in Rust, configured by files (keys, theme, settings). No JS mod runtime.

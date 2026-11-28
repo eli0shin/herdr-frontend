@@ -45,7 +45,7 @@ ghostty-diff *screens:
 bundle:
     scripts/bundle-macos
 
-# Build the release download, target/dist/herdr-frontend-<version>-macos.dmg and .sha256 (universal; docs/release.md).
+# Build the release download, target/dist/herdr-frontend-<version>-macos.dmg and .sha256 (Apple silicon; docs/release.md).
 package:
     scripts/release-macos
 

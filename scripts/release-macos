@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Builds the release download: the universal herdr-frontend.app (scripts/bundle-macos --universal)
-# in a .dmg, with a SHA-256 file beside it, in <out-dir> (default target/dist). The release
-# artifacts workflow runs it on a macOS runner; `just package` runs it here. docs/release.md
-# "Artifacts" has the whole flow.
+# Builds the release download: herdr-frontend.app for Apple silicon (scripts/bundle-macos) in a
+# .dmg, with a SHA-256 file beside it, in <out-dir> (default target/dist). The release artifacts
+# workflow runs it on a macOS runner; `just package` runs it here. docs/release.md "Artifacts" has
+# the whole flow.
 #
 # Signing comes from the environment, under the release secrets' names:
 #   DEVELOPMENT_ID_CERTIFICATE_BASE64    the Developer ID Application certificate and key, a .p12
@@ -14,8 +14,9 @@
 # With all six, the app and the .dmg are signed with the Developer ID (hardened runtime, secure
 # timestamp), notarized and stapled. With none, the app is signed ad hoc, still with the hardened
 # runtime, and the .dmg isn't signed: the app runs the same, but Gatekeeper stops a downloaded copy. Some but not all of them
-# is an error. RELEASE_SKIP_NOTARIZE=1 signs with the Developer ID and skips notarization
-# (scripts/release-signing-dry-run).
+# is an error. RELEASE_SKIP_NOTARIZE=1 signs with the Developer ID and, instead of notarizing,
+# only logs what it would submit and staple, in the real order (scripts/release-signing-dry-run
+# checks it).
 #
 # Prints the .dmg's and the SHA-256 file's paths. On GitHub Actions it also writes `dmg`, `sha256`
 # and `signing` (notarized, ad-hoc, or signed-not-notarized) to $GITHUB_OUTPUT.
@@ -143,10 +144,21 @@ sign() {
     fi
 }
 
-# Submits one file to the notary service and waits for its verdict; on Accepted, staples it.
-# notarytool sometimes crashes mid-upload (SIGBUS) with no verdict, so that is retried once.
+# Submits <file> to the notary service and waits for its verdict; on Accepted, staples the ticket to
+# <target>: the .dmg itself, or the .app a zip was made from, since stapler can't staple a zip.
+# notarytool sometimes crashes mid-upload (SIGBUS) with no verdict, so that is retried once. With
+# RELEASE_SKIP_NOTARIZE=1 it checks the same arguments and logs them instead.
 notarize() {
-    local file=$1 json status id
+    local file=$1 target=$2 json status id
+    [[ -e $file ]] || fail "nothing to notarize at $file"
+    case $target in
+        *.app | *.dmg) [[ -e $target ]] || fail "nothing to staple at $target" ;;
+        *) fail "stapler staples an .app or a .dmg, not $(basename "$target")" ;;
+    esac
+    if [[ $signing == signed-not-notarized ]]; then
+        step "skipping notarization: would notarize $(basename "$file") and staple $(basename "$target")"
+        return 0
+    fi
     for attempt in 1 2; do
         step "notarizing $(basename "$file") (attempt $attempt)"
         json=$(xcrun notarytool submit "$file" --keychain-profile "$profile" --keychain "$keychain" \
@@ -160,8 +172,8 @@ notarize() {
         fi
         case $status in
             Accepted)
-                xcrun stapler staple "$file" >&2
-                xcrun stapler validate "$file" >&2
+                xcrun stapler staple "$target" >&2
+                xcrun stapler validate "$target" >&2
                 return 0
                 ;;
             Invalid | Rejected) fail "the notary service rejected $(basename "$file")" ;;
@@ -172,7 +184,7 @@ notarize() {
 
 # --- The app -----------------------------------------------------------------------------------
 
-app=$(scripts/bundle-macos --universal)
+app=$(scripts/bundle-macos)
 mkdir -p "$out"
 rm -rf "${out:?}/$name" "$out/$name.dmg" "$out/$name.dmg.sha256"
 stage=$out/$name
@@ -192,11 +204,14 @@ fi
 
 if [[ $signing == notarized ]]; then
     grep -Fxq "TeamIdentifier=$APPLE_TEAM_ID" <<<"$details" || fail "the app is not signed for team $APPLE_TEAM_ID"
+fi
+if [[ $identity != - ]]; then
+    # The zip only carries the app to the notary service; the ticket is stapled to the app, before
+    # the .dmg is made from it.
     ditto -c -k --keepParent "$app" "$tmp/herdr-frontend.zip"
-    notarize "$tmp/herdr-frontend.zip"
-    # The zip only carried the app to the notary service; the ticket is stapled to the app.
-    xcrun stapler staple "$app" >&2
-    xcrun stapler validate "$app" >&2
+    notarize "$tmp/herdr-frontend.zip" "$app"
+fi
+if [[ $signing == notarized ]]; then
     spctl --assess --type execute --verbose=4 "$app"
 fi
 
@@ -211,9 +226,9 @@ rm -rf "$stage"
 if [[ $identity != - ]]; then
     sign "$dmg"
     codesign --verify --strict --verbose=2 "$dmg"
+    notarize "$dmg" "$dmg"
 fi
 if [[ $signing == notarized ]]; then
-    notarize "$dmg"
     spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
 fi
 
@@ -225,9 +240,8 @@ mounted=1
 inside=$mount/herdr-frontend.app
 [[ $(readlink "$mount/Applications") == /Applications ]] || fail 'the .dmg has no Applications link'
 codesign --verify --deep --strict "$inside"
-for arch in arm64 x86_64; do
-    lipo "$inside/Contents/MacOS/herdr-frontend" -verify_arch "$arch" || fail "the app has no $arch slice"
-done
+archs=$(lipo -archs "$inside/Contents/MacOS/herdr-frontend")
+[[ $archs == arm64 ]] || fail "the app's binary is \"$archs\", not arm64 alone"
 for file in LICENSE THIRD-PARTY-NOTICES.md licenses; do
     [[ -e $inside/Contents/Resources/$file ]] || fail "the app has no Resources/$file"
 done

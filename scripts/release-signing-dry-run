@@ -3,7 +3,9 @@
 # "Developer ID Application" certificate, passed in through the same six secrets the release job
 # gets, imported into release-macos's temporary keychain and used to sign the app (hardened
 # runtime, secure timestamp) and the .dmg. Notarization is skipped (RELEASE_SKIP_NOTARIZE=1): the
-# notary service only takes a real Developer ID. Then checks the signatures it made.
+# notary service only takes a real Developer ID. release-macos logs what it would notarize and
+# staple instead, and this checks that order: the app's zip, stapling the app, then the .dmg made
+# from it, stapling the .dmg. Then checks the signatures it made.
 # Writes to <out-dir> (default target/dist-dry-run); the certificate never leaves a temp folder.
 set -euo pipefail
 
@@ -37,7 +39,8 @@ CNF
 /usr/bin/openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
     -passout "pass:$password" -out "$tmp/cert.p12"
 
-paths=$(
+# release-macos's log goes to the terminal and to $tmp/log; its stdout, the two paths, to $paths.
+paths=$({
     DEVELOPMENT_ID_CERTIFICATE_BASE64=$(base64 <"$tmp/cert.p12") \
     DEVELOPMENT_ID_CERTIFICATE_PASSWORD=$password \
     DEVELOPER_ID_APPLICATION_IDENTITY=$identity \
@@ -45,10 +48,22 @@ paths=$(
     NOTARY_APPLE_ID=dry-run@example.invalid \
     NOTARY_APP_SPECIFIC_PASSWORD=dry-run \
     RELEASE_SKIP_NOTARIZE=1 \
-    scripts/release-macos "$out"
-)
+    scripts/release-macos "$out" 2>&1 >&3 | tee "$tmp/log" >&2
+} 3>&1)
 dmg=$(sed -n 1p <<<"$paths")
 sha256=$(sed -n 2p <<<"$paths")
+name=$(basename "$dmg")
+
+# Notarization's steps, in order: the zip carries the app and the app gets the ticket, then the
+# .dmg, made after that, is notarized and stapled itself.
+expected="skipping notarization: would notarize herdr-frontend.zip and staple herdr-frontend.app
+creating $dmg
+skipping notarization: would notarize $name and staple $name"
+actual=$(sed -n -E 's/^release-macos: ((skipping notarization:|creating) .*)$/\1/p' "$tmp/log")
+[[ $actual == "$expected" ]] || {
+    printf 'dry run: notarization steps were\n%s\nnot\n%s\n' "$actual" "$expected" >&2
+    exit 1
+}
 
 # The .dmg's signature, and the app's inside it, are the self-signed identity's, with a secure
 # timestamp, and the app's has the hardened runtime.
