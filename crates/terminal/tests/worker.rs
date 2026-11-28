@@ -168,6 +168,20 @@ fn a_resize_sends_the_size_report_and_a_full_frame() {
 }
 
 #[test]
+fn the_size_report_goes_again_on_request_under_mode_2048() {
+    let (terminal, _wakes) = spawn(config());
+    terminal.report_size();
+    assert_eq!(sync(&terminal), [], "the program never asked for reports");
+    terminal.write(b"\x1b[?2048h".to_vec());
+    sync(&terminal);
+    terminal.report_size();
+    assert_eq!(
+        sync(&terminal),
+        [Output::Reply(b"\x1b[48;24;80;528;800t".to_vec())]
+    );
+}
+
+#[test]
 fn a_render_hold_keeps_the_frame_until_it_ends() {
     let (terminal, wakes) = spawn(config());
     terminal.write(b"before".to_vec());

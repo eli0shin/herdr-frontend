@@ -532,6 +532,14 @@ That left a pane that shrank in a split at its old grid until it was clicked: a 
 bottom of its screen showed scrolled up. herdr-frontend replaces Herdr app, so it dropped that
 politeness: every pane it shows in the window in front holds its size.
 
+Ticket 059 added two more. `terminal.run` carries the new pane's grid and the window's FACTS, so a
+terminal never starts at the headless 200×120 that another viewer would then size its own copy
+from. And a pane that becomes the pane in use re-asserts the size: RESIZE even at the grid told
+already, and the mode-2048 report again when the program has that mode on. The core passes every
+non-observe viewer's AUTOMATIC_INPUT to the program, and a mode-2048 program goes by the last
+report it hears, so another viewer's report at its own grid would otherwise stand
+(`docs/interop.md` "Two viewers and in-band size reports").
+
 ### What herdr-app does that causes wrong sizes
 
 herdr-app never uses `observe`, `resumed` or `resize_notifications`, and it never follows `size`

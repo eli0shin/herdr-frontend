@@ -504,6 +504,36 @@ impl Model {
             .unwrap_or_default()
     }
 
+    /// Where the pane the launch made by call `token` places will sit in the tab area, so its
+    /// terminal can start at that pane's grid: a new space's or tab's one pane fills the area,
+    /// and a split's new pane takes the place the split gives it, laid out as
+    /// [`Model::pane_rects`] will lay it out (the split shows its tab unzoomed). `None` for any
+    /// other call, or a split whose target has gone.
+    pub fn launch_rect(&self, token: Token) -> Option<Rect> {
+        let Some(Pending::Launch { launch, .. }) = self.pending.get(&token) else {
+            return None;
+        };
+        match launch {
+            Launch::Space { .. } | Launch::Tab { .. } => Some(self.geometry.area),
+            Launch::Split {
+                target,
+                axis,
+                pane,
+                container,
+            } => {
+                let mut root = self.world.tab_of(target)?.root.clone();
+                let block = herdr_shared::Node::block(pane.clone(), Content::terminal(""));
+                if !root.split(target, *axis, block, container.clone()) {
+                    return None;
+                }
+                geometry::blocks(&root, &self.geometry)
+                    .into_iter()
+                    .find(|(id, _)| id == pane)
+                    .map(|(_, rect)| rect)
+            }
+        }
+    }
+
     /// The terminal the keyboard types into: the peeked one while the peek is open, else the
     /// focused pane's. Terminal commands (copy, paste, `send:`) and copy mode go to it.
     pub fn keyboard_terminal(&self) -> Option<&str> {

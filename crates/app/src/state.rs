@@ -23,9 +23,15 @@
 //!   again when it is drawn in front again.
 //! - The pane in use, the focused pane while the window is in front, also gets FOCUS(1), after
 //!   its RESIZE, and FOCUS(0) when it stops being in use.
+//! - A pane that becomes the pane in use re-asserts the size: RESIZE even at the grid told
+//!   already, and the mode-2048 size report again when the program has that mode on, since such
+//!   a program goes by the last report any viewer sent it (`docs/interop.md` "Two viewers and
+//!   in-band size reports").
 //! - A click in the pane in use takes the size back when the core holds it at another grid
 //!   (Herdr app attached, refit or reattached it). Nothing else takes it back without real use
 //!   or a change of the pane's grid.
+//! - A terminal the window starts (`terminal.run`) starts at the grid its pane will hold, with
+//!   the window's FACTS, never at the core's headless size.
 //! - DATA from any other viewer (a paste into a window in the background) first reports the grid
 //!   it should hold, so the core never applies a stale one.
 //! - The engine's replies to queries go as AUTOMATIC_INPUT, which takes nothing, where the stream
@@ -58,12 +64,12 @@ use std::time::Duration;
 
 use ghostty_vt_sys::{GHOSTTY_KEY_C, GHOSTTY_KEY_V};
 use herdr_proto::Display;
-use herdr_proto::methods::TerminalAttach;
+use herdr_proto::methods::{InitialSize, TerminalAttach, TerminalRun};
 use model::agents::{self, Sort, Tracker};
 use model::mode::PopupState;
 use model::{
     Action, AppCommand, Effect, Event, Focus, Input, Level, Model, Pick, Popup, PopupAction,
-    TerminalAction, TerminalCommand, Toast, View,
+    Request, TerminalAction, TerminalCommand, Toast, Token, View,
 };
 use rune::{
     ClipboardContent, Drag, Family, ImageCache, Ime, KeyEvent, Phase, PointerButton, PointerEvent,
@@ -1389,13 +1395,42 @@ impl State {
         }
     }
 
+    /// Starts the terminal a launch makes at the grid its pane will hold, with this window's
+    /// colors and cell, as a RESIZE and FACTS would tell them once it's shown. Without a size it
+    /// would start at the core's headless 200×120, and another viewer that sizes a pane it
+    /// doesn't show from the record (Herdr app does) would answer the program's in-band size
+    /// query at 200×120 (`docs/interop.md`). Before the window is laid out there is no grid to
+    /// give: the terminal starts headless and its pane's first RESIZE sizes it.
+    fn size_run(&self, token: Token, run: &mut TerminalRun) {
+        if self.area.is_none() {
+            return;
+        }
+        if run.size.is_none()
+            && let Some(rect) = self.model.launch_rect(token)
+        {
+            let grid = self.grid_for(rect);
+            run.size = Some(InitialSize {
+                cols: grid.columns.max(1),
+                rows: grid.rows.max(1),
+            });
+        }
+        if run.display.is_none() {
+            run.display = Some(self.display());
+        }
+    }
+
     fn not_yet(&mut self, action: &Action) {
         self.toast(toast::not_yet(action));
     }
 
     fn carry_out(&mut self, effect: Effect) {
         match effect {
-            Effect::Call { token, request } => self.link.call(token, request),
+            Effect::Call { token, mut request } => {
+                if let Request::Run(run) = &mut request {
+                    self.size_run(token, run);
+                }
+                self.link.call(token, request)
+            }
             Effect::Doc { machine, round } => self.link.doc(machine, round),
             Effect::Focus(focus) => self.ui.focus = Some(focus),
             Effect::WakeAt(at) => {
@@ -2263,6 +2298,9 @@ impl State {
                     .get(a)
                     .is_some_and(|v| v.attach == Attach::Attached)
             });
+        // The terminal that just became the one in use: focus moved to its pane, the window
+        // came to the front with it focused, or a tab or space switch showed it focused.
+        let mut reassert = None;
         if self.in_use != in_use {
             if let Some(old) = self.in_use.take()
                 && let Some(viewer) = self.viewers.get_mut(&old)
@@ -2272,6 +2310,7 @@ impl State {
                 }
                 viewer.focus_sent = false;
             }
+            reassert.clone_from(&in_use);
             self.in_use = in_use;
         }
 
@@ -2309,12 +2348,22 @@ impl State {
                 self.link.send(&address, Out::Facts(display.clone()));
                 viewer.told_facts = Some(display.clone());
             }
+            // Focusing a pane re-asserts this window's size for it, as Herdr app's focus and
+            // mouse-down do: RESIZE even at the grid told last, so the core takes it back from
+            // any other viewer, and the in-band size report again for a program with mode 2048
+            // on. Such a program ignores SIGWINCH and lays out at the last report it heard,
+            // which may be another viewer's at that viewer's grid (`docs/interop.md`).
+            let reasserting = reassert.as_deref() == Some(address.as_str());
+            if reasserting {
+                viewer.told_grid = None;
+            }
             if viewer.told_grid != Some(grid) {
                 let due = viewer.resized_at + RESIZE_EVERY;
                 if viewer.told_grid.is_some() && now < due {
                     self.ui.wake = Some(self.ui.wake.map_or(due, |w| w.min(due)));
                 } else {
                     // The terminal first, so it's at the new grid before any output for it.
+                    let before = viewer.vt;
                     viewer.take(grid, cell);
                     self.link.send(
                         &address,
@@ -2323,6 +2372,11 @@ impl State {
                             rows: grid.rows,
                         },
                     );
+                    // A terminal that moved sent its report from inside the resize; one that
+                    // didn't sends it now, after the RESIZE.
+                    if reasserting && viewer.vt == before {
+                        viewer.terminal.report_size();
+                    }
                     viewer.told_grid = Some(grid);
                     viewer.moved = false;
                     viewer.resized_at = now;
