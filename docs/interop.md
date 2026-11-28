@@ -84,7 +84,7 @@ Choices made on purpose:
   click or typing takes it back. After a core restart, the app's `resumed` reattach leaves
   Herdr app's new grid alone.
 - `crates/app/tests/resize_redraw.rs`: a program that redraws its whole screen on SIGWINCH, in
-  the pane in use, while the window grows and shrinks. After each resize the app shows exactly
+  a shown pane, while the window grows and shrinks. After each resize the app shows exactly
   the core's screen at the core's grid.
 - `crates/app/tests/shell.rs` and `input.rs` check the same policy frame by frame on the fake
   core.
