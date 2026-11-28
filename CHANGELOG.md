@@ -1,5 +1,15 @@
 # herdr-frontend
 
+## 0.1.3
+
+### Patch Changes
+
+- [#61](https://github.com/eli0shin/herdr-frontend/pull/61) [`33a378e`](https://github.com/eli0shin/herdr-frontend/commit/33a378e4847689eaa45db5e0650b1f3d1764bf9b) Thanks [@eli0shin](https://github.com/eli0shin)! - Keys, typed text and clicks a program tracks go out to the program in the frame that handled them, instead of sometimes waiting for the next one. `HERDR_FRONTEND_LATENCY=<file>` traces where each key's and click's time goes on its way to the screen, and `just latency` measures it on an isolated core (`docs/latency.md`).
+
+- [#71](https://github.com/eli0shin/herdr-frontend/pull/71) [`5a62a27`](https://github.com/eli0shin/herdr-frontend/commit/5a62a27a7eb76df161e392040c3a0dd9a63cb390) Thanks [@eli0shin](https://github.com/eli0shin)! - Neovim started in the focused pane keeps herdr-frontend's grid with Herdr app open on the same core: when a program there turns on in-band size reports, herdr-frontend tells it its size again a moment later, after Herdr app has answered, so Neovim no longer lays out at Herdr app's grid.
+
+- [#70](https://github.com/eli0shin/herdr-frontend/pull/70) [`f825c43`](https://github.com/eli0shin/herdr-frontend/commit/f825c4379127b3fb88afb9d7dbe94c068e9a9884) Thanks [@eli0shin](https://github.com/eli0shin)! - Neovim keeps herdr-frontend's grid with Herdr app open on the same core: a new pane's terminal starts at that pane's grid, and focusing a pane tells the program herdr-frontend's size again, so its first frame no longer comes out cut up and wrapped.
+
 ## 0.1.2
 
 ### Patch Changes
