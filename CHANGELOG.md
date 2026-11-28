@@ -1,5 +1,11 @@
 # herdr-frontend
 
+## 0.1.1
+
+### Patch Changes
+
+- [#52](https://github.com/eli0shin/herdr-frontend/pull/52) [`af9a6cf`](https://github.com/eli0shin/herdr-frontend/commit/af9a6cff185006e92ec4412aa71114d8f77f3b9c) Thanks [@eli0shin](https://github.com/eli0shin)! - The macOS download is for Apple silicon only: the app is arm64, with no Intel build. Notarized releases now staple the notary ticket to the app rather than its zip, so the release job no longer fails after notarization.
+
 ## 0.1.0
 
 ### Minor Changes
