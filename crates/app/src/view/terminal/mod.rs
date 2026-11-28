@@ -21,9 +21,10 @@
 //! Scrolling smoothly, the screen sits [`TerminalPane::nudge`] rows lower than its place (higher
 //! when negative), and the scrollback rows the snapshot carries around it
 //! ([`Snapshot::above`], [`Snapshot::below`]) show in the space it leaves; the rows slide under
-//! the grid's top edge (the top padding stays bare) and the pane's bottom edge. The nudge is the snapshot's own part row plus the scrolling the window
-//! has sent the worker that the snapshot doesn't show yet ([`TerminalPane::ahead`]), so a
-//! trackpad moves the screen the frame its event lands, whole rows included.
+//! the grid's top edge (the top padding stays bare) and the pane's bottom edge. The nudge is the
+//! snapshot's own part row plus the scrolling the window has sent the worker that the snapshot
+//! doesn't show yet ([`TerminalPane::ahead`]), so a trackpad moves the screen the frame its event
+//! lands, whole rows included.
 
 pub mod cursor;
 pub mod font;

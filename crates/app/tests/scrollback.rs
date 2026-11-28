@@ -242,6 +242,11 @@ fn a_trackpad_scrolls_the_scrollback_by_the_pixel() {
     };
     // Where the grid sits on its rows: at the pane's bottom, under the space whole rows leave.
     let rest = screen_el(&rt).rect[1];
+    let pane = element(&rt, "pane-pn-1").unwrap();
+    assert!(
+        rest > pane.rect[1],
+        "the pane leaves space above whole rows"
+    );
 
     // A line and a half up.
     up(&mut rt, 1.5);
@@ -255,6 +260,20 @@ fn a_trackpad_scrolls_the_scrollback_by_the_pixel() {
     let above = element(&rt, "above").expect("the row above");
     assert_eq!(grid.rect[1] - above.rect[1], line);
     assert_eq!(above.rect[3], line, "one row");
+    // It slides under the grid's top edge: the space above stays the terminal's background,
+    // drawn over it.
+    let margin = element(&rt, "top-margin").expect("the space above the grid");
+    assert_eq!(margin.rect[1], pane.rect[1]);
+    assert_eq!(margin.rect[1] + margin.rect[3], rest);
+    let order = |key: &str| {
+        rt.elements()
+            .iter()
+            .position(|e| e.key.as_deref() == Some(key) && e.path.contains("pane-pn-1"))
+    };
+    assert!(
+        order("top-margin") > order("above"),
+        "drawn over the row above"
+    );
 
     // Momentum, after the fingers lift, carries on by the pixel.
     let mut coast = WheelEvent::new(0.0, line * 0.5).at(x, y).precise(true);
