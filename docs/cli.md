@@ -75,7 +75,12 @@ Code: `crates/app/src/control.rs` (socket and client) and `crates/model/src/cont
   `~/.config/herdr-app`; `src/mods.rs` `app_dir`). The window and the CLI use the same rule
   (`control::state_home`), so they agree on the socket. `$HERDR_FRONTEND_HOME` is one folder for
   config and state both, which tests use to isolate a window.
-- **Socket:** `<state folder>/herdr-frontend.sock`. The window serves it. One window serves a home: a
+- **Socket:** `<state folder>/herdr-frontend.sock`. The window serves it. When nothing answers
+  there, the CLI and a bare launch try `<config folder>/herdr-frontend.sock`
+  (`$XDG_CONFIG_HOME/herdr-frontend`, else `~/.config/herdr-frontend`; `control::socket_paths`),
+  where a window of 0.1.1 or older keeps serving until it's quit. Without that, right after an
+  install, tools would find no window, and a bare launch would open a second one. With no
+  window on either, the `no Herdr window at` message names the state folder's socket. One window serves a home: a
   second one finds the live socket and doesn't take it. A socket that nobody answers on is left
   from a window that died, and the next window replaces it. A window removes its socket when it
   closes.

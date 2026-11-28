@@ -38,7 +38,10 @@ both, for tests and the end-to-end harness. Versions up to 0.1.1 kept the state 
 config folder. At launch the app moves any of them it finds there to the state folder and deletes
 them from the config folder. When the state folder already has the file, its copy is kept and the
 config folder's copy is deleted. A control socket left there that nobody answers on is removed
-too. The code is `crates/app/src/home.rs`.
+too. While an older window still answers on that socket (right after an install, before it's
+quit), nothing moves, since that window would write its files back. The CLI and a bare launch
+reach that window there instead (`docs/cli.md` "Transport"), and the files move at the first
+launch after it closes. The code is `crates/app/src/home.rs`.
 
 ## Live reload
 

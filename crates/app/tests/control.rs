@@ -340,7 +340,8 @@ fn the_cli_finds_the_socket_in_the_state_folder() {
     let config = scratch.0.join("config");
     let user = scratch.0.join("user");
     // `$HERDR_FRONTEND_HOME` (empty: unset), then `$XDG_STATE_HOME/herdr-frontend`, then
-    // `~/.local/state/herdr-frontend`; never the config folder.
+    // `~/.local/state/herdr-frontend`; the config folder only for a window of 0.1.1 or older,
+    // which serves there until it's quit.
     let empty = Path::new("");
     for (vars, home) in [
         (
@@ -360,6 +361,14 @@ fn the_cli_finds_the_socket_in_the_state_folder() {
             ],
             user.join(".local/state/herdr-frontend"),
         ),
+        (
+            vec![
+                (HOME_VAR, None),
+                ("XDG_STATE_HOME", Some(xdg.as_path())),
+                ("XDG_CONFIG_HOME", Some(config.as_path())),
+            ],
+            config.join("herdr-frontend"),
+        ),
     ] {
         // Inside the scratch home, so it goes with it; the window closes first.
         let home = Home(home);
@@ -367,6 +376,8 @@ fn the_cli_finds_the_socket_in_the_state_folder() {
         let out = run_env(&vars, &["ls"], || window.pump());
         assert_eq!(out.status.code(), Some(0), "{vars:?}: {out:?}");
         assert_eq!(json_of(&out), window.model.ls());
-        assert!(!config.exists(), "the config folder is never made");
+        if !home.0.starts_with(&config) {
+            assert!(!config.exists(), "the config folder is never made");
+        }
     }
 }

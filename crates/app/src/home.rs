@@ -154,9 +154,15 @@ impl SavedZoom {
 
 /// Moves the state files an older version wrote into `config` to `state`, and removes a control
 /// socket left there that nobody answers on. A file `state` already has is newer, and the
-/// config folder's copy is removed. Nothing happens when the two are one folder.
+/// config folder's copy is removed. Nothing happens when the two are one folder, or while an
+/// older version's window still answers on the config folder's socket: it would write its files
+/// back there after the move, so they move at a launch after it closes.
 pub fn migrate(config: &Path, state: &Path) {
     if same_folder(config, state) {
+        return;
+    }
+    let socket = config.join(crate::control::SOCKET);
+    if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
         return;
     }
     for name in MOVED {
@@ -178,10 +184,8 @@ pub fn migrate(config: &Path, state: &Path) {
             );
         }
     }
-    let socket = config.join(crate::control::SOCKET);
-    if std::fs::symlink_metadata(&socket).is_ok()
-        && std::os::unix::net::UnixStream::connect(&socket).is_err()
-    {
+    // Nobody answers on it: a window that didn't close cleanly left it.
+    if std::fs::symlink_metadata(&socket).is_ok() {
         let _ = std::fs::remove_file(&socket);
     }
 }
@@ -385,6 +389,21 @@ mod tests {
             assert_eq!(std::fs::read_to_string(config.join(name)).unwrap(), "{}");
             assert!(!state.join(name).exists());
         }
+
+        // An older window still running there: nothing moves until it's gone.
+        std::fs::write(config.join(VIEW), "old window's").unwrap();
+        let old_window =
+            std::os::unix::net::UnixListener::bind(config.join(crate::control::SOCKET)).unwrap();
+        migrate(&config, &state);
+        assert_eq!(
+            std::fs::read_to_string(config.join(VIEW)).unwrap(),
+            "old window's"
+        );
+        assert!(config.join(crate::control::SOCKET).exists());
+        drop(old_window);
+        migrate(&config, &state);
+        assert!(!config.join(VIEW).exists());
+        assert!(!config.join(crate::control::SOCKET).exists());
 
         // One folder for both moves nothing.
         std::fs::write(state.join(VIEW), "kept").unwrap();
