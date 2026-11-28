@@ -108,7 +108,7 @@ pub fn view(s: &State, list: &ListPopup) -> El {
             col()
                 .w_full()
                 .min_h(0.0)
-                .child(list::view(ROWS, items, Some(LIST_H)))
+                .child(list::view(s, ROWS, items, Some(LIST_H)))
                 .children(loading_note)
                 .children(empty),
         )

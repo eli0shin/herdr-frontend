@@ -104,7 +104,7 @@ pub fn view(s: &State, list: &ListPopup) -> El {
         .px(16.0)
         .py(14.0)
     } else {
-        list::view(ROWS, items, Some(LIST_H)).mb(6.0)
+        list::view(s, ROWS, items, Some(LIST_H)).mb(6.0)
     };
     col()
         .w_full()

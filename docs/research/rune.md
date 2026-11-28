@@ -689,8 +689,8 @@ Keep `model` free of Rune types where practical, so core logic tests run without
   shown in its slot of the turn by a `Cycle`, which Rune samples from the window's one clock
   (the ring's arc at 36 angles, the peek bar's ten braille frames). A mouse wheel's notch eases
   over 100 to 200 ms in Rune's own scroll viewports, and the switch for that is out of an
-  `App`'s reach ("Asks for Rune" above). So the Agents list, the keys help and the tab strip's
-  pills take their notches in `El::on_wheel`, which runs before Rune scrolls, and move by the
+  `App`'s reach ("Asks for Rune" above). So the Agents list, the popup lists, the keys help and
+  the tab strip's pills take their notches in `El::on_wheel`, which runs before Rune scrolls, and move by the
   notch with `Tx::scroll_to_instant`, from the offset `El::on_scroll_offset` last reported
   (`view::wheel`). A trackpad's precise deltas and momentum still go to Rune, which follows
   them 1:1. Not covered: macOS's native `El::help` tooltips.

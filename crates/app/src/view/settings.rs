@@ -143,6 +143,6 @@ pub fn view(s: &State, list: &ListPopup) -> El {
             )
             .font(s.ui_font(12.0, 400.0)),
         )
-        .child(list::view(ROWS, items, None))
+        .child(list::view(s, ROWS, items, None))
         .children((!problems.is_empty()).then(|| col().w_full().gap(4.0).children(problems)))
 }

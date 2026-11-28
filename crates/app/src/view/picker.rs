@@ -213,5 +213,5 @@ pub fn view(s: &State, list: &ListPopup) -> El {
             Some(&SEARCH),
             None,
         ))
-        .child(list::view(ROWS, items, Some(LIST_H)).mb(6.0))
+        .child(list::view(s, ROWS, items, Some(LIST_H)).mb(6.0))
 }

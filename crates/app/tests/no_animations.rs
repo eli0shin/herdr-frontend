@@ -2,9 +2,9 @@
 //! through the real renderer, headless (`frames`), across a sidebar toggle, the palette opening,
 //! paging and closing, a menu opening and closing, a split, a pane resize and a toast coming
 //! and going: every frame of the whole window is the look before the input or the look after
-//! it, never one between. A wheel's notch scrolls the keys help in its frame. The working
-//! spinners, the one motion allowed, are masked out of the comparison: they keep turning, all
-//! pointing the same way at once.
+//! it, never one between. A wheel's notch scrolls a popup list or the keys help in its frame.
+//! The working spinners, the one motion allowed, are masked out of the comparison: they keep
+//! turning, all pointing the same way at once.
 
 mod frames;
 
@@ -220,15 +220,18 @@ fn scrolled(rt: &Runtime<State>, key: &str) -> f32 {
         .map_or(0.0, |e| e.scrolled[1])
 }
 
-#[test]
-fn a_wheel_notch_scrolls_the_keys_help_in_one_frame() {
-    // Rune eases a notch over several frames; the keys help takes it and lands it at once.
+/// A notch over the viewport keyed `key`, after `opens` (⌘, Shift when `shift`, and a
+/// character) brings it up: the whole notch lands in its frame, stays, and two in one frame
+/// both count.
+fn notch_lands_at_once(opens: char, shift: bool, key: &str) {
+    // Rune eases a notch over several frames; the viewport takes it and lands it at once.
     let mut rt = busy();
     rt.key(KeyEvent {
-        key: Key::Command('/'),
+        key: Key::Command(opens),
         mods: Mods {
             cmd: true,
             logo: true,
+            shift,
             ..Mods::default()
         },
     });
@@ -238,26 +241,41 @@ fn a_wheel_notch_scrolls_the_keys_help_in_one_frame() {
     let rows = rt
         .elements()
         .into_iter()
-        .find(|e| e.key.as_deref() == Some("help-rows"))
-        .expect("the keys help");
+        .find(|e| e.key.as_deref() == Some(key))
+        .unwrap_or_else(|| panic!("no {key}"));
     let (x, y) = (rows.rect[0] + 20.0, rows.rect[1] + 20.0);
-    assert_eq!(scrolled(&rt, "help-rows"), 0.0);
-    rt.wheel_event(WheelEvent::new(0.0, -40.0).notch(true).at(x, y));
+    let notch = || WheelEvent::new(0.0, -20.0).notch(true).at(x, y);
+    assert_eq!(scrolled(&rt, key), 0.0);
+    rt.wheel_event(notch());
     rt.frame(1.0 / 60.0);
     assert_eq!(
-        scrolled(&rt, "help-rows"),
-        40.0,
-        "the whole notch, in its frame"
+        scrolled(&rt, key),
+        20.0,
+        "{key}: the whole notch, in its frame"
     );
     for _ in 0..20 {
         rt.frame(1.0 / 60.0);
-        assert_eq!(scrolled(&rt, "help-rows"), 40.0, "and no further");
+        assert_eq!(scrolled(&rt, key), 20.0, "{key}: and no further");
     }
-    // Two notches in one frame: both count.
-    rt.wheel_event(WheelEvent::new(0.0, -40.0).notch(true).at(x, y));
-    rt.wheel_event(WheelEvent::new(0.0, -40.0).notch(true).at(x, y));
+    rt.wheel_event(notch());
+    rt.wheel_event(notch());
     rt.frame(1.0 / 60.0);
-    assert_eq!(scrolled(&rt, "help-rows"), 120.0);
+    assert_eq!(
+        scrolled(&rt, key),
+        60.0,
+        "{key}: two notches in one frame both count"
+    );
+}
+
+#[test]
+fn a_wheel_notch_scrolls_the_keys_help_in_one_frame() {
+    notch_lands_at_once('/', false, "help-rows");
+}
+
+#[test]
+fn a_wheel_notch_scrolls_a_popup_list_in_one_frame() {
+    // The palette, whose commands don't fit.
+    notch_lands_at_once('p', true, "palette-rows");
 }
 
 #[test]

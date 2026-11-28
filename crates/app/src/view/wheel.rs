@@ -1,12 +1,11 @@
-//! A mouse wheel's notches move Rune's own scroll viewports (the Agents list, the keys help, the
-//! tab strip's pills) in the frame they come (no animations, `AGENTS.md`). Rune eases each notch
-//! there over 100 to 200 ms, as Chromium does, and the one switch for that,
-//! `Runtime::set_wheel_glide`, is out of an `App`'s reach at the pinned rev
+//! A mouse wheel's notches move Rune's own scroll viewports (the Agents list, the popup lists,
+//! the keys help, the tab strip's pills) in the frame they come (no animations, `AGENTS.md`).
+//! Rune eases each notch there over 100 to 200 ms, as Chromium does, and the one switch for
+//! that, `Runtime::set_wheel_glide`, is out of an `App`'s reach at the pinned rev
 //! (`docs/research/rune.md` "No animations"). So each viewport takes its notches itself, before
-//! Rune would, and moves by the same distance with an instant scroll, from where it last reported
-//! being. A trackpad's precise deltas and their momentum go on to Rune, which follows them 1:1;
-//! the terminal panes and the popup lists take the wheel in their own handlers.
-
+//! Rune would, and moves by the same distance with an instant scroll, from where it last
+//! reported being. A trackpad's precise deltas and their momentum go on to Rune, which follows
+//! them 1:1; the terminal panes take the wheel in their own handler.
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
