@@ -2425,7 +2425,6 @@ impl State {
         s.window_active = active;
         s.step(tx.clock(), Event::WindowActive(active));
         if !active {
-            s.window.save(false);
             // The window's composition ends with it; Rune's commit of it is dropped (`on_ime`).
             for viewer in s.viewers.values_mut() {
                 viewer.set_preedit(None);
@@ -3376,7 +3375,7 @@ impl State {
 
     /// `App::on_close` and `App::on_quit`: the last save of the window's place and the view.
     pub fn on_close(s: &mut State, _tx: &mut Tx) {
-        s.window.save(true);
+        s.window.save();
         if let Some(home) = &s.home {
             home.save_now(VIEW, s.model.saved_view().to_json());
         }

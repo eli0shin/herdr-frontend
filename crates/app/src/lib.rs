@@ -47,7 +47,7 @@ pub fn app() -> App<State> {
 }
 
 /// The app on a live core, with its home: the window opens where it was, borderless (Eli's
-/// Ghostty frame, [`window`]), and saves its place and view as it goes. Started by the
+/// Ghostty frame, [`window`]), saves its view as it goes and its place when it closes. Started by the
 /// end-to-end harness (`HERDR_FRONTEND_E2E=1`), it also serves the harness's requests.
 pub fn live(link: Live, home: Option<Home>) -> App<State> {
     live_with(link, home, e2e::enabled())
@@ -57,6 +57,7 @@ pub fn live(link: Live, home: Option<Home>) -> App<State> {
 /// app, the last drawn frame's tree and the window number.
 pub fn live_with(link: Live, home: Option<Home>, harness: bool) -> App<State> {
     let tap = harness.then(e2e::Tap::default);
+    window::no_zoom();
     let keeper = window::Keeper::new(home.clone());
     let saved = keeper.saved();
     let placed = saved.clone();
@@ -71,7 +72,6 @@ pub fn live_with(link: Live, home: Option<Home>, harness: bool) -> App<State> {
             if scale > 0.0 {
                 s.window_sized(w as f32 / scale, h as f32 / scale);
             }
-            s.window.save(false);
             true
         })
         .on_close(State::on_close)
@@ -90,11 +90,6 @@ pub fn live_with(link: Live, home: Option<Home>, harness: bool) -> App<State> {
         });
     if let Some(tap) = tap {
         app = app.on_frame_drawn(move |rt| tap.record(rt));
-    }
-    if let Some(saved) = &saved {
-        app = app
-            .maximized(saved.maximized)
-            .full_screen(saved.full_screen);
     }
     app
 }
